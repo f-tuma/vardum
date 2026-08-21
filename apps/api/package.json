@@ -1,0 +1,36 @@
+{
+  "name": "@vardum/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "auth:generate": "auth generate --config src/auth.ts --output src/db/auth-schema.ts --yes",
+    "build": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/dev.ts",
+    "start": "node dist/server.js",
+    "worker": "node dist/worker.js",
+    "test": "NODE_ENV=test node --import tsx --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1110.0",
+    "@aws-sdk/s3-presigned-post": "3.1110.0",
+    "@better-auth/api-key": "^1.7.1",
+    "@better-auth/drizzle-adapter": "^1.7.1",
+    "@fastify/cors": "^11.3.0",
+    "better-auth": "^1.7.1",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.12.1",
+    "fastify-type-provider-zod": "^7.0.0",
+    "pg": "^8.23.0",
+    "pg-boss": "12.27.0",
+    "sharp": "0.35.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.0",
+    "auth": "1.7.1",
+    "drizzle-kit": "^0.31.10"
+  }
+}
