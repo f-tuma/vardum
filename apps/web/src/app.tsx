@@ -89,7 +89,7 @@ function WorkspaceApp({
     allWorkspaces.find(
       (workspace) => workspace.organizationId === preferredOrganizationId,
     ) ??
-    (!preferredOrganizationId ? allWorkspaces[0] : undefined);
+    (preferredOrganizationId ? undefined : allWorkspaces[0]);
   const selectedOrganization =
     organizations.find(
       (organization) => organization.id === preferredOrganizationId,
@@ -392,11 +392,7 @@ function WorkspaceApp({
               <button className="primary-button">Create organization</button>
             </form>
           </div>
-        ) : !organizations.length ? (
-          <div className="state-panel">
-            You do not belong to an organization. Ask an owner for an invitation.
-          </div>
-        ) : (creatingWorkspace || !selected) &&
+        ) : organizations.length ? (creatingWorkspace || !selected) &&
           selectedOrganization?.canCreateWorkspace ? (
           <div className="empty-workspace">
             <h1>Create a workspace</h1>
@@ -439,6 +435,10 @@ function WorkspaceApp({
           )
         ) : (
           <div className="state-panel">This organization has no workspaces.</div>
+        ) : (
+          <div className="state-panel">
+            You do not belong to an organization. Ask an owner for an invitation.
+          </div>
         )}
       </div>
     </div>
