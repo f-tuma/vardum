@@ -631,7 +631,7 @@ button:hover {
   max-width: 720px;
   margin: 0.45rem 0 0;
   color: var(--muted);
-  font: 0.58rem/1.6 var(--mono);
+  font: 0.58rem / 1.6 var(--mono);
 }
 .settings-url {
   display: grid;

@@ -130,9 +130,18 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
         reply.headers({
           "access-control-allow-origin": "*",
           "cache-control": "public, max-age=31536000, immutable",
-          "content-disposition": `inline; filename*=UTF-8''${encodeFilename(deliveryFilename(version.filename, transformation?.format))}`,
+          "content-disposition": `inline; filename*=UTF-8''${encodeFilename(
+            deliveryFilename(
+              version.filename,
+              transformation?.format ??
+                (transformation && version.mimeType === "image/svg+xml"
+                  ? "png"
+                  : undefined),
+            ),
+          )}`,
           "content-length": object.ContentLength ?? version.size,
-          "content-security-policy": "sandbox",
+          "content-security-policy":
+            "default-src 'none'; style-src 'unsafe-inline'; sandbox",
           "cross-origin-resource-policy": "cross-origin",
           "x-content-type-options": "nosniff",
         });

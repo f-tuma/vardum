@@ -11,6 +11,7 @@ export const supportedImageMimeTypes = [
   "image/gif",
   "image/jpeg",
   "image/png",
+  "image/svg+xml",
   "image/tiff",
   "image/webp",
 ] as const;
@@ -198,13 +199,14 @@ async function failVersion(payload: AssetIngestPayload, message: string) {
   });
 }
 
-function detectMimeType(format: string, declared: string) {
+export function detectMimeType(format: string, declared: string) {
   if (format === "heif") return declared === "image/avif" ? declared : null;
   return (
     {
       gif: "image/gif",
       jpeg: "image/jpeg",
       png: "image/png",
+      svg: "image/svg+xml",
       tiff: "image/tiff",
       webp: "image/webp",
     }[format] ?? null

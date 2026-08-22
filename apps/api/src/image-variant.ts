@@ -21,11 +21,12 @@ export async function getImageVariant(
 ) {
   const canonical = canonicalizeTransformation(transformation);
   const hash = createHash("sha256").update(`v1:${canonical}`).digest("hex");
-  const format = transformation.format ?? extensionForMimeType(source.mimeType);
-  const mimeType = transformation.format
-    ? `image/${transformation.format}`
-    : source.mimeType;
-  const storageKey = `derived/v1/${source.id}/${hash}.${format}`;
+  const outputFormat =
+    transformation.format ??
+    (source.mimeType === "image/svg+xml" ? "png" : undefined);
+  const extension = outputFormat ?? extensionForMimeType(source.mimeType);
+  const mimeType = outputFormat ? `image/${outputFormat}` : source.mimeType;
+  const storageKey = `derived/v1/${source.id}/${hash}.${extension}`;
 
   try {
     return { object: await getObject(storageKey), mimeType };
@@ -35,11 +36,15 @@ export async function getImageVariant(
 
   let generation = generating.get(storageKey);
   if (!generation) {
-    generation = generate(source, storageKey, mimeType, transformation).finally(
-      () => {
-        generating.delete(storageKey);
-      },
-    );
+    generation = generate(
+      source,
+      storageKey,
+      mimeType,
+      transformation,
+      outputFormat,
+    ).finally(() => {
+      generating.delete(storageKey);
+    });
     generating.set(storageKey, generation);
   }
   await generation;
@@ -51,6 +56,7 @@ async function generate(
   storageKey: string,
   mimeType: string,
   transformation: Transformation,
+  outputFormat?: "avif" | "jpeg" | "png" | "webp",
 ) {
   const original = await getObject(source.storageKey);
   if (!original.Body) throw new Error("S3 returned an empty body");
@@ -65,7 +71,7 @@ async function generate(
     });
   }
   const quality = transformation.q ?? 80;
-  switch (transformation.format) {
+  switch (outputFormat) {
     case "avif":
       image = image.avif({ quality });
       break;

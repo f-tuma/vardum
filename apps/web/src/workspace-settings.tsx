@@ -566,8 +566,8 @@ function DangerZone({
         <div className="danger-zone-copy">
           <strong>Delete {workspaceName}</strong>
           <p>
-            Permanently delete every asset, version, folder, API key,
-            invitation and member in this workspace.
+            Permanently delete every asset, version, folder, API key, invitation
+            and member in this workspace.
           </p>
         </div>
         <label>

@@ -88,10 +88,7 @@ export function updateWorkspace(workspaceId: string, name: string) {
   );
 }
 
-export function deleteWorkspace(
-  workspaceId: string,
-  confirmation: string,
-) {
+export function deleteWorkspace(workspaceId: string, confirmation: string) {
   return request(`/api/workspaces/${workspaceId}`, {
     method: "DELETE",
     headers: { "content-type": "application/json" },

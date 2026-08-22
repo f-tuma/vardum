@@ -470,7 +470,7 @@ function NewAssetForm({
               <input
                 name="file"
                 type="file"
-                accept="image/avif,image/gif,image/jpeg,image/png,image/tiff,image/webp"
+                accept="image/avif,image/gif,image/jpeg,image/png,image/svg+xml,image/tiff,image/webp"
                 onChange={inferFields}
                 required
               />
@@ -892,7 +892,7 @@ function VersionForm({
           <input
             name="file"
             type="file"
-            accept="image/avif,image/gif,image/jpeg,image/png,image/tiff,image/webp"
+            accept="image/avif,image/gif,image/jpeg,image/png,image/svg+xml,image/tiff,image/webp"
             required
           />
         </label>
