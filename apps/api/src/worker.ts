@@ -3,6 +3,7 @@ import {
   type AssetDeletePayload,
 } from "./asset-cleanup.js";
 import { processAsset, type AssetIngestPayload } from "./asset-processor.js";
+import { closeDatabase } from "./db/index.js";
 import {
   assetDeleteQueue,
   assetIngestQueue,
@@ -12,6 +13,7 @@ import {
 
 async function shutdown() {
   await stopQueue();
+  await closeDatabase();
 }
 
 process.once("SIGINT", shutdown);

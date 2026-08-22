@@ -1,5 +1,6 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
+import { closeDatabase } from "./db/index.js";
 import { startQueue, stopQueue } from "./queue.js";
 
 const app = buildApp();
@@ -7,6 +8,7 @@ const app = buildApp();
 async function shutdown() {
   await app.close();
   await stopQueue();
+  await closeDatabase();
 }
 
 process.once("SIGINT", shutdown);

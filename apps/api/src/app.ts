@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import { sql } from "drizzle-orm";
 import Fastify from "fastify";
 import {
   serializerCompiler,
@@ -10,6 +11,7 @@ import { registerAssetRoutes } from "./asset-routes.js";
 import { registerAuthRoute } from "./auth-route.js";
 import { config } from "./config.js";
 import { registerDeliveryRoutes } from "./delivery-routes.js";
+import { db } from "./db/index.js";
 import { registerInvitationRoutes } from "./invitation-routes.js";
 import { registerTransformationRoutes } from "./transformation-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
@@ -43,6 +45,25 @@ export function buildApp() {
       },
     },
     async () => ({ status: "ok" as const }),
+  );
+  app.get(
+    "/ready",
+    {
+      schema: {
+        response: {
+          200: z.object({ status: z.literal("ready") }),
+          503: z.object({ status: z.literal("unavailable") }),
+        },
+      },
+    },
+    async (_request, reply) => {
+      try {
+        await db.execute(sql`select 1`);
+        return { status: "ready" as const };
+      } catch {
+        return reply.code(503).send({ status: "unavailable" });
+      }
+    },
   );
 
   return app;

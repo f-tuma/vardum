@@ -9,25 +9,35 @@ import {
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { config } from "./config.js";
 
+const credentials =
+  config.S3_ACCESS_KEY_ID && config.S3_SECRET_ACCESS_KEY
+    ? {
+        accessKeyId: config.S3_ACCESS_KEY_ID,
+        secretAccessKey: config.S3_SECRET_ACCESS_KEY,
+      }
+    : undefined;
+
 export const storage = new S3Client({
   region: config.S3_REGION,
   endpoint: config.S3_ENDPOINT,
   forcePathStyle: config.S3_FORCE_PATH_STYLE,
-  credentials:
-    config.S3_ACCESS_KEY_ID && config.S3_SECRET_ACCESS_KEY
-      ? {
-          accessKeyId: config.S3_ACCESS_KEY_ID,
-          secretAccessKey: config.S3_SECRET_ACCESS_KEY,
-        }
-      : undefined,
+  credentials,
 });
+const uploadStorage = config.S3_PUBLIC_ENDPOINT
+  ? new S3Client({
+      region: config.S3_REGION,
+      endpoint: config.S3_PUBLIC_ENDPOINT,
+      forcePathStyle: config.S3_FORCE_PATH_STYLE,
+      credentials,
+    })
+  : storage;
 
 export function createUpload(
   storageKey: string,
   mimeType: string,
   maxSize: number,
 ) {
-  return createPresignedPost(storage, {
+  return createPresignedPost(uploadStorage, {
     Bucket: config.S3_BUCKET,
     Key: storageKey,
     Fields: { "Content-Type": mimeType },

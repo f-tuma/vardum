@@ -59,7 +59,7 @@ test("legacy asset URLs redirect to the short delivery path", async (context) =>
   assert.equal(response.headers.location, "/w/workspace/brand/logo?w=300");
 });
 
-test("GET /health reports readiness", async (context) => {
+test("GET /health reports liveness", async (context) => {
   const app = buildApp();
   context.after(() => app.close());
 

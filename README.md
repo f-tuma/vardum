@@ -34,3 +34,32 @@ SMTP_FROM="Vardum <noreply@example.com>"
 Use `SMTP_SECURE=true` for implicit TLS (normally port 465); port 587
 upgrades with STARTTLS when offered. Without `SMTP_HOST`, mail-dependent
 features remain disabled.
+
+## Production / self-hosting
+
+The production stack includes PostgreSQL, MinIO, migrations, API, worker and a
+static nginx web container:
+
+```sh
+cp .env.production.example .env.production
+# Replace every secret and set the public APP_URL/S3_PUBLIC_ENDPOINT.
+docker compose --env-file .env.production -f compose.production.yml up -d --build --wait
+curl --fail http://localhost:8080/ready
+```
+
+`S3_PUBLIC_ENDPOINT` must be reachable by users' browsers. Keep
+`POSTGRES_PASSWORD` URL-safe because it is embedded in `DATABASE_URL`. Database
+migrations run once before the API and worker start. `/health` is the liveness
+endpoint; `/ready` also verifies PostgreSQL.
+
+Stop the stack without deleting data:
+
+```sh
+docker compose --env-file .env.production -f compose.production.yml down
+```
+
+Run the disposable fresh-install check with:
+
+```sh
+bash scripts/smoke-production.sh
+```
