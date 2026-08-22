@@ -21,11 +21,42 @@ test("production requires a separate transformation secret", () => {
   );
 });
 
+test("SMTP credentials and sender must be complete", () => {
+  assert.throws(
+    () => parseConfig({ NODE_ENV: "test", SMTP_USER: "user" }),
+    /provided together/,
+  );
+  assert.throws(
+    () => parseConfig({ NODE_ENV: "test", SMTP_HOST: "localhost" }),
+    /SMTP_FROM/,
+  );
+  assert.equal(
+    parseConfig({
+      NODE_ENV: "test",
+      SMTP_HOST: "localhost",
+      SMTP_FROM: "Vardum <noreply@example.com>",
+    }).SMTP_PORT,
+    587,
+  );
+});
+
 test("S3 credentials must be provided together", () => {
   assert.throws(
     () => parseConfig({ NODE_ENV: "test", S3_ACCESS_KEY_ID: "key" }),
     /provided together/,
   );
+});
+
+test("legacy asset URLs redirect to the short delivery path", async (context) => {
+  const app = buildApp();
+  context.after(() => app.close());
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/assets/workspace/brand/logo?w=300",
+  });
+  assert.equal(response.statusCode, 308);
+  assert.equal(response.headers.location, "/w/workspace/brand/logo?w=300");
 });
 
 test("GET /health reports readiness", async (context) => {
@@ -87,7 +118,7 @@ test("ingest accepts only supported image types", async (context) => {
   assert.equal(response.statusCode, 400);
 });
 
-test("workspace settings reject invalid roles and blank key names", async (context) => {
+test("workspace settings reject invalid roles and blank credentials", async (context) => {
   const app = buildApp();
   context.after(() => app.close());
 
@@ -101,11 +132,17 @@ test("workspace settings reject invalid roles and blank key names", async (conte
     url: "/api/workspaces/workspace/api-keys",
     payload: { name: "   ", access: "read" },
   });
+  const invitation = await app.inject({
+    method: "POST",
+    url: "/api/workspaces/workspace/invitations",
+    payload: { email: "not-an-email", role: "admin" },
+  });
   assert.equal(role.statusCode, 400);
   assert.equal(key.statusCode, 400);
+  assert.equal(invitation.statusCode, 400);
 });
 
-test("workspace names cannot be blank", async (context) => {
+test("workspace identity confirmations cannot be blank", async (context) => {
   const app = buildApp();
   context.after(() => app.close());
 
@@ -114,7 +151,13 @@ test("workspace names cannot be blank", async (context) => {
     url: "/api/workspaces/workspace",
     payload: { name: "   " },
   });
+  const deletion = await app.inject({
+    method: "DELETE",
+    url: "/api/workspaces/workspace",
+    payload: { confirmation: "" },
+  });
   assert.equal(response.statusCode, 400);
+  assert.equal(deletion.statusCode, 400);
 });
 
 test("asset keys cannot escape their virtual path", async (context) => {

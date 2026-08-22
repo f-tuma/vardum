@@ -1,19 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { defaultKeyHasher } from "@better-auth/api-key";
 import { generateRandomString } from "better-auth/crypto";
-import { and, asc, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { fromDrizzle } from "pg-boss";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { authorizeWorkspaceAdmin } from "./authorization.js";
-import { auditEvent } from "./db/app-schema.js";
-import { apikey, member, organization, user } from "./db/auth-schema.js";
+import { assetVersion, auditEvent } from "./db/app-schema.js";
+import {
+  apikey,
+  member,
+  organization,
+  session,
+  user,
+} from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
+import { assetDeleteQueue, boss } from "./queue.js";
 
 const workspaceParams = z.object({ workspaceId: z.string().min(1) });
 const updateWorkspaceBody = z.object({
   name: z.string().trim().min(1).max(80),
 });
+const deleteWorkspaceBody = z.object({
+  confirmation: z.string().min(1).max(128),
+});
+const workspaceCleanupDelay = 20 * 60 * 1000;
 const memberParams = workspaceParams.extend({ memberId: z.string().min(1) });
 const updateMemberBody = z.object({
   role: z.enum(["owner", "editor", "viewer"]),
@@ -81,8 +93,15 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
         const [current] = await transaction
-          .select({ id: member.id, userId: member.userId, role: member.role })
+          .select({
+            id: member.id,
+            userId: member.userId,
+            role: member.role,
+            name: user.name,
+            email: user.email,
+          })
           .from(member)
+          .innerJoin(user, eq(user.id, member.userId))
           .where(
             and(
               eq(member.id, memberId),
@@ -127,6 +146,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           targetId: updated.id,
           metadata: {
             userId: updated.userId,
+            name: current.name,
+            email: current.email,
             previousRole: current.role,
             role: updated.role,
           },
@@ -342,6 +363,112 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       });
 
       return updated ?? reply.code(404).send({ error: "Workspace not found" });
+    },
+  );
+
+  api.delete(
+    "/api/workspaces/:workspaceId",
+    { schema: { params: workspaceParams, body: deleteWorkspaceBody } },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const authorization = await authorizeWorkspaceAdmin(request, workspaceId);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      const deleted = await inWorkspace(workspaceId, async (transaction) => {
+        const [workspace] = await transaction
+          .select({
+            id: organization.id,
+            name: organization.name,
+            slug: organization.slug,
+          })
+          .from(organization)
+          .where(eq(organization.id, workspaceId))
+          .for("update");
+        if (!workspace) return { status: "missing" as const };
+        if (request.body.confirmation !== workspace.slug)
+          return { status: "confirmation" as const };
+
+        const versions = await transaction
+          .select({
+            assetId: assetVersion.assetId,
+            versionId: assetVersion.id,
+            storageKey: assetVersion.storageKey,
+          })
+          .from(assetVersion)
+          .where(eq(assetVersion.workspaceId, workspaceId));
+        const byAsset = new Map<
+          string,
+          { versionIds: string[]; storageKeys: string[] }
+        >();
+        for (const version of versions) {
+          const payload = byAsset.get(version.assetId) ?? {
+            versionIds: [],
+            storageKeys: [],
+          };
+          payload.versionIds.push(version.versionId);
+          payload.storageKeys.push(version.storageKey);
+          byAsset.set(version.assetId, payload);
+        }
+        for (const [assetId, payload] of byAsset) {
+          await boss.send(assetDeleteQueue, payload, {
+            db: fromDrizzle(transaction, sql),
+            singletonKey: `workspace-delete:${workspaceId}:${assetId}`,
+          });
+        }
+        await boss.send(
+          assetDeleteQueue,
+          {
+            versionIds: [],
+            storageKeys: [],
+            prefixes: [`originals/${workspaceId}/`],
+          },
+          {
+            db: fromDrizzle(transaction, sql),
+            singletonKey: `workspace-delete:${workspaceId}:origin-sweep`,
+            startAfter: new Date(Date.now() + workspaceCleanupDelay),
+          },
+        );
+
+        await transaction
+          .delete(apikey)
+          .where(
+            and(
+              eq(apikey.configId, "workspace"),
+              eq(apikey.referenceId, workspaceId),
+            ),
+          );
+        await transaction
+          .update(session)
+          .set({ activeOrganizationId: null })
+          .where(eq(session.activeOrganizationId, workspaceId));
+        await transaction
+          .delete(organization)
+          .where(eq(organization.id, workspaceId));
+        return {
+          status: "deleted" as const,
+          workspace,
+          versionCount: versions.length,
+        };
+      });
+
+      if (deleted.status === "missing")
+        return reply.code(404).send({ error: "Workspace not found" });
+      if (deleted.status === "confirmation")
+        return reply.code(400).send({ error: "Workspace slug does not match" });
+      request.log.info(
+        {
+          workspaceId,
+          workspaceSlug: deleted.workspace.slug,
+          actorId: authorization.principal.actorId,
+          versionCount: deleted.versionCount,
+        },
+        "workspace deleted",
+      );
+      return reply.code(204).send();
     },
   );
 }

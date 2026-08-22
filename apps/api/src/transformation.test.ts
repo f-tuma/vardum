@@ -4,6 +4,7 @@ import {
   canonicalizeTransformation,
   signTransformation,
   transformationSchema,
+  transformedAssetUrl,
   verifyTransformation,
 } from "./transformation.js";
 
@@ -25,6 +26,10 @@ test("transformations are canonical and signatures reject tampering", () => {
   assert.equal(
     verifyTransformation("workspace", "brand/logo", transformation, signature),
     true,
+  );
+  assert.match(
+    transformedAssetUrl("workspace", "brand/logo", transformation),
+    /^\/w\/workspace\/brand\/logo\?/,
   );
   assert.equal(
     verifyTransformation(

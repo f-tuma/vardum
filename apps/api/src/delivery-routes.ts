@@ -25,7 +25,7 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
   const delivery = app.withTypeProvider<ZodTypeProvider>();
 
   delivery.get(
-    "/assets/:workspaceSlug/*",
+    "/w/:workspaceSlug/*",
     { schema: { params: stableParams, querystring: deliveryQuerySchema } },
     async (request, reply) => {
       const workspace = await findWorkspace(request.params.workspaceSlug);
@@ -67,14 +67,14 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
         "public, max-age=60, stale-while-revalidate=300",
       );
       return reply.redirect(
-        `/assets/${encodeURIComponent(workspace.slug)}/__v/${current.versionId}/${key}${query}`,
+        `/w/${encodeURIComponent(workspace.slug)}/__v/${current.versionId}/${key}${query}`,
         302,
       );
     },
   );
 
   delivery.get(
-    "/assets/:workspaceSlug/__v/:versionId/*",
+    "/w/:workspaceSlug/__v/:versionId/*",
     { schema: { params: immutableParams, querystring: deliveryQuerySchema } },
     async (request, reply) => {
       const workspace = await findWorkspace(request.params.workspaceSlug);
@@ -150,6 +150,10 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
         return reply.code(502).send({ error: "Asset content unavailable" });
       }
     },
+  );
+
+  delivery.get("/assets/:workspaceSlug/*", async (request, reply) =>
+    reply.redirect(request.url.replace(/^\/assets\//, "/w/"), 308),
   );
 }
 

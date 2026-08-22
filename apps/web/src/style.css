@@ -157,6 +157,28 @@ input:disabled {
   padding-top: 1rem;
   border-top: 1px solid var(--line);
 }
+.user-account-link {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+  color: var(--text);
+  background: transparent;
+  text-decoration: none;
+}
+.user-account-link:hover,
+.user-account-link:focus-visible {
+  background: rgb(255 255 255 / 6%);
+}
+.user-account-link:hover .avatar,
+.user-account-link:focus-visible .avatar {
+  background: rgb(173 68 255 / 12%);
+}
+.user-account-link:hover strong,
+.user-account-link.active strong {
+  color: var(--violet);
+}
 .avatar {
   display: grid;
   width: 32px;
@@ -248,6 +270,13 @@ select {
   background: #0a0c10;
   font: 0.7rem var(--mono);
 }
+select {
+  appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='m1 1 4 4 4-4' fill='none' stroke='%23858a94' stroke-width='1.25'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+}
 input::placeholder {
   color: #5f646d;
 }
@@ -333,6 +362,35 @@ button:hover {
 }
 .auth-panel .primary-button {
   width: 100%;
+}
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.auth-status {
+  margin: 0;
+  color: var(--green);
+  font: 0.6rem / 1.5 var(--mono);
+}
+.auth-back-link {
+  display: inline-flex;
+  margin-top: 1rem;
+  font: 0.62rem var(--mono);
+  text-decoration: none;
+}
+.invitation-accept-button {
+  margin: 2rem 0 1rem;
+}
+.invitation-sign-in-link {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2rem;
+  border: 1px solid var(--violet);
+  font: 0.62rem var(--mono);
+  text-decoration: none;
 }
 
 .dashboard-main {
@@ -457,10 +515,19 @@ button:hover {
 .activity-panel li strong {
   font-size: 0.65rem;
 }
+.activity-panel li strong b {
+  color: #bb74f0;
+  font: inherit;
+  font-weight: 400;
+}
 .activity-panel li small {
   margin-top: 0.3rem;
   color: var(--muted);
   font-size: 0.55rem;
+}
+.activity-panel li small + small {
+  margin-top: 0.18rem;
+  color: #686d76;
 }
 .activity-empty {
   margin: 0;
@@ -525,6 +592,18 @@ button:hover {
 .settings-panel label select {
   width: 100%;
 }
+.settings-panel .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.settings-panel .checkbox-label input {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  margin: 0;
+  accent-color: var(--violet);
+}
 .settings-panel label small {
   color: var(--muted);
   font: 0.55rem / 1.5 var(--mono);
@@ -533,6 +612,26 @@ button:hover {
 .settings-panel input[readonly] {
   color: var(--muted);
   background: #090b0e;
+}
+.danger-zone {
+  border-color: #632a31;
+}
+.danger-zone > header {
+  border-color: #632a31;
+}
+.danger-zone > header h2,
+.danger-zone > header span,
+.danger-zone label code {
+  color: var(--red);
+}
+.danger-zone-copy strong {
+  font: 0.72rem var(--mono);
+}
+.danger-zone-copy p {
+  max-width: 720px;
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font: 0.58rem/1.6 var(--mono);
 }
 .settings-url {
   display: grid;
@@ -550,12 +649,25 @@ button:hover {
   color: #bb74f0;
   font: 0.62rem var(--mono);
 }
+.password-actions {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.password-actions .settings-actions {
+  margin-left: auto;
+}
 .settings-actions {
   display: flex;
   min-height: 36px;
   align-items: center;
   justify-content: flex-end;
   gap: 1rem;
+}
+.settings-actions > button {
+  order: 2;
 }
 .settings-actions > span {
   color: var(--green);
@@ -571,16 +683,80 @@ button:hover {
 .settings-note {
   border-top: 1px solid var(--line);
 }
+.session-toolbar {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.session-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  font: 0.58rem var(--mono);
+}
+.session-list {
+  max-height: 480px;
+  overflow-y: auto;
+}
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 1fr) 78px;
+  gap: 1rem;
+  min-height: 68px;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.session-row:last-child {
+  border-bottom: 0;
+}
+.session-client,
+.session-dates {
+  min-width: 0;
+}
+.session-client strong,
+.session-client small,
+.session-dates small {
+  display: block;
+  font-family: var(--mono);
+}
+.session-client strong {
+  font-size: 0.62rem;
+}
+.session-client strong b {
+  margin-left: 0.5rem;
+  color: var(--green);
+  font: 0.5rem var(--mono);
+}
+.session-client small,
+.session-dates small {
+  overflow: hidden;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.53rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-row > button {
+  grid-row: 1;
+  grid-column: 3;
+  min-width: 78px;
+}
 .settings-inline-error {
   margin: 1rem;
 }
 .member-list,
+.invitation-list,
 .api-key-list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .member-list li,
+.invitation-list li,
 .api-key-list li {
   display: flex;
   min-height: 64px;
@@ -617,13 +793,24 @@ button:hover {
   width: 140px;
   flex: none;
 }
-.api-key-form {
+.api-key-form,
+.invitation-form {
   grid-template-columns: minmax(0, 1fr) 180px auto;
   align-items: end;
   border-bottom: 1px solid var(--line);
 }
-.api-key-form button {
+.api-key-form button,
+.invitation-form button {
   align-self: end;
+}
+.settings-message {
+  margin: 1rem;
+  color: var(--green);
+  font: 0.58rem var(--mono);
+}
+.invitation-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 .api-key-secret {
   display: grid;
@@ -759,11 +946,33 @@ button:hover {
 .form-grid .wide {
   grid-column: 1 / -1;
 }
+.prefixed-input {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  border: 1px solid var(--line);
+  background: #0a0c10;
+}
+.prefixed-input:focus-within {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+.prefixed-input input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  min-height: 0;
+  padding-left: 0.2rem;
+  border: 0;
+  outline: 0;
+}
 .field-prefix {
+  flex: none;
+  padding-left: 0.65rem;
   color: #656a74;
-  font-size: 0.55rem;
-  font-weight: 400;
+  font: 0.7rem var(--mono);
   text-transform: none;
+  white-space: nowrap;
 }
 .upload-file-row {
   display: grid;
@@ -790,24 +999,92 @@ button:hover {
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 0.65rem;
 }
-.folder-grid button {
+.folder-card {
+  position: relative;
+  display: grid;
+}
+.folder-open {
   width: 100%;
   height: 50px;
   justify-content: flex-start;
   gap: 0.7rem;
-  padding: 0 0.8rem;
-  border-color: var(--line);
-  background: var(--surface);
+  padding: 0 2.9rem 0 0.8rem;
+  border: 1px solid var(--line);
   color: var(--text);
+  background: var(--surface);
   text-align: left;
 }
-.folder-grid button:hover {
+.folder-menu {
+  position: absolute;
+  z-index: 12;
+  top: 9px;
+  right: 8px;
+}
+.folder-menu > summary {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  list-style: none;
+}
+.folder-menu > summary svg {
+  width: 16px;
+  height: 16px;
+  fill: currentcolor;
+}
+.folder-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.folder-open:hover {
   border-color: #616772;
   background: var(--surface-2);
 }
-.folder-grid button span {
+.folder-menu > summary:hover,
+.folder-menu[open] > summary {
+  color: var(--text);
+  background: rgb(255 255 255 / 6%);
+}
+.folder-menu-popover {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 5px);
+  right: 0;
+  width: 170px;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.folder-delete {
+  width: 100%;
+  height: 36px;
+  justify-content: flex-start;
+  padding: 0 0.65rem;
+  border-color: transparent;
+  color: #ff858a;
+  background: transparent;
+}
+.folder-delete:hover {
+  border-color: #85363b;
+  color: white;
+  background: #1a0d10;
+}
+.folder-open span {
   color: var(--violet);
   font: 1.1rem var(--mono);
+}
+.folder-error {
+  grid-column: 1 / -1;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #85363b;
+  border-top: 0;
+  color: #ff858a;
+  background: #1a0d10;
+  font: 0.55rem / 1.4 var(--mono);
 }
 .asset-grid {
   display: grid;
@@ -1084,6 +1361,44 @@ button:hover {
   border-color: var(--red);
   color: white;
 }
+.confirm-dialog {
+  width: min(440px, calc(100vw - 2rem));
+  max-width: none;
+  padding: 0;
+  border: 1px solid #85363b;
+  color: var(--text);
+  background: var(--surface);
+}
+.confirm-dialog::backdrop {
+  background: rgb(0 0 0 / 76%);
+  backdrop-filter: blur(2px);
+}
+.confirm-dialog-content > header {
+  padding: 1rem;
+  border-bottom: 1px solid #85363b;
+  background: #1a0d10;
+}
+.confirm-dialog-content > header span {
+  color: var(--red);
+  font: 0.55rem var(--mono);
+  letter-spacing: 0.08em;
+}
+.confirm-dialog-content h2 {
+  margin: 0.45rem 0 0;
+  font-size: 1.15rem;
+}
+.confirm-dialog-content > p {
+  margin: 0;
+  padding: 1rem;
+  color: var(--muted);
+  font: 0.65rem / 1.6 var(--mono);
+}
+.confirm-dialog-content > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  padding: 0 1rem 1rem;
+}
 .compact-form {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1198,7 +1513,11 @@ button:hover {
     padding: 0;
     border: 0;
   }
-  .user-card > span:nth-child(2),
+  .user-account-link {
+    grid-template-columns: 32px;
+    gap: 0;
+  }
+  .user-account-link > span:last-child,
   .user-card .icon-button {
     display: none;
   }
@@ -1209,8 +1528,22 @@ button:hover {
   .dashboard-main {
     padding: 0.9rem;
   }
-  .api-key-form {
+  .api-key-form,
+  .invitation-form {
     grid-template-columns: 1fr;
+  }
+  .session-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .session-row {
+    grid-template-columns: minmax(0, 1fr) 78px;
+  }
+  .session-dates {
+    grid-column: 1 / -1;
+  }
+  .session-row > button {
+    grid-column: 2;
   }
   .asset-detail {
     min-height: calc(100vh - 52px);
@@ -1242,8 +1575,15 @@ button:hover {
   .overview-stats {
     grid-template-columns: 1fr;
   }
-  .member-list li {
+  .member-list li,
+  .invitation-list li {
     flex-wrap: wrap;
+  }
+  .invitation-actions {
+    width: 100%;
+  }
+  .invitation-actions button {
+    flex: 1;
   }
   .member-list select {
     width: 100%;

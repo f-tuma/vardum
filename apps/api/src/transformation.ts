@@ -56,7 +56,7 @@ export function transformedAssetUrl(
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   const query = canonicalizeTransformation(input);
   const signed = signTransformation(workspaceSlug, key, input);
-  return `/assets/${encodeURIComponent(workspaceSlug)}/${encodedKey}?${query}&sig=${encodeURIComponent(signed)}`;
+  return `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}?${query}&sig=${encodeURIComponent(signed)}`;
 }
 
 export function verifyTransformation(

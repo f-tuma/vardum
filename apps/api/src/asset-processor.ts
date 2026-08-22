@@ -95,7 +95,11 @@ export async function processAsset(input: unknown) {
       return;
 
     const [target] = await transaction
-      .select({ currentVersionId: asset.currentVersionId })
+      .select({
+        currentVersionId: asset.currentVersionId,
+        key: asset.key,
+        displayName: asset.displayName,
+      })
       .from(asset)
       .where(eq(asset.id, payload.assetId))
       .for("update");
@@ -140,6 +144,9 @@ export async function processAsset(input: unknown) {
       targetId: payload.versionId,
       metadata: {
         assetId: payload.assetId,
+        key: target.key,
+        displayName: target.displayName,
+        number: version.number,
         checksum,
         width,
         height,
@@ -152,6 +159,17 @@ export async function processAsset(input: unknown) {
 
 async function failVersion(payload: AssetIngestPayload, message: string) {
   await inWorkspace(payload.workspaceId, async (transaction) => {
+    const [context] = await transaction
+      .select({
+        key: asset.key,
+        displayName: asset.displayName,
+        number: assetVersion.number,
+        filename: assetVersion.filename,
+      })
+      .from(assetVersion)
+      .innerJoin(asset, eq(asset.id, assetVersion.assetId))
+      .where(eq(assetVersion.id, payload.versionId));
+
     await transaction
       .update(assetVersion)
       .set({
@@ -167,7 +185,14 @@ async function failVersion(payload: AssetIngestPayload, message: string) {
       action: "asset.version_failed",
       targetType: "asset_version",
       targetId: payload.versionId,
-      metadata: { assetId: payload.assetId, error: message },
+      metadata: {
+        assetId: payload.assetId,
+        key: context?.key,
+        displayName: context?.displayName,
+        number: context?.number,
+        filename: context?.filename,
+        error: message,
+      },
       requestId: payload.requestId,
     });
   });

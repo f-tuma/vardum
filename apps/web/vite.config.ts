@@ -8,6 +8,7 @@ export default defineConfig({
     allowedHosts: ["vite.f-tuma.dev"],
     proxy: {
       "/api": { target: "http://localhost:3000", changeOrigin: true },
+      "^/w(?:/|$)": { target: "http://localhost:3000", changeOrigin: true },
       "/assets": { target: "http://localhost:3000", changeOrigin: true },
       "/health": { target: "http://localhost:3000", changeOrigin: true },
       "/storage": {

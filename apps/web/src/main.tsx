@@ -8,7 +8,9 @@ import {
 } from "@tanstack/react-router";
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
+import { AcceptInvitation } from "./accept-invitation";
 import { App } from "./app";
+import { ResetPassword } from "./reset-password";
 import "./style.css";
 
 const rootRoute = createRootRoute({ component: Outlet });
@@ -16,6 +18,28 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: App,
+});
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reset-password",
+  validateSearch: (search: Record<string, unknown>) => ({
+    token: typeof search.token === "string" ? search.token : "",
+    error: typeof search.error === "string" ? search.error : "",
+  }),
+  component: ResetPasswordPage,
+});
+const acceptInvitationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/accept-invitation",
+  validateSearch: (search: Record<string, unknown>) => ({
+    id: typeof search.id === "string" ? search.id : "",
+  }),
+  component: AcceptInvitationPage,
+});
+const accountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/account",
+  component: AccountPage,
 });
 const workspaceOverviewRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -46,6 +70,9 @@ const assetRoute = createRoute({
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     indexRoute,
+    resetPasswordRoute,
+    acceptInvitationRoute,
+    accountRoute,
     workspaceOverviewRoute,
     workspaceSettingsRoute,
     workspaceAssetsRoute,
@@ -58,6 +85,20 @@ const DevAgentation = import.meta.env.DEV
       import("agentation").then(({ Agentation }) => ({ default: Agentation })),
     )
   : null;
+
+function ResetPasswordPage() {
+  const { token, error } = resetPasswordRoute.useSearch();
+  return <ResetPassword token={token} callbackError={error} />;
+}
+
+function AcceptInvitationPage() {
+  const { id } = acceptInvitationRoute.useSearch();
+  return <AcceptInvitation invitationId={id} />;
+}
+
+function AccountPage() {
+  return <App view="account" />;
+}
 
 function WorkspaceOverviewPage() {
   const { workspaceId } = workspaceOverviewRoute.useParams();

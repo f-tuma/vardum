@@ -2,13 +2,20 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type SyntheticEvent } from "react";
 import {
   createWorkspaceApiKey,
+  createWorkspaceInvitation,
+  deleteWorkspace,
   deleteWorkspaceApiKey,
   listWorkspaceApiKeys,
+  listWorkspaceInvitations,
   listWorkspaceMembers,
+  resendWorkspaceInvitation,
+  revokeWorkspaceInvitation,
   updateWorkspace,
   updateWorkspaceMemberRole,
+  type WorkspaceInvitation,
   type WorkspaceMember,
 } from "./asset-api";
+import { ConfirmDialog } from "./confirm-dialog";
 
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -36,7 +43,13 @@ export function WorkspaceSettings({
           workspaceSlug={workspaceSlug}
         />
         <MembersSettings workspaceId={workspaceId} />
+        <InvitationsSettings workspaceId={workspaceId} />
         <ApiKeysSettings workspaceId={workspaceId} />
+        <DangerZone
+          workspaceId={workspaceId}
+          workspaceName={workspaceName}
+          workspaceSlug={workspaceSlug}
+        />
       </div>
     </main>
   );
@@ -98,7 +111,7 @@ function GeneralSettings({
         </label>
         <div className="settings-url">
           <span>PUBLIC PATH</span>
-          <code>/assets/{workspaceSlug}/&#123;key&#125;</code>
+          <code>/w/{workspaceSlug}/&#123;key&#125;</code>
         </div>
         {error && (
           <p className="error-strip" role="alert">
@@ -200,10 +213,161 @@ function MembersSettings({ workspaceId }: { workspaceId: string }) {
           {error}
         </p>
       )}
-      <p className="settings-note">
-        Invitations need outbound email and will be added with the mail
-        provider.
-      </p>
+    </section>
+  );
+}
+
+function InvitationsSettings({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
+  const [pendingId, setPendingId] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [revokeTarget, setRevokeTarget] = useState<WorkspaceInvitation | null>(
+    null,
+  );
+  const invitations = useQuery({
+    queryKey: ["workspace-invitations", workspaceId],
+    queryFn: () => listWorkspaceInvitations(workspaceId),
+  });
+
+  async function invite(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setPendingId("create");
+    setError("");
+    setMessage("");
+    try {
+      await createWorkspaceInvitation(workspaceId, {
+        email: String(form.get("email")),
+        role: String(form.get("role")) as WorkspaceInvitation["role"],
+      });
+      formElement.reset();
+      setMessage("Invitation sent");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Invitation failed");
+    } finally {
+      await queryClient.invalidateQueries({
+        queryKey: ["workspace-invitations", workspaceId],
+      });
+      setPendingId("");
+    }
+  }
+
+  async function resend(record: WorkspaceInvitation) {
+    setPendingId(record.id);
+    setError("");
+    setMessage("");
+    try {
+      await resendWorkspaceInvitation(workspaceId, record.id);
+      setMessage(`Invitation resent to ${record.email}`);
+      await queryClient.invalidateQueries({
+        queryKey: ["workspace-invitations", workspaceId],
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Resend failed");
+    } finally {
+      setPendingId("");
+    }
+  }
+
+  async function revoke(record: WorkspaceInvitation) {
+    setError("");
+    setMessage("");
+    try {
+      await revokeWorkspaceInvitation(workspaceId, record.id);
+      setMessage(`Invitation to ${record.email} revoked`);
+      await queryClient.invalidateQueries({
+        queryKey: ["workspace-invitations", workspaceId],
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Revoke failed");
+    }
+  }
+
+  return (
+    <section className="settings-panel" id="invitations">
+      <header>
+        <h2>┌─ INVITATIONS</h2>
+        <span>{invitations.data?.invitations.length ?? 0} PENDING</span>
+      </header>
+      <form className="invitation-form" onSubmit={invite}>
+        <label>
+          Email
+          <input name="email" type="email" autoComplete="email" required />
+        </label>
+        <label>
+          Role
+          <select name="role" defaultValue="viewer">
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="owner">Owner</option>
+          </select>
+        </label>
+        <button className="primary-button" disabled={Boolean(pendingId)}>
+          {pendingId === "create" ? "Sending…" : "Send invitation"}
+        </button>
+      </form>
+      {error && (
+        <p className="error-strip settings-inline-error" role="alert">
+          {error}
+        </p>
+      )}
+      {message && (
+        <p className="settings-message" role="status">
+          {message}
+        </p>
+      )}
+      {invitations.isPending ? (
+        <p className="settings-state">Loading invitations…</p>
+      ) : invitations.isError ? (
+        <p className="error-strip" role="alert">
+          {invitations.error.message}
+        </p>
+      ) : invitations.data.invitations.length ? (
+        <ul className="invitation-list">
+          {invitations.data.invitations.map((record) => (
+            <li key={record.id}>
+              <span className="member-identity">
+                <strong>{record.email}</strong>
+                <small>
+                  {record.role.toUpperCase()} // expires{" "}
+                  {dateTime.format(new Date(record.expiresAt))}
+                </small>
+              </span>
+              <div className="invitation-actions">
+                <button
+                  type="button"
+                  disabled={pendingId === record.id}
+                  onClick={() => void resend(record)}
+                >
+                  {pendingId === record.id ? "Sending…" : "Resend"}
+                </button>
+                <button
+                  className="danger-button"
+                  type="button"
+                  disabled={pendingId === record.id}
+                  onClick={() => setRevokeTarget(record)}
+                >
+                  Revoke
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="settings-state">└─ No pending invitations</p>
+      )}
+      <ConfirmDialog
+        open={Boolean(revokeTarget)}
+        title={`Revoke invitation to “${revokeTarget?.email ?? ""}”?`}
+        description="The invitation link will stop working immediately."
+        confirmLabel="Revoke invitation"
+        onCancel={() => setRevokeTarget(null)}
+        onConfirm={() =>
+          revokeTarget ? revoke(revokeTarget) : Promise.resolve()
+        }
+      />
     </section>
   );
 }
@@ -212,6 +376,10 @@ function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [revokeTarget, setRevokeTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [secret, setSecret] = useState<{
     id: string;
     name: string;
@@ -252,13 +420,7 @@ function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  async function revoke(keyId: string, name: string) {
-    if (
-      !window.confirm(
-        `Revoke “${name}”? Requests using it will stop immediately.`,
-      )
-    )
-      return;
+  async function revoke(keyId: string) {
     setError("");
     try {
       await deleteWorkspaceApiKey(workspaceId, keyId);
@@ -335,7 +497,12 @@ function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
               <button
                 className="danger-button"
                 type="button"
-                onClick={() => void revoke(key.id, key.name ?? "Unnamed key")}
+                onClick={() =>
+                  setRevokeTarget({
+                    id: key.id,
+                    name: key.name ?? "Unnamed key",
+                  })
+                }
               >
                 Revoke
               </button>
@@ -345,6 +512,95 @@ function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
       ) : (
         <p className="settings-state">└─ No API keys</p>
       )}
+      <ConfirmDialog
+        open={Boolean(revokeTarget)}
+        title={`Revoke API key “${revokeTarget?.name ?? ""}”?`}
+        description="Requests using this key will stop immediately. This cannot be undone."
+        confirmLabel="Revoke key"
+        onCancel={() => setRevokeTarget(null)}
+        onConfirm={() =>
+          revokeTarget ? revoke(revokeTarget.id) : Promise.resolve()
+        }
+      />
+    </section>
+  );
+}
+
+function DangerZone({
+  workspaceId,
+  workspaceName,
+  workspaceSlug,
+}: {
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+}) {
+  const [confirmation, setConfirmation] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [error, setError] = useState("");
+
+  async function removeWorkspace() {
+    setError("");
+    try {
+      await deleteWorkspace(workspaceId, confirmation);
+      window.location.assign("/");
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Workspace deletion failed",
+      );
+    }
+  }
+
+  return (
+    <section className="settings-panel danger-zone" id="danger-zone">
+      <header>
+        <h2>!! DANGER ZONE</h2>
+        <span>IRREVERSIBLE</span>
+      </header>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (confirmation === workspaceSlug) setDialogOpen(true);
+        }}
+      >
+        <div className="danger-zone-copy">
+          <strong>Delete {workspaceName}</strong>
+          <p>
+            Permanently delete every asset, version, folder, API key,
+            invitation and member in this workspace.
+          </p>
+        </div>
+        <label>
+          Type <code>{workspaceSlug}</code> to confirm
+          <input
+            value={confirmation}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setConfirmation(event.target.value)}
+          />
+        </label>
+        {error && (
+          <p className="error-strip" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="settings-actions">
+          <button
+            className="danger-button"
+            disabled={confirmation !== workspaceSlug}
+          >
+            Delete workspace
+          </button>
+        </div>
+      </form>
+      <ConfirmDialog
+        open={dialogOpen}
+        title={`Delete workspace “${workspaceName}”?`}
+        description="All workspace data and stored files will be permanently deleted. This cannot be undone."
+        confirmLabel="Delete workspace"
+        onCancel={() => setDialogOpen(false)}
+        onConfirm={removeWorkspace}
+      />
     </section>
   );
 }

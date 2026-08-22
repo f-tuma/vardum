@@ -1,17 +1,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import {
   createAsset,
   createFolder,
   createTransformationUrl,
   deleteAsset,
+  deleteFolder,
   getAsset,
   listAssets,
   uploadVersion,
   type AssetSummary,
   type TransformationInput,
 } from "./asset-api";
+import { ConfirmDialog } from "./confirm-dialog";
 
 export function AssetDashboard({
   workspaceId,
@@ -114,13 +116,12 @@ export function AssetDashboard({
               <h2>Folders</h2>
               <div className="folder-grid">
                 {filteredFolders.map((folder) => (
-                  <button
+                  <FolderCard
                     key={folder.prefix}
-                    type="button"
-                    onClick={() => openFolder(folder.prefix)}
-                  >
-                    <span aria-hidden="true">▱</span> {folder.name}
-                  </button>
+                    folder={folder}
+                    workspaceId={workspaceId}
+                    onOpen={openFolder}
+                  />
                 ))}
               </div>
             </section>
@@ -151,6 +152,87 @@ export function AssetDashboard({
         </div>
       )}
     </main>
+  );
+}
+
+function FolderCard({
+  folder,
+  workspaceId,
+  onOpen,
+}: {
+  folder: { name: string; prefix: string };
+  workspaceId: string;
+  onOpen: (prefix: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const menuRef = useCloseDetailsOnOutsideClick();
+  const [pending, setPending] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState("");
+
+  async function remove() {
+    setPending(true);
+    setError("");
+    try {
+      await deleteFolder(workspaceId, folder.prefix);
+      await queryClient.invalidateQueries({
+        queryKey: ["assets", workspaceId],
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Folder deletion failed",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="folder-card">
+      <button
+        className="folder-open"
+        type="button"
+        onClick={() => onOpen(folder.prefix)}
+      >
+        <span aria-hidden="true">▱</span> {folder.name}
+      </button>
+      <details ref={menuRef} className="folder-menu">
+        <summary aria-label={`Actions for folder ${folder.name}`}>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="3" cy="8" r="1.25" />
+            <circle cx="8" cy="8" r="1.25" />
+            <circle cx="13" cy="8" r="1.25" />
+          </svg>
+        </summary>
+        <div className="folder-menu-popover" role="menu">
+          <button
+            className="folder-delete"
+            type="button"
+            role="menuitem"
+            disabled={pending}
+            onClick={() => {
+              menuRef.current?.removeAttribute("open");
+              setConfirmOpen(true);
+            }}
+          >
+            Delete folder
+          </button>
+        </div>
+      </details>
+      {error && (
+        <span className="folder-error" role="alert">
+          {error}
+        </span>
+      )}
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Delete folder “${folder.name}”?`}
+        description="This cannot be undone. Folders containing assets or subfolders are protected and cannot be deleted."
+        confirmLabel="Delete folder"
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={remove}
+      />
+    </div>
   );
 }
 
@@ -186,6 +268,32 @@ function FolderBreadcrumbs({
   );
 }
 
+function useCloseDetailsOnOutsideClick() {
+  const ref = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    function closeOnOutsideClick(event: PointerEvent) {
+      const details = ref.current;
+      if (details?.open && !details.contains(event.target as Node))
+        details.open = false;
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && ref.current?.open) {
+        ref.current.open = false;
+        ref.current.querySelector("summary")?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
+  return ref;
+}
+
 function normalizeFolderName(value: string) {
   return value
     .normalize("NFKD")
@@ -203,6 +311,7 @@ function NewFolderForm({
   prefix: string;
 }) {
   const queryClient = useQueryClient();
+  const detailsRef = useCloseDetailsOnOutsideClick();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -232,7 +341,7 @@ function NewFolderForm({
   }
 
   return (
-    <details className="upload-drawer folder-drawer">
+    <details ref={detailsRef} className="upload-drawer folder-drawer">
       <summary>New folder</summary>
       <form onSubmit={submit}>
         <label>
@@ -273,6 +382,7 @@ function NewAssetForm({
   prefix: string;
 }) {
   const queryClient = useQueryClient();
+  const detailsRef = useCloseDetailsOnOutsideClick();
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [keyEdited, setKeyEdited] = useState(false);
@@ -326,7 +436,7 @@ function NewAssetForm({
   }
 
   return (
-    <details className="upload-drawer">
+    <details ref={detailsRef} className="upload-drawer">
       <summary>Upload asset</summary>
       <form onSubmit={submit}>
         <div className="form-grid">
@@ -342,14 +452,17 @@ function NewAssetForm({
             />
           </label>
           <label>
-            URL name {prefix && <span className="field-prefix">/{prefix}</span>}
-            <input
-              name="key"
-              placeholder="logo"
-              pattern="[a-z0-9._-]+"
-              onChange={() => setKeyEdited(true)}
-              required
-            />
+            URL name
+            <span className="prefixed-input">
+              {prefix && <span className="field-prefix">/{prefix}</span>}
+              <input
+                name="key"
+                placeholder="logo"
+                pattern="[a-z0-9._-]+"
+                onChange={() => setKeyEdited(true)}
+                required
+              />
+            </span>
           </label>
           <div className="wide upload-file-row">
             <label>
@@ -472,6 +585,7 @@ function AssetDetailPage({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [previewUrl, setPreviewUrl] = useState(asset.thumbnailUrl ?? "");
@@ -479,13 +593,6 @@ function AssetDetailPage({
   const status = asset.status ?? "empty";
 
   async function removeAsset() {
-    if (
-      !window.confirm(
-        `Delete “${asset.displayName}” and all of its versions? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setDeleting(true);
     setDeleteError("");
     try {
@@ -606,13 +713,21 @@ function AssetDetailPage({
               className="danger-button"
               type="button"
               disabled={deleting}
-              onClick={removeAsset}
+              onClick={() => setConfirmDelete(true)}
             >
               {deleting ? "Deleting…" : "Delete asset"}
             </button>
           </section>
         </section>
       </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Delete asset “${asset.displayName}”?`}
+        description="Every stored version and derived transformation will be permanently deleted. This cannot be undone."
+        confirmLabel="Delete asset"
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={removeAsset}
+      />
     </main>
   );
 }
@@ -791,7 +906,7 @@ function VersionForm({
 }
 
 function assetPath(workspaceSlug: string, key: string) {
-  return `/assets/${encodeURIComponent(workspaceSlug)}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  return `/w/${encodeURIComponent(workspaceSlug)}/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 export function formatBytes(bytes: number) {

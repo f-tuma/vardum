@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { AccountSettings } from "./account-settings";
 import { AssetDashboard } from "./asset-dashboard";
 import { authClient } from "./auth-client";
 import { WorkspaceOverview } from "./workspace-overview";
@@ -15,7 +16,7 @@ export function App({
   routeWorkspaceId?: string;
   assetId?: string;
   prefix?: string;
-  view?: "overview" | "assets" | "settings";
+  view?: "overview" | "assets" | "settings" | "account";
 }) {
   const session = authClient.useSession();
   if (session.isPending) return <div className="loading">Loading…</div>;
@@ -23,6 +24,7 @@ export function App({
   return (
     <WorkspaceApp
       email={session.data.user.email}
+      name={session.data.user.name}
       routeWorkspaceId={routeWorkspaceId}
       assetId={assetId}
       prefix={prefix}
@@ -33,16 +35,18 @@ export function App({
 
 function WorkspaceApp({
   email,
+  name,
   routeWorkspaceId,
   assetId,
   prefix,
   view,
 }: {
   email: string;
+  name: string;
   routeWorkspaceId?: string;
   assetId?: string;
   prefix: string;
-  view: "overview" | "assets" | "settings";
+  view: "overview" | "assets" | "settings" | "account";
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -64,13 +68,13 @@ function WorkspaceApp({
     ) ?? organizations.data?.[0];
 
   useEffect(() => {
-    if (!routeWorkspaceId && selected) {
+    if (view !== "account" && !routeWorkspaceId && selected) {
       void navigate({
         to: "/workspaces/$workspaceId",
         params: { workspaceId: selected.id },
       });
     }
-  }, [navigate, routeWorkspaceId, selected]);
+  }, [navigate, routeWorkspaceId, selected, view]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -115,7 +119,9 @@ function WorkspaceApp({
             ? "#assets"
             : view === "settings"
               ? "#settings"
-              : "#overview"
+              : view === "account"
+                ? "#account"
+                : "#overview"
         }
       >
         Skip to content
@@ -169,6 +175,7 @@ function WorkspaceApp({
               to="/workspaces/$workspaceId/assets"
               params={{ workspaceId: selected.id }}
               search={{ prefix: "" }}
+              activeOptions={{ includeSearch: false }}
               activeProps={{ className: "active" }}
             >
               <span>02</span> Assets
@@ -185,11 +192,17 @@ function WorkspaceApp({
 
         <div className="sidebar-spacer" />
         <div className="user-card">
-          <span className="avatar">{email.slice(0, 2).toUpperCase()}</span>
-          <span>
-            <strong>{email.split("@")[0]}</strong>
-            <small>{email}</small>
-          </span>
+          <Link
+            className="user-account-link"
+            to="/account"
+            activeProps={{ className: "active" }}
+          >
+            <span className="avatar">{name.slice(0, 2).toUpperCase()}</span>
+            <span>
+              <strong>{name}</strong>
+              <small>{email}</small>
+            </span>
+          </Link>
           <button className="icon-button" type="button" onClick={signOut}>
             Sign out
           </button>
@@ -213,14 +226,18 @@ function WorkspaceApp({
             </label>
           ) : (
             <p className="topbar-context">
-              {selected
-                ? `${selected.slug} :: ${view}`
-                : `workspace :: ${view}`}
+              {view === "account"
+                ? "account :: settings"
+                : selected
+                  ? `${selected.slug} :: ${view}`
+                  : `workspace :: ${view}`}
             </p>
           )}
         </header>
 
-        {organizations.isPending ? (
+        {view === "account" ? (
+          <AccountSettings />
+        ) : organizations.isPending ? (
           <div className="loading">Loading workspaces…</div>
         ) : organizations.isError ? (
           <div className="state-panel" role="alert">
@@ -272,16 +289,31 @@ function WorkspaceApp({
 }
 
 function AuthForm() {
-  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [mode, setMode] = useState<"sign-in" | "sign-up" | "forgot">("sign-in");
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError("");
+    setStatus("");
     const form = new FormData(event.currentTarget);
     const email = String(form.get("email"));
+    if (mode === "forgot") {
+      const result = await authClient.requestPasswordReset({
+        email,
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (result.error)
+        setError(result.error.message ?? "Password reset request failed");
+      else
+        setStatus("If this email exists, a password reset link has been sent.");
+      setPending(false);
+      return;
+    }
+
     const password = String(form.get("password"));
     const result =
       mode === "sign-in"
@@ -291,7 +323,20 @@ function AuthForm() {
             password,
             name: String(form.get("name")),
           });
-    if (result.error) setError(result.error.message ?? "Authentication failed");
+    if (result.error) {
+      setError(result.error.message ?? "Authentication failed");
+      setPending(false);
+      return;
+    }
+    const invitation = new URLSearchParams(window.location.search).get(
+      "invitation",
+    );
+    if (invitation) {
+      window.location.assign(
+        `/accept-invitation?id=${encodeURIComponent(invitation)}`,
+      );
+      return;
+    }
     setPending(false);
   }
 
@@ -301,8 +346,18 @@ function AuthForm() {
         <div className="auth-brand">
           <span aria-hidden="true">╂</span> VARDUM
         </div>
-        <h1>{mode === "sign-in" ? "Sign in" : "Create account"}</h1>
-        <p className="muted">Digital assets, one canonical source.</p>
+        <h1>
+          {mode === "sign-in"
+            ? "Sign in"
+            : mode === "sign-up"
+              ? "Create account"
+              : "Reset password"}
+        </h1>
+        <p className="muted">
+          {mode === "forgot"
+            ? "We will send a secure reset link."
+            : "Digital assets, one canonical source."}
+        </p>
         <form onSubmit={submit}>
           {mode === "sign-up" && (
             <label>
@@ -314,34 +369,64 @@ function AuthForm() {
             Email
             <input name="email" type="email" required autoComplete="email" />
           </label>
-          <label>
-            Password
-            <input
-              name="password"
-              type="password"
-              minLength={8}
-              required
-              autoComplete={
-                mode === "sign-in" ? "current-password" : "new-password"
-              }
-            />
-          </label>
+          {mode !== "forgot" && (
+            <label>
+              Password
+              <input
+                name="password"
+                type="password"
+                minLength={8}
+                required
+                autoComplete={
+                  mode === "sign-in" ? "current-password" : "new-password"
+                }
+              />
+            </label>
+          )}
           {error && <p role="alert">{error}</p>}
+          {status && (
+            <p className="auth-status" role="status">
+              {status}
+            </p>
+          )}
           <button className="primary-button" disabled={pending}>
             {pending
               ? "Please wait…"
               : mode === "sign-in"
                 ? "Sign in"
-                : "Create account"}
+                : mode === "sign-up"
+                  ? "Create account"
+                  : "Send reset link"}
           </button>
         </form>
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}
-        >
-          {mode === "sign-in" ? "Create an account" : "Use an existing account"}
-        </button>
+        <div className="auth-links">
+          {mode === "sign-in" ? (
+            <>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setMode("sign-up")}
+              >
+                Create an account
+              </button>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setMode("forgot")}
+              >
+                Forgot password?
+              </button>
+            </>
+          ) : (
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => setMode("sign-in")}
+            >
+              Back to sign in
+            </button>
+          )}
+        </div>
       </section>
     </main>
   );

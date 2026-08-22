@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 const developmentSecret = "development-only-secret-change-in-production";
+const optionalString = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
 
 const schema = z
   .object({
@@ -16,6 +20,20 @@ const schema = z
     TRANSFORM_SECRET: z.string().min(32).default(developmentSecret),
     BETTER_AUTH_URL: z.url().default("http://localhost:3000"),
     WEB_URL: z.url().default("http://localhost:5173"),
+    SMTP_HOST: optionalString,
+    SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
+    SMTP_SECURE: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    SMTP_USER: optionalString,
+    SMTP_PASSWORD: optionalString,
+    SMTP_FROM: optionalString.refine(
+      (value) => !value || !/[\r\n]/.test(value),
+      {
+        message: "SMTP_FROM cannot contain line breaks",
+      },
+    ),
     S3_REGION: z.string().default("us-east-1"),
     S3_BUCKET: z.string().min(3).default("varda"),
     S3_ENDPOINT: z.url().optional(),
@@ -42,6 +60,18 @@ const schema = z
       path: ["TRANSFORM_SECRET"],
     },
   )
+  .refine(
+    ({ SMTP_USER, SMTP_PASSWORD }) =>
+      Boolean(SMTP_USER) === Boolean(SMTP_PASSWORD),
+    {
+      message: "SMTP user and password must be provided together",
+      path: ["SMTP_USER"],
+    },
+  )
+  .refine(({ SMTP_HOST, SMTP_FROM }) => !SMTP_HOST || Boolean(SMTP_FROM), {
+    message: "SMTP_FROM is required when SMTP_HOST is set",
+    path: ["SMTP_FROM"],
+  })
   .refine(
     ({ S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY }) =>
       Boolean(S3_ACCESS_KEY_ID) === Boolean(S3_SECRET_ACCESS_KEY),

@@ -12,7 +12,7 @@ import {
   assetVersion,
   auditEvent,
 } from "./db/app-schema.js";
-import { organization } from "./db/auth-schema.js";
+import { apikey, organization, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import { assetDeleteQueue, assetIngestQueue, boss } from "./queue.js";
 import { createUpload, inspectUpload } from "./storage.js";
@@ -53,6 +53,11 @@ const assetPrefix = z
   .max(255)
   .regex(/^(?:[a-z0-9][a-z0-9._-]*\/)*$/)
   .default("");
+const folderPath = z
+  .string()
+  .min(2)
+  .max(255)
+  .regex(/^(?:[a-z0-9][a-z0-9._-]*\/)+$/);
 const createFolderBody = z
   .object({
     prefix: assetPrefix,
@@ -124,9 +129,29 @@ export function registerAssetRoutes(app: FastifyInstance) {
               action: auditEvent.action,
               targetType: auditEvent.targetType,
               targetId: auditEvent.targetId,
+              metadata: auditEvent.metadata,
+              actorType: auditEvent.actorType,
+              actorId: auditEvent.actorId,
+              actorName: user.name,
+              actorEmail: user.email,
+              apiKeyName: apikey.name,
               createdAt: auditEvent.createdAt,
             })
             .from(auditEvent)
+            .leftJoin(
+              user,
+              and(
+                eq(auditEvent.actorType, "user"),
+                eq(auditEvent.actorId, user.id),
+              ),
+            )
+            .leftJoin(
+              apikey,
+              and(
+                eq(auditEvent.actorType, "api_key"),
+                eq(auditEvent.actorId, apikey.id),
+              ),
+            )
             .where(eq(auditEvent.workspaceId, workspaceId))
             .orderBy(desc(auditEvent.createdAt))
             .limit(6),
@@ -136,7 +161,31 @@ export function registerAssetRoutes(app: FastifyInstance) {
           assets: assets?.count ?? 0,
           versions: versions?.count ?? 0,
           storageBytes: storage?.bytes ?? 0,
-          activity,
+          activity: activity.map(
+            ({
+              actorName,
+              actorEmail,
+              apiKeyName,
+              actorType,
+              actorId,
+              ...event
+            }) => ({
+              ...event,
+              actor: {
+                type: actorType,
+                id: actorId,
+                name:
+                  actorName ??
+                  apiKeyName ??
+                  (actorType === "system"
+                    ? "System"
+                    : actorType === "api_key"
+                      ? "API key"
+                      : "Unknown user"),
+                email: actorEmail,
+              },
+            }),
+          ),
         };
       });
     },
@@ -187,6 +236,88 @@ export function registerAssetRoutes(app: FastifyInstance) {
       });
 
       return reply.code(201).send({ name: request.body.name, prefix });
+    },
+  );
+
+  api.delete(
+    "/api/workspaces/:workspaceId/folders",
+    {
+      schema: {
+        params: workspaceParams,
+        querystring: z.object({ prefix: folderPath }),
+      },
+    },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const { prefix } = request.query;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "delete",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      const result = await inWorkspace(workspaceId, async (transaction) => {
+        const [[stored], [assets], [children]] = await Promise.all([
+          transaction
+            .select({ id: assetFolder.id })
+            .from(assetFolder)
+            .where(
+              and(
+                eq(assetFolder.workspaceId, workspaceId),
+                eq(assetFolder.prefix, prefix),
+              ),
+            ),
+          transaction
+            .select({ count: count() })
+            .from(asset)
+            .where(
+              and(
+                eq(asset.workspaceId, workspaceId),
+                sql`starts_with(${asset.key}, ${prefix})`,
+              ),
+            ),
+          transaction
+            .select({ count: count() })
+            .from(assetFolder)
+            .where(
+              and(
+                eq(assetFolder.workspaceId, workspaceId),
+                sql`starts_with(${assetFolder.prefix}, ${prefix})`,
+                sql`${assetFolder.prefix} <> ${prefix}`,
+              ),
+            ),
+        ]);
+
+        if ((assets?.count ?? 0) > 0 || (children?.count ?? 0) > 0)
+          return "not-empty" as const;
+        if (!stored) return "missing" as const;
+
+        await transaction
+          .delete(assetFolder)
+          .where(eq(assetFolder.id, stored.id));
+        await transaction.insert(auditEvent).values({
+          workspaceId,
+          actorType: authorization.principal.actorType,
+          actorId: authorization.principal.actorId,
+          action: "folder.deleted",
+          targetType: "folder",
+          targetId: stored.id,
+          metadata: { prefix },
+          requestId: request.id,
+        });
+        return "deleted" as const;
+      });
+
+      if (result === "not-empty")
+        return reply
+          .code(409)
+          .send({ error: "Folder must be empty before it can be deleted" });
+      if (result === "missing")
+        return reply.code(404).send({ error: "Folder not found" });
+      return reply.code(204).send();
     },
   );
 
@@ -497,7 +628,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             action: "asset.created",
             targetType: "asset",
             targetId: row.id,
-            metadata: { key: row.key },
+            metadata: { key: row.key, displayName: row.displayName },
             requestId: request.id,
           });
 
@@ -532,7 +663,11 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const storageKey = `originals/${workspaceId}/${assetId}/${versionId}/source`;
       const version = await inWorkspace(workspaceId, async (transaction) => {
         const [target] = await transaction
-          .select({ id: asset.id })
+          .select({
+            id: asset.id,
+            key: asset.key,
+            displayName: asset.displayName,
+          })
           .from(asset)
           .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
           .for("update");
@@ -563,7 +698,15 @@ export function registerAssetRoutes(app: FastifyInstance) {
           action: "asset.version_created",
           targetType: "asset_version",
           targetId: versionId,
-          metadata: { assetId, number },
+          metadata: {
+            assetId,
+            key: target.key,
+            displayName: target.displayName,
+            number,
+            filename: request.body.filename,
+            mimeType: request.body.mimeType,
+            size: request.body.size,
+          },
           requestId: request.id,
         });
 
@@ -644,8 +787,15 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       const status = await inWorkspace(workspaceId, async (transaction) => {
         const [current] = await transaction
-          .select({ status: assetVersion.status })
+          .select({
+            status: assetVersion.status,
+            number: assetVersion.number,
+            filename: assetVersion.filename,
+            key: asset.key,
+            displayName: asset.displayName,
+          })
           .from(assetVersion)
+          .innerJoin(asset, eq(asset.id, assetVersion.assetId))
           .where(eq(assetVersion.id, versionId))
           .for("update");
         if (!current) return null;
@@ -673,7 +823,13 @@ export function registerAssetRoutes(app: FastifyInstance) {
           action: "asset.version_queued",
           targetType: "asset_version",
           targetId: versionId,
-          metadata: { assetId },
+          metadata: {
+            assetId,
+            key: current.key,
+            displayName: current.displayName,
+            number: current.number,
+            filename: current.filename,
+          },
           requestId: request.id,
         });
 

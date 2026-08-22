@@ -36,6 +36,14 @@ export type WorkspaceMember = {
   name: string;
   email: string;
 };
+export type WorkspaceInvitation = {
+  id: string;
+  email: string;
+  role: "owner" | "editor" | "viewer";
+  status: "pending";
+  expiresAt: string;
+  createdAt: string;
+};
 export type WorkspaceApiKey = {
   id: string;
   name: string | null;
@@ -54,6 +62,13 @@ export type WorkspaceOverview = {
     action: string;
     targetType: string;
     targetId: string;
+    metadata: Record<string, unknown>;
+    actor: {
+      type: "user" | "api_key" | "system";
+      id: string | null;
+      name: string;
+      email: string | null;
+    };
     createdAt: string;
   }>;
 };
@@ -71,6 +86,17 @@ export function updateWorkspace(workspaceId: string, name: string) {
       body: JSON.stringify({ name }),
     },
   );
+}
+
+export function deleteWorkspace(
+  workspaceId: string,
+  confirmation: string,
+) {
+  return request(`/api/workspaces/${workspaceId}`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirmation }),
+  });
 }
 
 export function listWorkspaceMembers(workspaceId: string) {
@@ -91,6 +117,52 @@ export function updateWorkspaceMemberRole(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ role }),
     },
+  );
+}
+
+export function listWorkspaceInvitations(workspaceId: string) {
+  return request<{ invitations: WorkspaceInvitation[] }>(
+    `/api/workspaces/${workspaceId}/invitations`,
+  );
+}
+
+export function createWorkspaceInvitation(
+  workspaceId: string,
+  input: Pick<WorkspaceInvitation, "email" | "role">,
+) {
+  return request<WorkspaceInvitation>(
+    `/api/workspaces/${workspaceId}/invitations`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function resendWorkspaceInvitation(
+  workspaceId: string,
+  invitationId: string,
+) {
+  return request<{ expiresAt: string }>(
+    `/api/workspaces/${workspaceId}/invitations/${invitationId}/resend`,
+    { method: "POST" },
+  );
+}
+
+export function revokeWorkspaceInvitation(
+  workspaceId: string,
+  invitationId: string,
+) {
+  return request(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
+    method: "DELETE",
+  });
+}
+
+export function acceptWorkspaceInvitation(invitationId: string) {
+  return request<{ workspaceId: string; workspaceName: string }>(
+    `/api/invitations/${invitationId}/accept`,
+    { method: "POST" },
   );
 }
 
@@ -129,6 +201,13 @@ export function createFolder(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ prefix, name }),
+  });
+}
+
+export function deleteFolder(workspaceId: string, prefix: string) {
+  const query = new URLSearchParams({ prefix });
+  return request<void>(`/api/workspaces/${workspaceId}/folders?${query}`, {
+    method: "DELETE",
   });
 }
 
@@ -184,6 +263,7 @@ export async function uploadVersion(
   for (const [key, value] of Object.entries(version.upload.fields))
     form.append(key, value);
   form.append("file", file);
+  // pi-lens-ignore: ts-ssrf
   const uploaded = await fetch(validateUploadUrl(version.upload.url), {
     method: version.upload.method,
     body: form,
