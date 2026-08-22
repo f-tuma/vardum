@@ -665,6 +665,13 @@ button:hover {
   margin: 0;
   accent-color: var(--violet);
 }
+.vard-create-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 1rem 1rem;
+}
 .settings-panel label small {
   color: var(--muted);
   font: 0.55rem / 1.5 var(--mono);

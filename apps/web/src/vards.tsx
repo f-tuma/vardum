@@ -117,16 +117,18 @@ export function VardsPage({
                 Name
                 <input name="name" maxLength={80} required />
               </label>
-              <label className="checkbox-label">
-                <input name="isPublic" type="checkbox" />
-                Public manifest — no API key required for pull
-              </label>
               {error && (
                 <p className="error-strip" role="alert">
                   {error}
                 </p>
               )}
-              <button className="primary-button">Create Vard</button>
+              <div className="vard-create-row">
+                <label className="checkbox-label">
+                  <input name="isPublic" type="checkbox" />
+                  Public manifest — no API key required for pull
+                </label>
+                <button className="primary-button">Create Vard</button>
+              </div>
             </form>
           </section>
         )}
