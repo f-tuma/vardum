@@ -885,8 +885,20 @@ button:hover {
 }
 .organization-workspace-list a,
 .vard-list a {
-  color: var(--violet);
-  font: 0.58rem var(--mono);
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.75rem;
+  border: 1px solid var(--violet);
+  color: white;
+  background: #6e249f;
+  font: 650 0.64rem / 1 var(--mono);
+  text-decoration: none;
+}
+.vard-list a:hover {
+  border-color: #666d79;
+  color: white;
 }
 .domain-form {
   grid-template-columns: minmax(0, 1fr) auto;
