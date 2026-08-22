@@ -670,7 +670,7 @@ button:hover {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0 1rem 1rem;
+  padding: 0 0 1rem;
 }
 .settings-panel label small {
   color: var(--muted);
