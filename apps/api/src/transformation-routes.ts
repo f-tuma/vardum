@@ -35,14 +35,14 @@ export function registerTransformationRoutes(app: FastifyInstance) {
                         customDomain: workspaceSettings.customDomain,
                     })
                     .from(asset)
-                    .innerJoin(
-                        workspace,
-                        eq(workspace.id, asset.workspaceId),
-                    )
+                    .innerJoin(workspace, eq(workspace.id, asset.workspaceId))
                     .leftJoin(
                         workspaceSettings,
                         and(
-                            eq(workspaceSettings.workspaceId, asset.workspaceId),
+                            eq(
+                                workspaceSettings.workspaceId,
+                                asset.workspaceId,
+                            ),
                             isNotNull(workspaceSettings.customDomainVerifiedAt),
                         ),
                     )

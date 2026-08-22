@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  normalizeCustomDomain,
-  verifyDomainRecords,
-} from "./domain-routes.js";
+import { normalizeCustomDomain, verifyDomainRecords } from "./domain-routes.js";
 
 test("custom domains normalize IDNs and reject URLs or local hosts", () => {
-  assert.equal(normalizeCustomDomain(" BÜCHER.Example. "), "xn--bcher-kva.example");
+  assert.equal(
+    normalizeCustomDomain(" BÜCHER.Example. "),
+    "xn--bcher-kva.example",
+  );
   assert.throws(() => normalizeCustomDomain("https://assets.example.com"));
   assert.throws(() => normalizeCustomDomain("localhost"));
   assert.throws(() => normalizeCustomDomain("127.0.0.1"));

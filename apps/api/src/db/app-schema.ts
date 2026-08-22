@@ -90,6 +90,41 @@ export const workspaceSettings = pgTable(
   ],
 ).enableRLS();
 
+export const vard = pgTable(
+  "vard",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    isPublic: boolean("is_public").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    updatedBy: text("updated_by").notNull(),
+  },
+  (table) => [
+    uniqueIndex("vard_workspace_name_uidx").on(table.workspaceId, table.name),
+    unique("vard_workspace_id_unique").on(table.workspaceId, table.id),
+    index("vard_workspace_idx").on(table.workspaceId),
+    check(
+      "vard_name_length_check",
+      sql`length(${table.name}) between 1 and 80`,
+    ),
+    tenantPolicy(table.workspaceId),
+    pgPolicy("public_vard_lookup", {
+      for: "select",
+      using: sql`${table.isPublic} = true`,
+    }),
+  ],
+).enableRLS();
+
 export const assetFolder = pgTable(
   "asset_folder",
   {
@@ -192,6 +227,68 @@ export const assetVersion = pgTable(
     index("asset_version_asset_idx").on(table.assetId),
     check("asset_version_number_check", sql`${table.number} > 0`),
     check("asset_version_size_check", sql`${table.size} > 0`),
+    tenantPolicy(table.workspaceId),
+  ],
+).enableRLS();
+
+export type VardTransformation = {
+  w?: number;
+  h?: number;
+  fit?: "cover" | "contain" | "fill" | "inside" | "outside";
+  format?: "avif" | "jpeg" | "png" | "webp";
+  q?: number;
+};
+
+export const vardItem = pgTable(
+  "vard_item",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    vardId: uuid("vard_id").notNull(),
+    assetId: uuid("asset_id").notNull(),
+    versionId: uuid("version_id"),
+    outputPath: text("output_path").notNull(),
+    transformation: jsonb("transformation").$type<VardTransformation>(),
+    writable: boolean("writable").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    updatedBy: text("updated_by").notNull(),
+  },
+  (table) => [
+    uniqueIndex("vard_item_output_uidx").on(table.vardId, table.outputPath),
+    foreignKey({
+      name: "vard_item_vard_fk",
+      columns: [table.workspaceId, table.vardId],
+      foreignColumns: [vard.workspaceId, vard.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "vard_item_asset_fk",
+      columns: [table.workspaceId, table.assetId],
+      foreignColumns: [asset.workspaceId, asset.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "vard_item_version_fk",
+      columns: [table.workspaceId, table.versionId],
+      foreignColumns: [assetVersion.workspaceId, assetVersion.id],
+    }),
+    index("vard_item_workspace_idx").on(table.workspaceId),
+    index("vard_item_vard_idx").on(table.vardId),
+    check(
+      "vard_item_output_path_check",
+      sql`length(${table.outputPath}) between 1 and 500 and ${table.outputPath} !~ '(^/|\\\\|(^|/)\\.\\.?(/|$))'`,
+    ),
+    check(
+      "vard_item_writable_check",
+      sql`not (${table.writable} and (${table.versionId} is not null or ${table.transformation} is not null))`,
+    ),
     tenantPolicy(table.workspaceId),
   ],
 ).enableRLS();

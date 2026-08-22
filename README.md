@@ -76,6 +76,17 @@ Organization creation is enforced by the API through `ORGANIZATION_CREATION`:
 comma-separated `ORGANIZATION_CREATOR_EMAILS`. Self-hosters can use `open` on a
 trusted instance or allowlist the bootstrap administrator.
 
+## Vards and CLI sync
+
+A Vard is a project manifest assembled in the workspace UI. Each item maps an
+asset to a repository-relative output path and may follow latest, pin a version,
+or request a delivery transformation. Commit the generated `vardum.json`, then
+use the Node.js CLI to pull the exact asset package in local development or CI.
+Private Vards and push operations use `VARDUM_API_KEY`.
+
+See [`apps/cli/README.md`](apps/cli/README.md) for setup, conflict handling,
+lockfiles, safe deletion and bulk folder push.
+
 ## Custom domains
 
 Set `CUSTOM_DOMAIN_TARGET` to the public hostname that routes delivery traffic

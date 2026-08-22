@@ -135,7 +135,9 @@ export function registerOrganizationRoutes(app: FastifyInstance) {
         return reply.code(201).send(created);
       } catch (error) {
         if (isUniqueViolation(error))
-          return reply.code(409).send({ error: "Workspace slug is already used" });
+          return reply
+            .code(409)
+            .send({ error: "Workspace slug is already used" });
         throw error;
       }
     },

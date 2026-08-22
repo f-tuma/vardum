@@ -16,6 +16,7 @@ import { registerDomainRoutes } from "./domain-routes.js";
 import { registerInvitationRoutes } from "./invitation-routes.js";
 import { registerOrganizationRoutes } from "./organization-routes.js";
 import { registerTransformationRoutes } from "./transformation-routes.js";
+import { registerVardRoutes } from "./vard-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
 
 export function buildApp() {
@@ -38,6 +39,7 @@ export function buildApp() {
   registerDomainRoutes(app);
   registerInvitationRoutes(app);
   registerAssetRoutes(app);
+  registerVardRoutes(app);
   registerTransformationRoutes(app);
   registerDeliveryRoutes(app);
 

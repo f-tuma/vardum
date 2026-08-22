@@ -66,10 +66,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           .from(member)
           .innerJoin(user, eq(user.id, member.userId))
           .where(
-            eq(
-              member.organizationId,
-              authorization.principal.organizationId,
-            ),
+            eq(member.organizationId, authorization.principal.organizationId),
           )
           .orderBy(asc(member.createdAt)),
       );
@@ -108,10 +105,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           .where(
             and(
               eq(member.id, memberId),
-              eq(
-                member.organizationId,
-                authorization.principal.organizationId,
-              ),
+              eq(member.organizationId, authorization.principal.organizationId),
             ),
           );
         if (!current) return { status: "missing" as const };

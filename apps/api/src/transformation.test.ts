@@ -5,6 +5,7 @@ import {
   signTransformation,
   transformationSchema,
   transformedAssetUrl,
+  transformedVersionUrl,
   verifyTransformation,
 } from "./transformation.js";
 
@@ -39,6 +40,15 @@ test("transformations are canonical and signatures reject tampering", () => {
       "assets.example.com",
     ),
     /^https:\/\/assets\.example\.com\/w\/brand\/logo\?/,
+  );
+  assert.match(
+    transformedVersionUrl(
+      "workspace",
+      "brand/logo",
+      "a9eaadf4-c18e-4f42-bf24-7569219f811c",
+      transformation,
+    ),
+    /^\/w\/workspace\/__v\/a9eaadf4-c18e-4f42-bf24-7569219f811c\/brand\/logo\?/,
   );
   assert.equal(
     verifyTransformation(

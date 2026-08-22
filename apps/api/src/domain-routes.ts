@@ -13,7 +13,8 @@ import { inWorkspace } from "./db/tenant.js";
 
 const workspaceParams = z.object({ workspaceId: z.string().min(1) });
 const domainBody = z.object({ domain: z.string().trim().min(1).max(253) });
-const domainPattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const domainPattern =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const challengePrefix = "vardum-verification=";
 const domainTarget = config.CUSTOM_DOMAIN_TARGET
   ? normalizeCustomDomain(config.CUSTOM_DOMAIN_TARGET)
@@ -60,7 +61,9 @@ export function registerDomainRoutes(app: FastifyInstance) {
       const { workspaceId } = request.params;
       const authorization = await authorizeWorkspaceAdmin(request, workspaceId);
       if (!("principal" in authorization))
-        return reply.code(authorization.statusCode).send({ error: authorization.error });
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
 
       const [record] = await inWorkspace(workspaceId, (transaction) =>
         transaction
@@ -81,11 +84,15 @@ export function registerDomainRoutes(app: FastifyInstance) {
     { schema: { params: workspaceParams, body: domainBody } },
     async (request, reply) => {
       if (!domainTarget)
-        return reply.code(503).send({ error: "Custom domains are not configured" });
+        return reply
+          .code(503)
+          .send({ error: "Custom domains are not configured" });
       const { workspaceId } = request.params;
       const authorization = await authorizeWorkspaceAdmin(request, workspaceId);
       if (!("principal" in authorization))
-        return reply.code(authorization.statusCode).send({ error: authorization.error });
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
 
       let domain: string;
       try {
@@ -157,11 +164,15 @@ export function registerDomainRoutes(app: FastifyInstance) {
     { schema: { params: workspaceParams } },
     async (request, reply) => {
       if (!domainTarget)
-        return reply.code(503).send({ error: "Custom domains are not configured" });
+        return reply
+          .code(503)
+          .send({ error: "Custom domains are not configured" });
       const { workspaceId } = request.params;
       const authorization = await authorizeWorkspaceAdmin(request, workspaceId);
       if (!("principal" in authorization))
-        return reply.code(authorization.statusCode).send({ error: authorization.error });
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
 
       const [pending] = await inWorkspace(workspaceId, (transaction) =>
         transaction
@@ -174,7 +185,9 @@ export function registerDomainRoutes(app: FastifyInstance) {
           .where(eq(workspaceSettings.workspaceId, workspaceId)),
       );
       if (!pending?.domain || !pending.token)
-        return reply.code(404).send({ error: "Custom domain is not configured" });
+        return reply
+          .code(404)
+          .send({ error: "Custom domain is not configured" });
 
       const checks = await verifyDomainRecords(
         pending.domain,
@@ -224,7 +237,9 @@ export function registerDomainRoutes(app: FastifyInstance) {
         return { ...current, verifiedAt };
       });
       if (!record)
-        return reply.code(409).send({ error: "Custom domain changed during verification" });
+        return reply
+          .code(409)
+          .send({ error: "Custom domain changed during verification" });
       return { ...domainResponse(record), checks };
     },
   );
@@ -236,7 +251,9 @@ export function registerDomainRoutes(app: FastifyInstance) {
       const { workspaceId } = request.params;
       const authorization = await authorizeWorkspaceAdmin(request, workspaceId);
       if (!("principal" in authorization))
-        return reply.code(authorization.statusCode).send({ error: authorization.error });
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
 
       await inWorkspace(workspaceId, async (transaction) => {
         const [current] = await transaction
@@ -280,15 +297,20 @@ function domainResponse(
   const token = record?.token ?? null;
   return {
     domain,
-    status: domain ? record?.verifiedAt ? "verified" : "pending" : "unconfigured",
+    status: domain
+      ? record?.verifiedAt
+        ? "verified"
+        : "pending"
+      : "unconfigured",
     verifiedAt: record?.verifiedAt ?? null,
     target: domainTarget,
-    verification: domain && token
-      ? {
-          name: `_vardum-challenge.${domain}`,
-          value: `${challengePrefix}${token}`,
-        }
-      : null,
+    verification:
+      domain && token
+        ? {
+            name: `_vardum-challenge.${domain}`,
+            value: `${challengePrefix}${token}`,
+          }
+        : null,
   };
 }
 

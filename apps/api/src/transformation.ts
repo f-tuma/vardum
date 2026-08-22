@@ -54,12 +54,32 @@ export function transformedAssetUrl(
   input: Transformation,
   customDomain?: string | null,
 ) {
+  return transformedUrl(workspaceSlug, key, input, customDomain);
+}
+
+export function transformedVersionUrl(
+  workspaceSlug: string,
+  key: string,
+  versionId: string,
+  input: Transformation,
+) {
+  return transformedUrl(workspaceSlug, key, input, null, versionId);
+}
+
+function transformedUrl(
+  workspaceSlug: string,
+  key: string,
+  input: Transformation,
+  customDomain?: string | null,
+  versionId?: string,
+) {
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   const query = canonicalizeTransformation(input);
   const signed = signTransformation(workspaceSlug, key, input);
+  const version = versionId ? `__v/${encodeURIComponent(versionId)}/` : "";
   const path = customDomain
-    ? `https://${customDomain}/w/${encodedKey}`
-    : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
+    ? `https://${customDomain}/w/${version}${encodedKey}`
+    : `/w/${encodeURIComponent(workspaceSlug)}/${version}${encodedKey}`;
   return `${path}?${query}&sig=${encodeURIComponent(signed)}`;
 }
 

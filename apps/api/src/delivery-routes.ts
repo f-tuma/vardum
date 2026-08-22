@@ -216,7 +216,10 @@ async function deliverVersion(
           bytes,
         });
       } catch (error) {
-        request.log.warn({ error, versionId }, "Delivery analytics write failed");
+        request.log.warn(
+          { error, versionId },
+          "Delivery analytics write failed",
+        );
       }
     }
 

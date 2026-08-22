@@ -4,7 +4,10 @@ import { canCreateOrganization } from "./organization-policy.js";
 
 test("organization creation supports open, allowlist, and disabled modes", () => {
   assert.equal(canCreateOrganization("any@example.com", "open", ""), true);
-  assert.equal(canCreateOrganization("owner@example.com", "disabled", ""), false);
+  assert.equal(
+    canCreateOrganization("owner@example.com", "disabled", ""),
+    false,
+  );
   assert.equal(
     canCreateOrganization(
       "OWNER@example.com",
@@ -14,7 +17,11 @@ test("organization creation supports open, allowlist, and disabled modes", () =>
     true,
   );
   assert.equal(
-    canCreateOrganization("stranger@example.com", "allowlist", "owner@example.com"),
+    canCreateOrganization(
+      "stranger@example.com",
+      "allowlist",
+      "owner@example.com",
+    ),
     false,
   );
 });

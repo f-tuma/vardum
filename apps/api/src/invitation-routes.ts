@@ -115,9 +115,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
         const [organizationRecord] = await transaction
           .select({ name: organization.name })
           .from(organization)
-          .where(
-            eq(organization.id, authorization.principal.organizationId),
-          );
+          .where(eq(organization.id, authorization.principal.organizationId));
         const [inviter] = await transaction
           .select({ name: user.name })
           .from(user)
@@ -131,10 +129,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .innerJoin(user, eq(user.id, member.userId))
           .where(
             and(
-              eq(
-                member.organizationId,
-                authorization.principal.organizationId,
-              ),
+              eq(member.organizationId, authorization.principal.organizationId),
               eq(user.email, request.body.email),
             ),
           );

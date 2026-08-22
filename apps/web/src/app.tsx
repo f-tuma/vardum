@@ -6,6 +6,7 @@ import { getOrganizationDirectory } from "./asset-api";
 import { AssetDashboard } from "./asset-dashboard";
 import { authClient } from "./auth-client";
 import { OrganizationSettings } from "./organization-settings";
+import { VardEditor, VardsPage } from "./vards";
 import { WorkspaceOverview } from "./workspace-overview";
 import { WorkspaceSettings } from "./workspace-settings";
 
@@ -13,14 +14,22 @@ export function App({
   routeWorkspaceId,
   routeOrganizationId,
   assetId,
+  vardId,
   prefix = "",
   view = "overview",
 }: {
   routeWorkspaceId?: string;
   routeOrganizationId?: string;
   assetId?: string;
+  vardId?: string;
   prefix?: string;
-  view?: "overview" | "assets" | "settings" | "organization" | "account";
+  view?:
+    | "overview"
+    | "assets"
+    | "vards"
+    | "settings"
+    | "organization"
+    | "account";
 }) {
   const session = authClient.useSession();
   if (session.isPending) return <div className="loading">Loading…</div>;
@@ -32,6 +41,7 @@ export function App({
       routeWorkspaceId={routeWorkspaceId}
       routeOrganizationId={routeOrganizationId}
       assetId={assetId}
+      vardId={vardId}
       prefix={prefix}
       view={view}
     />
@@ -44,6 +54,7 @@ function WorkspaceApp({
   routeWorkspaceId,
   routeOrganizationId,
   assetId,
+  vardId,
   prefix,
   view,
 }: {
@@ -52,8 +63,15 @@ function WorkspaceApp({
   routeWorkspaceId?: string;
   routeOrganizationId?: string;
   assetId?: string;
+  vardId?: string;
   prefix: string;
-  view: "overview" | "assets" | "settings" | "organization" | "account";
+  view:
+    | "overview"
+    | "assets"
+    | "vards"
+    | "settings"
+    | "organization"
+    | "account";
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -71,13 +89,16 @@ function WorkspaceApp({
     organization.workspaces.map((workspace) => ({
       ...workspace,
       organizationId: organization.id,
+      organizationRole: organization.role,
     })),
   );
   const routeWorkspace = allWorkspaces.find(
     (workspace) => workspace.id === routeWorkspaceId,
   );
   const preferredOrganizationId =
-    routeOrganizationId || selectedOrganizationId || routeWorkspace?.organizationId;
+    routeOrganizationId ||
+    selectedOrganizationId ||
+    routeWorkspace?.organizationId;
   const selected =
     allWorkspaces.find(
       (workspace) =>
@@ -166,13 +187,17 @@ function WorkspaceApp({
         href={
           view === "assets"
             ? "#assets"
-            : view === "settings"
-              ? "#settings"
-              : view === "organization"
-                ? "#organization-settings"
-                : view === "account"
-                  ? "#account"
-                  : "#overview"
+            : view === "vards"
+              ? vardId
+                ? "#vard-editor"
+                : "#vards"
+              : view === "settings"
+                ? "#settings"
+                : view === "organization"
+                  ? "#organization-settings"
+                  : view === "account"
+                    ? "#account"
+                    : "#overview"
         }
       >
         Skip to content
@@ -239,11 +264,18 @@ function WorkspaceApp({
               <span>02</span> Assets
             </Link>
             <Link
+              to="/workspaces/$workspaceId/vards"
+              params={{ workspaceId: selected.id }}
+              activeProps={{ className: "active" }}
+            >
+              <span>03</span> Vards
+            </Link>
+            <Link
               to="/workspaces/$workspaceId/settings"
               params={{ workspaceId: selected.id }}
               activeProps={{ className: "active" }}
             >
-              <span>03</span> Settings
+              <span>04</span> Settings
             </Link>
             {selectedOrganization && (
               <Link
@@ -251,7 +283,7 @@ function WorkspaceApp({
                 params={{ organizationId: selectedOrganization.id }}
                 activeProps={{ className: "active" }}
               >
-                <span>04</span> Organization
+                <span>05</span> Organization
               </Link>
             )}
           </nav>
@@ -312,8 +344,7 @@ function WorkspaceApp({
           <div className="state-panel" role="alert">
             {directory.error.message}
           </div>
-        ) : !organizations.length &&
-          directory.data?.canCreateOrganization ? (
+        ) : !organizations.length && directory.data?.canCreateOrganization ? (
           <div className="empty-workspace">
             <h1>Create an organization</h1>
             <p>Organizations own members, roles, and workspaces.</p>
@@ -339,6 +370,20 @@ function WorkspaceApp({
               workspaceSlug={selected.slug}
               workspaceName={selected.name}
             />
+          ) : view === "vards" ? (
+            vardId ? (
+              <VardEditor
+                workspaceId={selected.id}
+                vardId={vardId}
+                canEdit={selected.organizationRole !== "viewer"}
+              />
+            ) : (
+              <VardsPage
+                workspaceId={selected.id}
+                workspaceName={selected.name}
+                canEdit={selected.organizationRole !== "viewer"}
+              />
+            )
           ) : view === "settings" ? (
             <WorkspaceSettings
               workspaceId={selected.id}

@@ -158,7 +158,10 @@ test("organization workspace creation is authenticated and validates slugs", asy
   const app = buildApp();
   context.after(() => app.close());
 
-  const directory = await app.inject({ method: "GET", url: "/api/organizations" });
+  const directory = await app.inject({
+    method: "GET",
+    url: "/api/organizations",
+  });
   const invalid = await app.inject({
     method: "POST",
     url: "/api/organizations/organization/workspaces",
@@ -196,4 +199,28 @@ test("asset keys cannot escape their virtual path", async (context) => {
     payload: { key: "../logo", displayName: "Logo" },
   });
   assert.equal(response.statusCode, 400);
+});
+
+test("Vard routes validate manifests before authorization", async (context) => {
+  const app = buildApp();
+  context.after(() => app.close());
+
+  const invalid = await app.inject({
+    method: "PUT",
+    url: "/api/workspaces/workspace/vards/00000000-0000-4000-8000-000000000000/items",
+    payload: {
+      items: [
+        {
+          assetId: "00000000-0000-4000-8000-000000000000",
+          outputPath: "../secret.png",
+        },
+      ],
+    },
+  });
+  const manifest = await app.inject({
+    method: "GET",
+    url: "/api/workspaces/workspace/vards/00000000-0000-4000-8000-000000000000/manifest",
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(manifest.statusCode, 401);
 });

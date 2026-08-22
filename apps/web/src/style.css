@@ -820,7 +820,8 @@ button:hover {
 .member-list,
 .invitation-list,
 .api-key-list,
-.organization-workspace-list {
+.organization-workspace-list,
+.vard-list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -828,7 +829,8 @@ button:hover {
 .member-list li,
 .invitation-list li,
 .api-key-list li,
-.organization-workspace-list li {
+.organization-workspace-list li,
+.vard-list li {
   display: flex;
   min-height: 64px;
   align-items: center;
@@ -838,7 +840,8 @@ button:hover {
 }
 .member-identity,
 .api-key-list li > span,
-.organization-workspace-list li > span {
+.organization-workspace-list li > span,
+.vard-list li > span {
   min-width: 0;
   flex: 1;
 }
@@ -847,7 +850,9 @@ button:hover {
 .api-key-list strong,
 .api-key-list small,
 .organization-workspace-list strong,
-.organization-workspace-list small {
+.organization-workspace-list small,
+.vard-list strong,
+.vard-list small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -855,12 +860,14 @@ button:hover {
 }
 .member-identity strong,
 .api-key-list strong,
-.organization-workspace-list strong {
+.organization-workspace-list strong,
+.vard-list strong {
   font: 0.65rem var(--mono);
 }
 .member-identity small,
 .api-key-list small,
-.organization-workspace-list small {
+.organization-workspace-list small,
+.vard-list small {
   margin-top: 0.3rem;
   color: var(--muted);
   font: 0.55rem var(--mono);
@@ -869,7 +876,8 @@ button:hover {
   width: 140px;
   flex: none;
 }
-.organization-workspace-list a {
+.organization-workspace-list a,
+.vard-list a {
   color: var(--violet);
   font: 0.58rem var(--mono);
 }
@@ -1584,6 +1592,92 @@ button:hover {
 .workspace-view .loading {
   min-height: calc(100vh - 58px);
 }
+.vard-config {
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+  color: #bb74f0;
+  background: #090b0e;
+  font: 0.62rem / 1.6 var(--mono);
+}
+.vard-add-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.vard-add-item label {
+  min-width: 0;
+}
+.vard-add-item select {
+  width: 100%;
+}
+.vard-items {
+  display: grid;
+}
+.vard-item {
+  border-bottom: 1px solid var(--line);
+}
+.vard-item > header {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #0c0f13;
+}
+.vard-item > header > span {
+  min-width: 0;
+  flex: 1;
+}
+.vard-item > header strong,
+.vard-item > header small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vard-item > header strong {
+  font: 0.65rem var(--mono);
+}
+.vard-item > header small {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font: 0.55rem var(--mono);
+}
+.vard-item-fields {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(100px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.vard-item-fields input,
+.vard-item-fields select {
+  width: 100%;
+}
+.vard-item-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0 1rem 1rem;
+}
+.vard-save-actions {
+  padding: 1rem;
+}
+.vard-delete-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+}
+.vard-delete-row p {
+  margin: 0;
+  color: var(--muted);
+  font: 0.58rem var(--mono);
+}
 
 @media (max-width: 900px) {
   .asset-detail {
@@ -1625,7 +1719,7 @@ button:hover {
   }
   .sidebar-nav {
     grid-column: 1 / -1;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
     margin: 0;
     padding-top: 0.75rem;
   }
@@ -1646,6 +1740,12 @@ button:hover {
   .topbar {
     height: 52px;
     padding: 8px 0.9rem;
+  }
+  .vard-item-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .vard-item-fields > label:first-child {
+    grid-column: 1 / -1;
   }
   .dashboard-main {
     padding: 0.9rem;
@@ -1690,6 +1790,17 @@ button:hover {
 }
 
 @media (max-width: 480px) {
+  .vard-add-item,
+  .vard-item-fields {
+    grid-template-columns: 1fr;
+  }
+  .vard-item-fields > label:first-child {
+    grid-column: auto;
+  }
+  .vard-delete-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
   .overview-heading {
     align-items: flex-start;
     flex-direction: column;

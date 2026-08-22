@@ -17,10 +17,7 @@ import {
 } from "./db/app-schema.js";
 import { apikey, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
-import {
-  deliveryWindowStart,
-  fillDeliveryDays,
-} from "./delivery-analytics.js";
+import { deliveryWindowStart, fillDeliveryDays } from "./delivery-analytics.js";
 import { assetDeleteQueue, assetIngestQueue, boss } from "./queue.js";
 import { createUpload, inspectUpload } from "./storage.js";
 import { transformedAssetUrl, type Transformation } from "./transformation.js";
@@ -111,83 +108,83 @@ export function registerAssetRoutes(app: FastifyInstance) {
         const deliveryDay = sql<string>`to_char(${deliveryEvent.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
         const [[assets], [versions], [storage], activity, deliveryRows] =
           await Promise.all([
-          transaction
-            .select({ count: count() })
-            .from(asset)
-            .where(eq(asset.workspaceId, workspaceId)),
-          transaction
-            .select({ count: count() })
-            .from(assetVersion)
-            .where(eq(assetVersion.workspaceId, workspaceId)),
-          transaction
-            .select({
-              bytes:
-                sql<number>`coalesce(sum(${assetVersion.size}), 0)`.mapWith(
-                  Number,
+            transaction
+              .select({ count: count() })
+              .from(asset)
+              .where(eq(asset.workspaceId, workspaceId)),
+            transaction
+              .select({ count: count() })
+              .from(assetVersion)
+              .where(eq(assetVersion.workspaceId, workspaceId)),
+            transaction
+              .select({
+                bytes:
+                  sql<number>`coalesce(sum(${assetVersion.size}), 0)`.mapWith(
+                    Number,
+                  ),
+              })
+              .from(assetVersion)
+              .where(
+                and(
+                  eq(assetVersion.workspaceId, workspaceId),
+                  eq(assetVersion.status, "ready"),
                 ),
-            })
-            .from(assetVersion)
-            .where(
-              and(
-                eq(assetVersion.workspaceId, workspaceId),
-                eq(assetVersion.status, "ready"),
               ),
-            ),
-          transaction
-            .select({
-              id: auditEvent.id,
-              action: auditEvent.action,
-              targetType: auditEvent.targetType,
-              targetId: auditEvent.targetId,
-              metadata: auditEvent.metadata,
-              actorType: auditEvent.actorType,
-              actorId: auditEvent.actorId,
-              actorName: user.name,
-              actorEmail: user.email,
-              apiKeyName: apikey.name,
-              createdAt: auditEvent.createdAt,
-            })
-            .from(auditEvent)
-            .leftJoin(
-              user,
-              and(
-                eq(auditEvent.actorType, "user"),
-                eq(auditEvent.actorId, user.id),
-              ),
-            )
-            .leftJoin(
-              apikey,
-              and(
-                eq(auditEvent.actorType, "api_key"),
-                eq(auditEvent.actorId, apikey.id),
-              ),
-            )
-            .where(eq(auditEvent.workspaceId, workspaceId))
-            .orderBy(desc(auditEvent.createdAt))
-            .limit(6),
-          transaction
-            .select({
-              date: deliveryDay,
-              requests: count(),
-              transformed:
-                sql<number>`count(*) filter (where ${deliveryEvent.transformed})`.mapWith(
-                  Number,
+            transaction
+              .select({
+                id: auditEvent.id,
+                action: auditEvent.action,
+                targetType: auditEvent.targetType,
+                targetId: auditEvent.targetId,
+                metadata: auditEvent.metadata,
+                actorType: auditEvent.actorType,
+                actorId: auditEvent.actorId,
+                actorName: user.name,
+                actorEmail: user.email,
+                apiKeyName: apikey.name,
+                createdAt: auditEvent.createdAt,
+              })
+              .from(auditEvent)
+              .leftJoin(
+                user,
+                and(
+                  eq(auditEvent.actorType, "user"),
+                  eq(auditEvent.actorId, user.id),
                 ),
-              bytes:
-                sql<number>`coalesce(sum(${deliveryEvent.bytes}), 0)`.mapWith(
-                  Number,
+              )
+              .leftJoin(
+                apikey,
+                and(
+                  eq(auditEvent.actorType, "api_key"),
+                  eq(auditEvent.actorId, apikey.id),
                 ),
-            })
-            .from(deliveryEvent)
-            .where(
-              and(
-                eq(deliveryEvent.workspaceId, workspaceId),
-                sql`${deliveryEvent.createdAt} >= ${deliveryWindowStart(now)}`,
-              ),
-            )
-            .groupBy(deliveryDay)
-            .orderBy(deliveryDay),
-        ]);
+              )
+              .where(eq(auditEvent.workspaceId, workspaceId))
+              .orderBy(desc(auditEvent.createdAt))
+              .limit(6),
+            transaction
+              .select({
+                date: deliveryDay,
+                requests: count(),
+                transformed:
+                  sql<number>`count(*) filter (where ${deliveryEvent.transformed})`.mapWith(
+                    Number,
+                  ),
+                bytes:
+                  sql<number>`coalesce(sum(${deliveryEvent.bytes}), 0)`.mapWith(
+                    Number,
+                  ),
+              })
+              .from(deliveryEvent)
+              .where(
+                and(
+                  eq(deliveryEvent.workspaceId, workspaceId),
+                  sql`${deliveryEvent.createdAt} >= ${deliveryWindowStart(now)}`,
+                ),
+              )
+              .groupBy(deliveryDay)
+              .orderBy(deliveryDay),
+          ]);
         const delivery = fillDeliveryDays(deliveryRows, now);
 
         return {

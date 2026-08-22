@@ -10,6 +10,50 @@ export type OrganizationDirectory = {
   }>;
 };
 
+export type VardSummary = {
+  id: string;
+  name: string;
+  isPublic: boolean;
+  updatedAt: string;
+  itemCount: number;
+};
+export type VardItem = {
+  id: string;
+  assetId: string;
+  key: string;
+  outputPath: string;
+  writable: boolean;
+  pinned: boolean;
+  transformation: TransformationInput | null;
+  versionId: string | null;
+  sourceChecksum: string | null;
+  mimeType: string | null;
+  size: number | null;
+  fingerprint: string | null;
+  downloadUrl: string | null;
+};
+export type VardManifest = {
+  schema: 1;
+  id: string;
+  workspaceId: string;
+  name: string;
+  isPublic: boolean;
+  updatedAt: string;
+  items: VardItem[];
+};
+export type SyncAsset = {
+  id: string;
+  key: string;
+  displayName: string;
+  versionId: string;
+  checksum: string | null;
+  mimeType: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  updatedAt: string;
+};
+
 export type AssetFolder = { name: string; prefix: string };
 
 export type AssetSummary = {
@@ -123,6 +167,87 @@ export function createOrganizationWorkspace(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export function listVards(workspaceId: string) {
+  return request<{ vards: VardSummary[] }>(
+    `/api/workspaces/${workspaceId}/vards`,
+  );
+}
+
+export function createVard(
+  workspaceId: string,
+  input: { name: string; isPublic: boolean },
+) {
+  return request<VardSummary>(`/api/workspaces/${workspaceId}/vards`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function getVard(workspaceId: string, vardId: string) {
+  return request<VardManifest>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}`,
+  );
+}
+
+export function updateVard(
+  workspaceId: string,
+  vardId: string,
+  input: { name?: string; isPublic?: boolean },
+) {
+  return request<VardSummary>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function replaceVardItems(
+  workspaceId: string,
+  vardId: string,
+  items: Array<{
+    assetId: string;
+    versionId: string | null;
+    outputPath: string;
+    transformation: TransformationInput | null;
+    writable: boolean;
+  }>,
+) {
+  return request<VardManifest>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}/items`,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export function deleteVard(workspaceId: string, vardId: string) {
+  return request<void>(`/api/workspaces/${workspaceId}/vards/${vardId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listSyncAssets(workspaceId: string) {
+  const assets: SyncAsset[] = [];
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ limit: "500" });
+    if (cursor) query.set("cursor", cursor);
+    const page = await request<{
+      assets: SyncAsset[];
+      nextCursor: string | null;
+    }>(`/api/workspaces/${workspaceId}/sync/assets?${query}`);
+    assets.push(...page.assets);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return { assets };
 }
 
 export function getWorkspaceOverview(workspaceId: string) {
