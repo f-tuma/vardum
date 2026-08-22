@@ -29,6 +29,11 @@ const dateTime = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 });
+const shortDate = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
 type ActivityEvent = WorkspaceOverview["activity"][number];
 
 function metadataText(event: ActivityEvent, key: string) {
@@ -102,10 +107,20 @@ export function WorkspaceOverview({
       </div>
     );
 
+  const delivery = overview.data.delivery;
+  const maximumRequests = Math.max(
+    1,
+    ...delivery.days.map(({ requests }) => requests),
+  );
   const stats = [
     ["ASSETS", overview.data.assets.toLocaleString(), "managed files"],
     ["VERSIONS", overview.data.versions.toLocaleString(), "stored revisions"],
     ["STORAGE", formatBytes(overview.data.storageBytes), "ready originals"],
+    [
+      "REQUESTS",
+      delivery.requests30d.toLocaleString(),
+      "successful delivery responses // 30 days",
+    ],
   ] as const;
 
   return (
@@ -134,6 +149,40 @@ export function WorkspaceOverview({
             <small>{note}</small>
           </article>
         ))}
+      </section>
+
+      <section className="delivery-panel" aria-labelledby="delivery-heading">
+        <header>
+          <h2 id="delivery-heading">┌─ DELIVERY // LAST 30 DAYS</h2>
+          <span>
+            {delivery.transformed30d.toLocaleString()} transformed //{" "}
+            {formatBytes(delivery.bytes30d)} response bytes
+          </span>
+        </header>
+        <ol aria-label="Daily successful delivery responses">
+          {delivery.days.map((day, index) => {
+            const label = shortDate.format(new Date(`${day.date}T00:00:00Z`));
+            return (
+              <li key={day.date}>
+                <span
+                  data-empty={day.requests === 0 || undefined}
+                  aria-label={`${label}: ${day.requests} delivery responses`}
+                  title={`${label} // ${day.requests} responses // ${formatBytes(day.bytes)}`}
+                  style={{
+                    height: day.requests
+                      ? `${Math.max(4, (day.requests / maximumRequests) * 100)}%`
+                      : "1px",
+                  }}
+                />
+                <small>
+                  {((index % 7 === 0 && index < delivery.days.length - 2) ||
+                    index === delivery.days.length - 1) &&
+                    label}
+                </small>
+              </li>
+            );
+          })}
+        </ol>
       </section>
 
       <section className="activity-panel">

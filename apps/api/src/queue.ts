@@ -3,6 +3,7 @@ import { config } from "./config.js";
 
 export const assetIngestQueue = "asset-ingest";
 export const assetDeleteQueue = "asset-delete";
+export const deliveryRetentionQueue = "delivery-retention";
 export const boss = new PgBoss({
   connectionString: config.DATABASE_URL,
   useListenNotify: true,
@@ -29,6 +30,14 @@ export function startQueue() {
       notify: true,
       retryLimit: 5,
       retryDelay: 10,
+      retryBackoff: true,
+      expireInSeconds: 5 * 60,
+    });
+    await instance.createQueue(deliveryRetentionQueue, {
+      policy: "exclusive",
+      notify: true,
+      retryLimit: 3,
+      retryDelay: 30,
       retryBackoff: true,
       expireInSeconds: 5 * 60,
     });

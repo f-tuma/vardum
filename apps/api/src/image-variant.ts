@@ -29,7 +29,7 @@ export async function getImageVariant(
   const storageKey = `derived/v1/${source.id}/${hash}.${extension}`;
 
   try {
-    return { object: await getObject(storageKey), mimeType };
+    return { object: await getObject(storageKey), mimeType, cacheHit: true };
   } catch (error) {
     if (!isNotFound(error)) throw error;
   }
@@ -48,7 +48,7 @@ export async function getImageVariant(
     generating.set(storageKey, generation);
   }
   await generation;
-  return { object: await getObject(storageKey), mimeType };
+  return { object: await getObject(storageKey), mimeType, cacheHit: false };
 }
 
 async function generate(

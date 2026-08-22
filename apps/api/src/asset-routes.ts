@@ -11,10 +11,15 @@ import {
   assetFolder,
   assetVersion,
   auditEvent,
+  deliveryEvent,
   workspaceSettings,
 } from "./db/app-schema.js";
 import { apikey, organization, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
+import {
+  deliveryWindowStart,
+  fillDeliveryDays,
+} from "./delivery-analytics.js";
 import { assetDeleteQueue, assetIngestQueue, boss } from "./queue.js";
 import { createUpload, inspectUpload } from "./storage.js";
 import { transformedAssetUrl, type Transformation } from "./transformation.js";
@@ -101,7 +106,10 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       return inWorkspace(workspaceId, async (transaction) => {
-        const [[assets], [versions], [storage], activity] = await Promise.all([
+        const now = new Date();
+        const deliveryDay = sql<string>`to_char(${deliveryEvent.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
+        const [[assets], [versions], [storage], activity, deliveryRows] =
+          await Promise.all([
           transaction
             .select({ count: count() })
             .from(asset)
@@ -156,12 +164,44 @@ export function registerAssetRoutes(app: FastifyInstance) {
             .where(eq(auditEvent.workspaceId, workspaceId))
             .orderBy(desc(auditEvent.createdAt))
             .limit(6),
+          transaction
+            .select({
+              date: deliveryDay,
+              requests: count(),
+              transformed:
+                sql<number>`count(*) filter (where ${deliveryEvent.transformed})`.mapWith(
+                  Number,
+                ),
+              bytes:
+                sql<number>`coalesce(sum(${deliveryEvent.bytes}), 0)`.mapWith(
+                  Number,
+                ),
+            })
+            .from(deliveryEvent)
+            .where(
+              and(
+                eq(deliveryEvent.workspaceId, workspaceId),
+                sql`${deliveryEvent.createdAt} >= ${deliveryWindowStart(now)}`,
+              ),
+            )
+            .groupBy(deliveryDay)
+            .orderBy(deliveryDay),
         ]);
+        const delivery = fillDeliveryDays(deliveryRows, now);
 
         return {
           assets: assets?.count ?? 0,
           versions: versions?.count ?? 0,
           storageBytes: storage?.bytes ?? 0,
+          delivery: {
+            requests30d: delivery.reduce((sum, day) => sum + day.requests, 0),
+            transformed30d: delivery.reduce(
+              (sum, day) => sum + day.transformed,
+              0,
+            ),
+            bytes30d: delivery.reduce((sum, day) => sum + day.bytes, 0),
+            days: delivery,
+          },
           activity: activity.map(
             ({
               actorName,

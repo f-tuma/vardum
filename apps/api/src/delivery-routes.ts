@@ -7,6 +7,7 @@ import { asset, assetVersion, workspaceSettings } from "./db/app-schema.js";
 import { organization } from "./db/auth-schema.js";
 import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
+import { recordDeliveryEvent } from "./delivery-analytics.js";
 import { getImageVariant } from "./image-variant.js";
 import { getObject } from "./storage.js";
 import {
@@ -42,7 +43,9 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
       if (!workspace) return reply.code(404).send({ error: "Asset not found" });
       const transformation = signedTransformation(request.query);
       if (!validTransformation(workspace, request.params["*"], transformation))
-        return reply.code(403).send({ error: "Invalid transformation signature" });
+        return reply
+          .code(403)
+          .send({ error: "Invalid transformation signature" });
       return deliverVersion(
         workspace,
         request.params["*"],
@@ -80,7 +83,9 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
       if (!workspace) return reply.code(404).send({ error: "Asset not found" });
       const transformation = signedTransformation(request.query);
       if (!validTransformation(workspace, request.params["*"], transformation))
-        return reply.code(403).send({ error: "Invalid transformation signature" });
+        return reply
+          .code(403)
+          .send({ error: "Invalid transformation signature" });
       return deliverVersion(
         workspace,
         request.params["*"],
@@ -143,7 +148,10 @@ async function redirectCurrent(
   const path = customDomain
     ? `/w/__v/${current.versionId}/${encodedKey}`
     : `/w/${encodeURIComponent(workspace.slug)}/__v/${current.versionId}/${encodedKey}`;
-  reply.header("cache-control", "public, max-age=60, stale-while-revalidate=300");
+  reply.header(
+    "cache-control",
+    "public, max-age=60, stale-while-revalidate=300",
+  );
   return reply.redirect(`${path}${query}`, 302);
 }
 
@@ -159,6 +167,7 @@ async function deliverVersion(
     transaction
       .select({
         id: assetVersion.id,
+        assetId: asset.id,
         storageKey: assetVersion.storageKey,
         filename: assetVersion.filename,
         mimeType: assetVersion.mimeType,
@@ -183,9 +192,29 @@ async function deliverVersion(
       : {
           object: await getObject(version.storageKey),
           mimeType: version.mimeType,
+          cacheHit: null,
         };
     const { object } = delivered;
     if (!object.Body) throw new Error("S3 returned an empty body");
+    const bytes = object.ContentLength ?? version.size;
+    const mimeType = object.ContentType ?? delivered.mimeType;
+
+    // ponytail: one synchronous insert per response; batch at the edge when delivery volume warrants it.
+    if (request.method === "GET") {
+      try {
+        await recordDeliveryEvent({
+          workspaceId: workspace.id,
+          assetId: version.assetId,
+          versionId: version.id,
+          transformed: Boolean(transformation),
+          cacheHit: delivered.cacheHit,
+          mimeType,
+          bytes,
+        });
+      } catch (error) {
+        request.log.warn({ error, versionId }, "Delivery analytics write failed");
+      }
+    }
 
     reply.headers({
       "access-control-allow-origin": "*",
@@ -199,7 +228,7 @@ async function deliverVersion(
               : undefined),
         ),
       )}`,
-      "content-length": object.ContentLength ?? version.size,
+      "content-length": bytes,
       "content-security-policy":
         "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       "cross-origin-resource-policy": "cross-origin",
@@ -208,7 +237,7 @@ async function deliverVersion(
     if (object.ETag) reply.header("etag", object.ETag);
     if (object.LastModified)
       reply.header("last-modified", object.LastModified.toUTCString());
-    reply.type(object.ContentType ?? delivered.mimeType);
+    reply.type(mimeType);
     return reply.send(object.Body);
   } catch (error) {
     request.log.error({ error, versionId }, "Asset delivery failed");

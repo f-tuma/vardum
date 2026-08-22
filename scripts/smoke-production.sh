@@ -110,5 +110,9 @@ const delivered = await fetch(`${base}/w/smoke/logo`);
 if (!delivered.ok || !delivered.headers.get("content-type")?.startsWith("image/svg+xml")) {
   throw new Error(`Delivery failed: ${delivered.status} ${delivered.headers.get("content-type")}`);
 }
+const overview = await request(`/api/workspaces/${workspace.id}/overview`).then((response) => response.json());
+if (overview.delivery.requests30d !== 1 || overview.delivery.days.length !== 30) {
+  throw new Error(`Delivery analytics failed: ${JSON.stringify(overview.delivery)}`);
+}
 console.log("Production smoke test passed");
 NODE

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   foreignKey,
   index,
@@ -169,6 +170,43 @@ export const assetVersion = pgTable(
     index("asset_version_asset_idx").on(table.assetId),
     check("asset_version_number_check", sql`${table.number} > 0`),
     check("asset_version_size_check", sql`${table.size} > 0`),
+    tenantPolicy(table.workspaceId),
+  ],
+).enableRLS();
+
+// Delivery events are successful content responses, not confirmed client downloads.
+export const deliveryEvent = pgTable(
+  "delivery_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id").references(() => asset.id, {
+      onDelete: "set null",
+    }),
+    versionId: uuid("version_id").references(() => assetVersion.id, {
+      onDelete: "set null",
+    }),
+    transformed: boolean("transformed").notNull(),
+    cacheHit: boolean("cache_hit"),
+    mimeType: text("mime_type").notNull(),
+    bytes: bigint("bytes", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("delivery_event_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    index("delivery_event_created_idx").on(table.createdAt),
+    index("delivery_event_asset_created_idx").on(
+      table.assetId,
+      table.createdAt,
+    ),
+    check("delivery_event_bytes_check", sql`${table.bytes} >= 0`),
     tenantPolicy(table.workspaceId),
   ],
 ).enableRLS();

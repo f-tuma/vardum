@@ -36,6 +36,20 @@
       "when": 1787404231876,
       "tag": "0004_slimy_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787406826915,
+      "tag": "0005_greedy_magdalene",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787407327140,
+      "tag": "0006_robust_fallen_one",
+      "breakpoints": true
     }
   ]
 }

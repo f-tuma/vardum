@@ -435,7 +435,7 @@ button:hover {
 }
 .overview-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
   margin: 1.5rem 0;
 }
@@ -461,10 +461,15 @@ button:hover {
   color: var(--muted);
   font: 0.58rem var(--mono);
 }
+.delivery-panel,
 .activity-panel {
   border: 1px solid var(--line);
   background: var(--surface);
 }
+.delivery-panel {
+  margin-bottom: 1.5rem;
+}
+.delivery-panel > header,
 .activity-panel > header {
   display: flex;
   min-height: 48px;
@@ -474,16 +479,54 @@ button:hover {
   padding: 0 1rem;
   border-bottom: 1px solid var(--line);
 }
+.delivery-panel h2,
+.delivery-panel > header span,
 .activity-panel h2,
 .activity-panel > header span {
   margin: 0;
   font: 0.62rem var(--mono);
 }
+.delivery-panel h2,
 .activity-panel h2 {
   color: var(--text);
 }
+.delivery-panel > header span,
 .activity-panel > header span {
   color: var(--muted);
+}
+.delivery-panel ol {
+  display: grid;
+  height: 220px;
+  grid-template-columns: repeat(30, minmax(3px, 1fr));
+  gap: clamp(2px, 0.45vw, 7px);
+  margin: 0;
+  padding: 1.25rem 1rem 0.75rem;
+  list-style: none;
+}
+.delivery-panel li {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  align-items: end;
+}
+.delivery-panel li > span {
+  display: block;
+  width: 100%;
+  min-height: 1px;
+  background: var(--violet);
+}
+.delivery-panel li > span[data-empty="true"] {
+  background: var(--line);
+}
+.delivery-panel li > small {
+  overflow: visible;
+  padding-top: 0.45rem;
+  color: var(--muted);
+  font: 0.48rem var(--mono);
+  white-space: nowrap;
+}
+.delivery-panel li:last-child > small {
+  justify-self: end;
 }
 .activity-panel ol {
   margin: 0;
@@ -826,7 +869,7 @@ button:hover {
 .domain-setup code {
   overflow-wrap: anywhere;
   color: var(--muted);
-  font: 0.58rem/1.5 var(--mono);
+  font: 0.58rem / 1.5 var(--mono);
 }
 .domain-setup .domain-delivery-example {
   grid-template-columns: 70px minmax(0, 1fr);

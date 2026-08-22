@@ -66,6 +66,17 @@ export type WorkspaceOverview = {
   assets: number;
   versions: number;
   storageBytes: number;
+  delivery: {
+    requests30d: number;
+    transformed30d: number;
+    bytes30d: number;
+    days: Array<{
+      date: string;
+      requests: number;
+      transformed: number;
+      bytes: number;
+    }>;
+  };
   activity: Array<{
     id: string;
     action: string;

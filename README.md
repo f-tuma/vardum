@@ -73,3 +73,10 @@ routing; canonical `/w/{workspaceSlug}/{key}` URLs remain available.
 
 TLS and DNS are intentionally handled by Cloudflare or your reverse proxy. The
 proxy must preserve the original `Host` header.
+
+## Delivery analytics
+
+The Overview records successful `GET` content responses and shows a 30-day UTC
+series for originals and transformations. These are response requests, not
+proof that the client completed a download. Raw events are retained for 90 days
+and removed daily by the worker.
