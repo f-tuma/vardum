@@ -12,9 +12,10 @@ import {
   assetVersion,
   auditEvent,
   deliveryEvent,
+  workspace as workspaceTable,
   workspaceSettings,
 } from "./db/app-schema.js";
-import { apikey, organization, user } from "./db/auth-schema.js";
+import { apikey, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import {
   deliveryWindowStart,
@@ -394,18 +395,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
         const explicitFolderName = sql<string>`split_part(${explicitRemainder}, '/', 1)`;
         const [workspace] = await transaction
           .select({
-            slug: organization.slug,
+            slug: workspaceTable.slug,
             customDomain: workspaceSettings.customDomain,
           })
-          .from(organization)
+          .from(workspaceTable)
           .leftJoin(
             workspaceSettings,
             and(
-              eq(workspaceSettings.workspaceId, organization.id),
+              eq(workspaceSettings.workspaceId, workspaceTable.id),
               isNotNull(workspaceSettings.customDomainVerifiedAt),
             ),
           )
-          .where(eq(organization.id, workspaceId));
+          .where(eq(workspaceTable.id, workspaceId));
         const assets = await transaction
           .select({
             id: asset.id,
@@ -516,18 +517,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const result = await inWorkspace(workspaceId, async (transaction) => {
         const [workspace] = await transaction
           .select({
-            slug: organization.slug,
+            slug: workspaceTable.slug,
             customDomain: workspaceSettings.customDomain,
           })
-          .from(organization)
+          .from(workspaceTable)
           .leftJoin(
             workspaceSettings,
             and(
-              eq(workspaceSettings.workspaceId, organization.id),
+              eq(workspaceSettings.workspaceId, workspaceTable.id),
               isNotNull(workspaceSettings.customDomainVerifiedAt),
             ),
           )
-          .where(eq(organization.id, workspaceId));
+          .where(eq(workspaceTable.id, workspaceId));
         const [item] = await transaction
           .select({
             id: asset.id,

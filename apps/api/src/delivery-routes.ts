@@ -3,8 +3,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { assetKey } from "./asset-routes.js";
-import { asset, assetVersion, workspaceSettings } from "./db/app-schema.js";
-import { organization } from "./db/auth-schema.js";
+import {
+  asset,
+  assetVersion,
+  workspace as workspaceTable,
+  workspaceSettings,
+} from "./db/app-schema.js";
 import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
 import { recordDeliveryEvent } from "./delivery-analytics.js";
@@ -267,17 +271,20 @@ function validTransformation(
 
 async function findWorkspace(slug: string) {
   const [workspace] = await db
-    .select({ id: organization.id, slug: organization.slug })
-    .from(organization)
-    .where(eq(organization.slug, slug));
+    .select({ id: workspaceTable.id, slug: workspaceTable.slug })
+    .from(workspaceTable)
+    .where(eq(workspaceTable.slug, slug));
   return workspace ?? null;
 }
 
 async function findCustomWorkspace(hostname: string) {
   const [workspace] = await db
-    .select({ id: organization.id, slug: organization.slug })
+    .select({ id: workspaceTable.id, slug: workspaceTable.slug })
     .from(workspaceSettings)
-    .innerJoin(organization, eq(organization.id, workspaceSettings.workspaceId))
+    .innerJoin(
+      workspaceTable,
+      eq(workspaceTable.id, workspaceSettings.workspaceId),
+    )
     .where(
       and(
         eq(workspaceSettings.customDomain, hostname.toLowerCase()),

@@ -5,6 +5,7 @@ import { organization } from "better-auth/plugins";
 import { config } from "./config.js";
 import { db, schema } from "./db/index.js";
 import { sendActionEmail, smtpEnabled } from "./mail.js";
+import { canCreateOrganization } from "./organization-policy.js";
 import { access, roles } from "./permissions.js";
 
 export const auth = betterAuth({
@@ -63,6 +64,9 @@ export const auth = betterAuth({
       ac: access,
       roles,
       creatorRole: "owner",
+      disableOrganizationDeletion: true,
+      allowUserToCreateOrganization: ({ email }) =>
+        canCreateOrganization(email),
       sendInvitationEmail: smtpEnabled
         ? async ({ id, email, organization, inviter, role }) => {
             const url = new URL("/accept-invitation", config.WEB_URL);

@@ -38,12 +38,34 @@ const tenantPolicy = (column: AnyPgColumn) =>
     withCheck: sql`${column} = current_setting('app.workspace_id', true)`,
   });
 
+export const workspace = pgTable(
+  "workspace",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    updatedBy: text("updated_by").notNull(),
+  },
+  (table) => [index("workspace_organization_idx").on(table.organizationId)],
+);
+
 export const workspaceSettings = pgTable(
   "workspace_settings",
   {
     workspaceId: text("workspace_id")
       .primaryKey()
-      .references(() => organization.id, { onDelete: "cascade" }),
+      .references(() => workspace.id, { onDelete: "cascade" }),
     customDomain: text("custom_domain").unique(),
     customDomainVerificationToken: text("custom_domain_verification_token"),
     customDomainVerifiedAt: timestamp("custom_domain_verified_at", {
@@ -74,7 +96,7 @@ export const assetFolder = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+      .references(() => workspace.id, { onDelete: "cascade" }),
     prefix: text("prefix").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -101,7 +123,7 @@ export const asset = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+      .references(() => workspace.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     displayName: text("display_name").notNull(),
     currentVersionId: uuid("current_version_id").references(
@@ -136,7 +158,7 @@ export const assetVersion = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+      .references(() => workspace.id, { onDelete: "cascade" }),
     assetId: uuid("asset_id").notNull(),
     number: integer("number").notNull(),
     status: assetVersionStatus("status").default("pending").notNull(),
@@ -181,7 +203,7 @@ export const deliveryEvent = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+      .references(() => workspace.id, { onDelete: "cascade" }),
     assetId: uuid("asset_id").references(() => asset.id, {
       onDelete: "set null",
     }),
@@ -218,7 +240,7 @@ export const auditEvent = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+      .references(() => workspace.id, { onDelete: "cascade" }),
     actorType: auditActorType("actor_type").notNull(),
     actorId: text("actor_id"),
     action: text("action").notNull(),

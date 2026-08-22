@@ -12,6 +12,7 @@ const activityLabels: Record<string, string> = {
   "asset.version_failed": "Version failed",
   "folder.created": "Folder created",
   "folder.deleted": "Folder deleted",
+  "workspace.created": "Workspace created",
   "workspace.updated": "Workspace updated",
   "workspace.member_role_updated": "Member role updated",
   "workspace.custom_domain_configured": "Custom domain configured",

@@ -3,8 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { authorizeAsset } from "./authorization.js";
-import { asset, workspaceSettings } from "./db/app-schema.js";
-import { organization } from "./db/auth-schema.js";
+import { asset, workspace, workspaceSettings } from "./db/app-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import { transformedAssetUrl, transformationSchema } from "./transformation.js";
 
@@ -32,13 +31,13 @@ export function registerTransformationRoutes(app: FastifyInstance) {
                     .select({
                         key: asset.key,
                         currentVersionId: asset.currentVersionId,
-                        workspaceSlug: organization.slug,
+                        workspaceSlug: workspace.slug,
                         customDomain: workspaceSettings.customDomain,
                     })
                     .from(asset)
                     .innerJoin(
-                        organization,
-                        eq(organization.id, asset.workspaceId),
+                        workspace,
+                        eq(workspace.id, asset.workspaceId),
                     )
                     .leftJoin(
                         workspaceSettings,

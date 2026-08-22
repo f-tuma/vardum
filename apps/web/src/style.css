@@ -108,10 +108,29 @@ input:disabled {
   font-family: var(--mono);
 }
 .workspace-control {
+  display: grid;
+  gap: 0.5rem;
   margin-top: 2.5rem;
+}
+.workspace-control > small {
+  color: var(--muted);
+  font: 0.5rem var(--mono);
+  letter-spacing: 0.08em;
 }
 .workspace-control select {
   width: 100%;
+}
+.workspace-create-button {
+  height: 32px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+  font: 0.58rem var(--mono);
+  text-align: left;
+}
+.workspace-create-button:hover {
+  border-color: var(--violet);
+  color: var(--text);
 }
 .sidebar-nav {
   display: grid;

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { fromNodeHeaders } from "better-auth/node";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { auth } from "./auth.js";
 import { authorizeWorkspaceAdmin } from "./authorization.js";
 import { config } from "./config.js";
-import { auditEvent } from "./db/app-schema.js";
+import { auditEvent, workspace as workspaceTable } from "./db/app-schema.js";
 import { db } from "./db/index.js";
 import { invitation, member, organization, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
@@ -28,21 +28,21 @@ async function sendInvitation({
   id,
   email,
   role,
-  workspaceName,
+  organizationName,
   inviterName,
 }: {
   id: string;
   email: string;
   role: string;
-  workspaceName: string;
+  organizationName: string;
   inviterName: string;
 }) {
   const url = new URL("/accept-invitation", config.WEB_URL);
   url.searchParams.set("id", id);
   await sendActionEmail({
     to: email,
-    subject: `Join ${workspaceName} on Vardum`,
-    intro: `${inviterName} invited you to join ${workspaceName} as ${role}.`,
+    subject: `Join ${organizationName} on Vardum`,
+    intro: `${inviterName} invited you to join ${organizationName} as ${role}.`,
     action: "Accept invitation",
     url: url.toString(),
   });
@@ -75,7 +75,10 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .from(invitation)
           .where(
             and(
-              eq(invitation.organizationId, workspaceId),
+              eq(
+                invitation.organizationId,
+                authorization.principal.organizationId,
+              ),
               eq(invitation.status, "pending"),
             ),
           )
@@ -109,15 +112,18 @@ export function registerInvitationRoutes(app: FastifyInstance) {
       const id = randomUUID();
       const now = new Date();
       const result = await inWorkspace(workspaceId, async (transaction) => {
-        const [workspace] = await transaction
+        const [organizationRecord] = await transaction
           .select({ name: organization.name })
           .from(organization)
-          .where(eq(organization.id, workspaceId));
+          .where(
+            eq(organization.id, authorization.principal.organizationId),
+          );
         const [inviter] = await transaction
           .select({ name: user.name })
           .from(user)
           .where(eq(user.id, authorization.principal.actorId));
-        if (!workspace || !inviter) return { status: "missing" as const };
+        if (!organizationRecord || !inviter)
+          return { status: "missing" as const };
 
         const [existingMember] = await transaction
           .select({ id: member.id })
@@ -125,7 +131,10 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .innerJoin(user, eq(user.id, member.userId))
           .where(
             and(
-              eq(member.organizationId, workspaceId),
+              eq(
+                member.organizationId,
+                authorization.principal.organizationId,
+              ),
               eq(user.email, request.body.email),
             ),
           );
@@ -136,7 +145,10 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .from(invitation)
           .where(
             and(
-              eq(invitation.organizationId, workspaceId),
+              eq(
+                invitation.organizationId,
+                authorization.principal.organizationId,
+              ),
               eq(invitation.email, request.body.email),
               eq(invitation.status, "pending"),
             ),
@@ -147,7 +159,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .insert(invitation)
           .values({
             id,
-            organizationId: workspaceId,
+            organizationId: authorization.principal.organizationId,
             email: request.body.email,
             role: request.body.role,
             status: "pending",
@@ -178,13 +190,13 @@ export function registerInvitationRoutes(app: FastifyInstance) {
         return {
           status: "created" as const,
           invitation: created,
-          workspaceName: workspace.name,
+          organizationName: organizationRecord.name,
           inviterName: inviter.name,
         };
       });
 
       if (result.status === "missing")
-        return reply.code(404).send({ error: "Workspace not found" });
+        return reply.code(404).send({ error: "Organization not found" });
       if (result.status === "member")
         return reply.code(409).send({ error: "User is already a member" });
       if (result.status === "pending")
@@ -193,7 +205,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
       await sendInvitation({
         ...result.invitation,
         role: result.invitation.role ?? "viewer",
-        workspaceName: result.workspaceName,
+        organizationName: result.organizationName,
         inviterName: result.inviterName,
       });
       return reply.code(201).send(result.invitation);
@@ -222,7 +234,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
             id: invitation.id,
             email: invitation.email,
             role: invitation.role,
-            workspaceName: organization.name,
+            organizationName: organization.name,
           })
           .from(invitation)
           .innerJoin(
@@ -232,7 +244,10 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .where(
             and(
               eq(invitation.id, invitationId),
-              eq(invitation.organizationId, workspaceId),
+              eq(
+                invitation.organizationId,
+                authorization.principal.organizationId,
+              ),
               eq(invitation.status, "pending"),
             ),
           );
@@ -266,7 +281,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
         id: result.id,
         email: result.email,
         role: result.role ?? "viewer",
-        workspaceName: result.workspaceName,
+        organizationName: result.organizationName,
         inviterName: result.inviterName,
       });
       return { expiresAt: result.expiresAt };
@@ -291,7 +306,10 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           .where(
             and(
               eq(invitation.id, invitationId),
-              eq(invitation.organizationId, workspaceId),
+              eq(
+                invitation.organizationId,
+                authorization.principal.organizationId,
+              ),
               eq(invitation.status, "pending"),
             ),
           )
@@ -330,20 +348,29 @@ export function registerInvitationRoutes(app: FastifyInstance) {
 
       const { invitationId } = request.params;
       const [pending] = await db
-        .select({ organizationId: invitation.organizationId })
+        .select({
+          organizationId: invitation.organizationId,
+          workspaceId: workspaceTable.id,
+        })
         .from(invitation)
-        .where(eq(invitation.id, invitationId));
+        .innerJoin(
+          workspaceTable,
+          eq(workspaceTable.organizationId, invitation.organizationId),
+        )
+        .where(eq(invitation.id, invitationId))
+        .orderBy(asc(workspaceTable.createdAt))
+        .limit(1);
       if (!pending)
         return reply.code(404).send({ error: "Invitation not found" });
 
       const result = await inWorkspace(
-        pending.organizationId,
+        pending.workspaceId,
         async (transaction) => {
           const [record] = await transaction
             .select({
               id: invitation.id,
-              workspaceId: invitation.organizationId,
-              workspaceName: organization.name,
+              organizationId: invitation.organizationId,
+              organizationName: organization.name,
               email: invitation.email,
               role: invitation.role,
               status: invitation.status,
@@ -367,7 +394,7 @@ export function registerInvitationRoutes(app: FastifyInstance) {
             .from(member)
             .where(
               and(
-                eq(member.organizationId, record.workspaceId),
+                eq(member.organizationId, record.organizationId),
                 eq(member.userId, session.user.id),
               ),
             );
@@ -386,13 +413,13 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           if (!accepted) return { status: "used" as const };
           await transaction.insert(member).values({
             id: randomUUID(),
-            organizationId: record.workspaceId,
+            organizationId: record.organizationId,
             userId: session.user.id,
             role: record.role ?? "viewer",
             createdAt: new Date(),
           });
           await transaction.insert(auditEvent).values({
-            workspaceId: record.workspaceId,
+            workspaceId: pending.workspaceId,
             actorType: "user",
             actorId: session.user.id,
             action: "workspace.invitation_accepted",
@@ -403,8 +430,8 @@ export function registerInvitationRoutes(app: FastifyInstance) {
           });
           return {
             status: "accepted" as const,
-            workspaceId: record.workspaceId,
-            workspaceName: record.workspaceName,
+            workspaceId: pending.workspaceId,
+            organizationName: record.organizationName,
           };
         },
       );

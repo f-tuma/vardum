@@ -2,6 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { AccountSettings } from "./account-settings";
+import {
+  createOrganizationWorkspace,
+  getOrganizationDirectory,
+} from "./asset-api";
 import { AssetDashboard } from "./asset-dashboard";
 import { authClient } from "./auth-client";
 import { WorkspaceOverview } from "./workspace-overview";
@@ -52,29 +56,63 @@ function WorkspaceApp({
   const navigate = useNavigate();
   const searchRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState(routeWorkspaceId ?? "");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [creatingOrganization, setCreatingOrganization] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
-  const organizations = useQuery({
+  const directory = useQuery({
     queryKey: ["organizations"],
-    queryFn: async () => {
-      const result = await authClient.organization.list();
-      if (result.error) throw new Error(result.error.message);
-      return result.data ?? [];
-    },
+    queryFn: getOrganizationDirectory,
   });
+  const organizations = directory.data?.organizations ?? [];
+  const allWorkspaces = organizations.flatMap((organization) =>
+    organization.workspaces.map((workspace) => ({
+      ...workspace,
+      organizationId: organization.id,
+    })),
+  );
+  const routeWorkspace = allWorkspaces.find(
+    (workspace) => workspace.id === routeWorkspaceId,
+  );
+  const preferredOrganizationId =
+    selectedOrganizationId || routeWorkspace?.organizationId;
   const selected =
-    organizations.data?.find(
-      (organization) => organization.id === selectedId,
-    ) ?? organizations.data?.[0];
+    allWorkspaces.find(
+      (workspace) =>
+        workspace.id === selectedId &&
+        workspace.organizationId === preferredOrganizationId,
+    ) ??
+    (routeWorkspace?.organizationId === preferredOrganizationId
+      ? routeWorkspace
+      : undefined) ??
+    allWorkspaces.find(
+      (workspace) => workspace.organizationId === preferredOrganizationId,
+    ) ??
+    (!preferredOrganizationId ? allWorkspaces[0] : undefined);
+  const selectedOrganization =
+    organizations.find(
+      (organization) => organization.id === preferredOrganizationId,
+    ) ?? organizations[0];
 
   useEffect(() => {
+    if (selected) {
+      setSelectedId(selected.id);
+      setSelectedOrganizationId(selected.organizationId);
+    }
     if (view !== "account" && !routeWorkspaceId && selected) {
       void navigate({
         to: "/workspaces/$workspaceId",
         params: { workspaceId: selected.id },
       });
     }
-  }, [navigate, routeWorkspaceId, selected, view]);
+  }, [
+    navigate,
+    routeWorkspaceId,
+    selected?.id,
+    selected?.organizationId,
+    view,
+  ]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -92,7 +130,7 @@ function WorkspaceApp({
     queryClient.clear();
   }
 
-  async function createWorkspace(event: SyntheticEvent<HTMLFormElement>) {
+  async function createOrganization(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     const formElement = event.currentTarget;
@@ -102,12 +140,43 @@ function WorkspaceApp({
       slug: String(form.get("slug")),
     });
     if (result.error) {
-      setError(result.error.message ?? "Workspace creation failed");
+      setError(result.error.message ?? "Organization creation failed");
       return;
     }
-    setSelectedId(result.data.id);
+    setSelectedOrganizationId(result.data.id);
+    setCreatingOrganization(false);
+    setCreatingWorkspace(true);
     formElement.reset();
     await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+  }
+
+  async function createWorkspace(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedOrganization) return;
+    setError("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    try {
+      const workspace = await createOrganizationWorkspace(
+        selectedOrganization.id,
+        {
+          name: String(form.get("name")),
+          slug: String(form.get("slug")),
+        },
+      );
+      setSelectedId(workspace.id);
+      setCreatingWorkspace(false);
+      formElement.reset();
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await navigate({
+        to: "/workspaces/$workspaceId",
+        params: { workspaceId: workspace.id },
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Workspace creation failed",
+      );
+    }
   }
 
   return (
@@ -136,15 +205,48 @@ function WorkspaceApp({
           <span aria-hidden="true">╂</span> VARDUM
         </a>
 
-        {organizations.data?.length ? (
+        {organizations.length ? (
           <div className="workspace-control">
+            <small>ORGANIZATION</small>
+            <select
+              aria-label="Organization"
+              value={selectedOrganization?.id ?? ""}
+              onChange={(event) => {
+                const organization = organizations.find(
+                  ({ id }) => id === event.target.value,
+                );
+                if (!organization) return;
+                setSelectedOrganizationId(organization.id);
+                const workspace = organization.workspaces[0];
+                if (workspace) {
+                  setSelectedId(workspace.id);
+                  setCreatingWorkspace(false);
+                  void navigate({
+                    to: "/workspaces/$workspaceId",
+                    params: { workspaceId: workspace.id },
+                  });
+                } else {
+                  setSelectedId("");
+                  setCreatingWorkspace(true);
+                }
+              }}
+            >
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+            <small>WORKSPACE</small>
             <select
               id="workspace-select"
               aria-label="Workspace"
               value={selected?.id ?? ""}
+              disabled={!selectedOrganization?.workspaces.length}
               onChange={(event) => {
                 const workspaceId = event.target.value;
                 setSelectedId(workspaceId);
+                setCreatingWorkspace(false);
                 setSearch("");
                 void navigate({
                   to: "/workspaces/$workspaceId",
@@ -152,12 +254,41 @@ function WorkspaceApp({
                 });
               }}
             >
-              {organizations.data.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
+              {!selectedOrganization?.workspaces.length && (
+                <option value="">No workspaces</option>
+              )}
+              {selectedOrganization?.workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
                 </option>
               ))}
             </select>
+            {selectedOrganization?.canCreateWorkspace && (
+              <button
+                className="workspace-create-button"
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setCreatingOrganization(false);
+                  setCreatingWorkspace(true);
+                }}
+              >
+                + New workspace
+              </button>
+            )}
+            {directory.data?.canCreateOrganization && (
+              <button
+                className="workspace-create-button"
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setCreatingWorkspace(false);
+                  setCreatingOrganization(true);
+                }}
+              >
+                + New organization
+              </button>
+            )}
           </div>
         ) : null}
 
@@ -237,11 +368,51 @@ function WorkspaceApp({
 
         {view === "account" ? (
           <AccountSettings />
-        ) : organizations.isPending ? (
+        ) : directory.isPending ? (
           <div className="loading">Loading workspaces…</div>
-        ) : organizations.isError ? (
+        ) : directory.isError ? (
           <div className="state-panel" role="alert">
-            {organizations.error.message}
+            {directory.error.message}
+          </div>
+        ) : (creatingOrganization || !organizations.length) &&
+          directory.data?.canCreateOrganization ? (
+          <div className="empty-workspace">
+            <h1>Create an organization</h1>
+            <p>Organizations own members, roles, and workspaces.</p>
+            <form onSubmit={createOrganization}>
+              <label>
+                Name
+                <input name="name" required />
+              </label>
+              <label>
+                Slug
+                <input name="slug" pattern="[a-z0-9-]+" required />
+              </label>
+              {error && <p role="alert">{error}</p>}
+              <button className="primary-button">Create organization</button>
+            </form>
+          </div>
+        ) : !organizations.length ? (
+          <div className="state-panel">
+            You do not belong to an organization. Ask an owner for an invitation.
+          </div>
+        ) : (creatingWorkspace || !selected) &&
+          selectedOrganization?.canCreateWorkspace ? (
+          <div className="empty-workspace">
+            <h1>Create a workspace</h1>
+            <p>Organization: {selectedOrganization.name}</p>
+            <form onSubmit={createWorkspace}>
+              <label>
+                Name
+                <input name="name" required />
+              </label>
+              <label>
+                Slug
+                <input name="slug" pattern="[a-z0-9-]+" required />
+              </label>
+              {error && <p role="alert">{error}</p>}
+              <button className="primary-button">Create workspace</button>
+            </form>
           </div>
         ) : selected ? (
           view === "overview" ? (
@@ -267,21 +438,7 @@ function WorkspaceApp({
             />
           )
         ) : (
-          <div className="empty-workspace">
-            <h1>Create a workspace</h1>
-            <form onSubmit={createWorkspace}>
-              <label>
-                Name
-                <input name="name" required />
-              </label>
-              <label>
-                Slug
-                <input name="slug" pattern="[a-z0-9-]+" required />
-              </label>
-              {error && <p role="alert">{error}</p>}
-              <button className="primary-button">Create</button>
-            </form>
-          </div>
+          <div className="state-panel">This organization has no workspaces.</div>
         )}
       </div>
     </div>

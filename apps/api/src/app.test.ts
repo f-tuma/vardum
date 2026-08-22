@@ -142,6 +142,32 @@ test("workspace settings reject invalid roles and blank credentials", async (con
   assert.equal(invitation.statusCode, 400);
 });
 
+test("organization deletion is not exposed", async (context) => {
+  const app = buildApp();
+  context.after(() => app.close());
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/auth/organization/delete",
+    payload: { organizationId: "organization" },
+  });
+  assert.equal(response.statusCode, 404);
+});
+
+test("organization workspace creation is authenticated and validates slugs", async (context) => {
+  const app = buildApp();
+  context.after(() => app.close());
+
+  const directory = await app.inject({ method: "GET", url: "/api/organizations" });
+  const invalid = await app.inject({
+    method: "POST",
+    url: "/api/organizations/organization/workspaces",
+    payload: { name: "Workspace", slug: "Not Safe" },
+  });
+  assert.equal(directory.statusCode, 401);
+  assert.equal(invalid.statusCode, 400);
+});
+
 test("workspace identity confirmations cannot be blank", async (context) => {
   const app = buildApp();
   context.after(() => app.close());

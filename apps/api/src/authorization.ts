@@ -1,12 +1,16 @@
 import { fromNodeHeaders } from "better-auth/node";
+import { eq } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
 import { auth } from "./auth.js";
+import { workspace } from "./db/app-schema.js";
+import { db } from "./db/index.js";
 
 export type AssetAction = "read" | "create" | "update" | "delete" | "publish";
-export type Principal = {
+type Principal = {
   actorType: "user" | "api_key";
   actorId: string;
   reference: string;
+  organizationId: string;
 };
 export type AuthorizationResult =
   | { principal: Principal }
@@ -20,10 +24,12 @@ export async function authorizeWorkspaceAdmin(
   const session = await auth.api.getSession({ headers });
   if (!session) return { statusCode: 401, error: "Unauthorized" };
 
+  const organizationId = await findWorkspaceOrganizationId(workspaceId);
+  if (!organizationId) return { statusCode: 403, error: "Forbidden" };
   const permission = await auth.api.hasPermission({
     headers,
     body: {
-      organizationId: workspaceId,
+      organizationId,
       permissions: { workspace: ["manage"] },
     },
   });
@@ -34,6 +40,7 @@ export async function authorizeWorkspaceAdmin(
           actorType: "user",
           actorId: session.user.id,
           reference: `user:${session.user.id}`,
+          organizationId,
         },
       }
     : { statusCode: 403, error: "Forbidden" };
@@ -54,13 +61,18 @@ export async function authorizeAsset(
       },
     });
     const key = result.valid ? result.key : null;
+    const organizationId =
+      key?.referenceId === workspaceId
+        ? await findWorkspaceOrganizationId(workspaceId)
+        : null;
 
-    return key?.referenceId === workspaceId
+    return key && organizationId
       ? {
           principal: {
             actorType: "api_key",
             actorId: key.id,
             reference: `api_key:${key.id}`,
+            organizationId,
           },
         }
       : { statusCode: 401, error: "Unauthorized" };
@@ -70,9 +82,11 @@ export async function authorizeAsset(
   const session = await auth.api.getSession({ headers });
   if (!session) return { statusCode: 401, error: "Unauthorized" };
 
+  const organizationId = await findWorkspaceOrganizationId(workspaceId);
+  if (!organizationId) return { statusCode: 403, error: "Forbidden" };
   const permission = await auth.api.hasPermission({
     headers,
-    body: { organizationId: workspaceId, permissions: { asset: actions } },
+    body: { organizationId, permissions: { asset: actions } },
   });
 
   return permission.success
@@ -81,7 +95,16 @@ export async function authorizeAsset(
           actorType: "user",
           actorId: session.user.id,
           reference: `user:${session.user.id}`,
+          organizationId,
         },
       }
     : { statusCode: 403, error: "Forbidden" };
+}
+
+async function findWorkspaceOrganizationId(workspaceId: string) {
+  const [record] = await db
+    .select({ organizationId: workspace.organizationId })
+    .from(workspace)
+    .where(eq(workspace.id, workspaceId));
+  return record?.organizationId;
 }

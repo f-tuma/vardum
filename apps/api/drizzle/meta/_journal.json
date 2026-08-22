@@ -50,6 +50,13 @@
       "when": 1787407327140,
       "tag": "0006_robust_fallen_one",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787409647637,
+      "tag": "0007_optimal_annihilus",
+      "breakpoints": true
     }
   ]
 }

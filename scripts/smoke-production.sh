@@ -11,6 +11,8 @@ export S3_PUBLIC_ENDPOINT="http://localhost:${S3_PORT}"
 export POSTGRES_PASSWORD="smoke-database-password"
 export BETTER_AUTH_SECRET="smoke-auth-secret-at-least-32-characters"
 export TRANSFORM_SECRET="smoke-transform-secret-at-least-32-characters"
+export ORGANIZATION_CREATION="open"
+export ORGANIZATION_CREATOR_EMAILS=""
 export MINIO_ROOT_USER="vardum"
 export MINIO_ROOT_PASSWORD="smoke-storage-password"
 export S3_BUCKET="varda"
@@ -21,7 +23,7 @@ compose=(docker compose -p "$project" -f compose.production.yml)
 
 cleanup() {
   status=$?
-  if (( status != 0 )); then
+  if ((status != 0)); then
     "${compose[@]}" ps -a
     "${compose[@]}" logs --no-color
   fi
@@ -62,11 +64,25 @@ const signup = await request("/api/auth/sign-up/email", {
   }),
 });
 cookie = signup.headers.getSetCookie()[0].split(";", 1)[0];
-const workspace = await request("/api/auth/organization/create", {
+const organization = await request("/api/auth/organization/create", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ name: "Smoke", slug: "smoke-org" }),
+}).then((response) => response.json());
+const workspace = await request(`/api/organizations/${organization.id}/workspaces`, {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ name: "Smoke", slug: "smoke" }),
 }).then((response) => response.json());
+await request(`/api/organizations/${organization.id}/workspaces`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ name: "Smoke Secondary", slug: "smoke-secondary" }),
+});
+const directory = await request("/api/organizations").then((response) => response.json());
+if (directory.organizations[0]?.workspaces.length !== 2) {
+  throw new Error(`Multi-workspace directory failed: ${JSON.stringify(directory)}`);
+}
 const asset = await request(`/api/workspaces/${workspace.id}/assets`, {
   method: "POST",
   headers: { "content-type": "application/json" },

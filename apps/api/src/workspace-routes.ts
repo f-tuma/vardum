@@ -7,14 +7,12 @@ import { fromDrizzle } from "pg-boss";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { authorizeWorkspaceAdmin } from "./authorization.js";
-import { assetVersion, auditEvent } from "./db/app-schema.js";
 import {
-  apikey,
-  member,
-  organization,
-  session,
-  user,
-} from "./db/auth-schema.js";
+  assetVersion,
+  auditEvent,
+  workspace as workspaceTable,
+} from "./db/app-schema.js";
+import { apikey, member, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import { assetDeleteQueue, boss } from "./queue.js";
 
@@ -67,7 +65,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           })
           .from(member)
           .innerJoin(user, eq(user.id, member.userId))
-          .where(eq(member.organizationId, workspaceId))
+          .where(
+            eq(
+              member.organizationId,
+              authorization.principal.organizationId,
+            ),
+          )
           .orderBy(asc(member.createdAt)),
       );
       return { members };
@@ -105,7 +108,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           .where(
             and(
               eq(member.id, memberId),
-              eq(member.organizationId, workspaceId),
+              eq(
+                member.organizationId,
+                authorization.principal.organizationId,
+              ),
             ),
           );
         if (!current) return { status: "missing" as const };
@@ -118,7 +124,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
             .from(member)
             .where(
               and(
-                eq(member.organizationId, workspaceId),
+                eq(
+                  member.organizationId,
+                  authorization.principal.organizationId,
+                ),
                 eq(member.role, "owner"),
               ),
             );
@@ -159,7 +168,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       if (result.status === "missing")
         return reply.code(404).send({ error: "Member not found" });
       if (result.status === "last-owner")
-        return reply.code(409).send({ error: "Workspace needs an owner" });
+        return reply.code(409).send({ error: "Organization needs an owner" });
       return result.member;
     },
   );
@@ -330,22 +339,25 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       const updated = await inWorkspace(workspaceId, async (transaction) => {
         const [current] = await transaction
           .select({
-            id: organization.id,
-            name: organization.name,
-            slug: organization.slug,
+            id: workspaceTable.id,
+            name: workspaceTable.name,
+            slug: workspaceTable.slug,
           })
-          .from(organization)
-          .where(eq(organization.id, workspaceId));
+          .from(workspaceTable)
+          .where(eq(workspaceTable.id, workspaceId));
         if (!current || current.name === request.body.name) return current;
 
         const [workspace] = await transaction
-          .update(organization)
-          .set({ name: request.body.name })
-          .where(eq(organization.id, workspaceId))
+          .update(workspaceTable)
+          .set({
+            name: request.body.name,
+            updatedBy: authorization.principal.reference,
+          })
+          .where(eq(workspaceTable.id, workspaceId))
           .returning({
-            id: organization.id,
-            name: organization.name,
-            slug: organization.slug,
+            id: workspaceTable.id,
+            name: workspaceTable.name,
+            slug: workspaceTable.slug,
           });
         if (!workspace) return null;
 
@@ -381,12 +393,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       const deleted = await inWorkspace(workspaceId, async (transaction) => {
         const [workspace] = await transaction
           .select({
-            id: organization.id,
-            name: organization.name,
-            slug: organization.slug,
+            id: workspaceTable.id,
+            name: workspaceTable.name,
+            slug: workspaceTable.slug,
           })
-          .from(organization)
-          .where(eq(organization.id, workspaceId))
+          .from(workspaceTable)
+          .where(eq(workspaceTable.id, workspaceId))
           .for("update");
         if (!workspace) return { status: "missing" as const };
         if (request.body.confirmation !== workspace.slug)
@@ -442,12 +454,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
             ),
           );
         await transaction
-          .update(session)
-          .set({ activeOrganizationId: null })
-          .where(eq(session.activeOrganizationId, workspaceId));
-        await transaction
-          .delete(organization)
-          .where(eq(organization.id, workspaceId));
+          .delete(workspaceTable)
+          .where(eq(workspaceTable.id, workspaceId));
         return {
           status: "deleted" as const,
           workspace,

@@ -14,6 +14,7 @@ import { registerDeliveryRoutes } from "./delivery-routes.js";
 import { db } from "./db/index.js";
 import { registerDomainRoutes } from "./domain-routes.js";
 import { registerInvitationRoutes } from "./invitation-routes.js";
+import { registerOrganizationRoutes } from "./organization-routes.js";
 import { registerTransformationRoutes } from "./transformation-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
 
@@ -32,6 +33,7 @@ export function buildApp() {
     credentials: true,
   });
   registerAuthRoute(app);
+  registerOrganizationRoutes(app);
   registerWorkspaceRoutes(app);
   registerDomainRoutes(app);
   registerInvitationRoutes(app);

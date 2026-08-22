@@ -64,6 +64,17 @@ Run the disposable fresh-install check with:
 bash scripts/smoke-production.sh
 ```
 
+## Organizations and workspaces
+
+Organizations own members and roles and may contain multiple workspaces. Only
+organization owners can create workspaces; editors and viewers inherit their
+asset permissions across every workspace in the organization.
+
+Organization creation is enforced by the API through `ORGANIZATION_CREATION`:
+`allowlist` (recommended), `open`, or `disabled`. For `allowlist`, set a
+comma-separated `ORGANIZATION_CREATOR_EMAILS`. Self-hosters can use `open` on a
+trusted instance or allowlist the bootstrap administrator.
+
 ## Custom domains
 
 Set `CUSTOM_DOMAIN_TARGET` to the public hostname that routes delivery traffic

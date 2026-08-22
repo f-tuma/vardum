@@ -38,7 +38,7 @@ export function WorkspaceSettings({
       <header className="settings-heading">
         <p>WORKSPACE // SETTINGS</p>
         <h1>Settings</h1>
-        <span>Identity, access and developer credentials.</span>
+        <span>Workspace identity, organization access and developer credentials.</span>
       </header>
 
       <div className="settings-stack">
@@ -328,7 +328,7 @@ function MembersSettings({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="settings-panel" id="members">
       <header>
-        <h2>┌─ MEMBERS</h2>
+        <h2>┌─ ORGANIZATION MEMBERS</h2>
         <span>{members.data?.members.length ?? 0} USERS</span>
       </header>
       {members.isPending ? (
@@ -356,7 +356,7 @@ function MembersSettings({ workspaceId }: { workspaceId: string }) {
                   disabled={pendingId === member.id || lastOwner}
                   title={
                     lastOwner
-                      ? "A workspace needs at least one owner"
+                      ? "An organization needs at least one owner"
                       : undefined
                   }
                   onChange={(event) =>
@@ -455,7 +455,7 @@ function InvitationsSettings({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="settings-panel" id="invitations">
       <header>
-        <h2>┌─ INVITATIONS</h2>
+        <h2>┌─ ORGANIZATION INVITATIONS</h2>
         <span>{invitations.data?.invitations.length ?? 0} PENDING</span>
       </header>
       <form className="invitation-form" onSubmit={invite}>
@@ -734,8 +734,9 @@ function DangerZone({
         <div className="danger-zone-copy">
           <strong>Delete {workspaceName}</strong>
           <p>
-            Permanently delete every asset, version, folder, API key, invitation
-            and member in this workspace.
+            Permanently delete every asset, version, folder, API key and
+            delivery record in this workspace. Organization members and
+            invitations remain.
           </p>
         </div>
         <label>

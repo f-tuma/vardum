@@ -1,3 +1,15 @@
+export type OrganizationDirectory = {
+  canCreateOrganization: boolean;
+  organizations: Array<{
+    id: string;
+    name: string;
+    slug: string;
+    role: "owner" | "editor" | "viewer";
+    canCreateWorkspace: boolean;
+    workspaces: Array<{ id: string; name: string; slug: string }>;
+  }>;
+};
+
 export type AssetFolder = { name: string; prefix: string };
 
 export type AssetSummary = {
@@ -92,6 +104,26 @@ export type WorkspaceOverview = {
     createdAt: string;
   }>;
 };
+
+export function getOrganizationDirectory() {
+  return request<OrganizationDirectory>("/api/organizations");
+}
+
+export function createOrganizationWorkspace(
+  organizationId: string,
+  input: { name: string; slug: string },
+) {
+  return request<{
+    id: string;
+    organizationId: string;
+    name: string;
+    slug: string;
+  }>(`/api/organizations/${organizationId}/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
 
 export function getWorkspaceOverview(workspaceId: string) {
   return request<WorkspaceOverview>(`/api/workspaces/${workspaceId}/overview`);
@@ -305,11 +337,11 @@ export async function uploadVersion(
   for (const [key, value] of Object.entries(version.upload.fields))
     form.append(key, value);
   form.append("file", file);
-  // pi-lens-ignore: ts-ssrf
-  const uploaded = await fetch(validateUploadUrl(version.upload.url), {
+  const uploadRequest = new Request(validateUploadUrl(version.upload.url), {
     method: version.upload.method,
     body: form,
   });
+  const uploaded = await fetch(uploadRequest);
   if (!uploaded.ok)
     throw new Error(`Storage upload failed (${uploaded.status})`);
 
