@@ -964,8 +964,8 @@ function VersionForm({
   return (
     <section className="inspector-section">
       <h3>New version</h3>
-      <form className="compact-form" onSubmit={submit}>
-        <label className="full">
+      <form className="compact-form version-upload-form" onSubmit={submit}>
+        <label>
           File
           <input
             name="file"

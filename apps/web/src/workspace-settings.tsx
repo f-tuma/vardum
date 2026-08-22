@@ -558,6 +558,7 @@ function DangerZone({
         <span>IRREVERSIBLE</span>
       </header>
       <form
+        className="danger-zone-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (confirmation === workspaceSlug) setDialogOpen(true);

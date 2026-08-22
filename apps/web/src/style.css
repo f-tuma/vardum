@@ -624,6 +624,14 @@ button:hover {
 .danger-zone label code {
   color: var(--red);
 }
+.danger-zone-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+.danger-zone-form > .danger-zone-copy,
+.danger-zone-form > .error-strip {
+  grid-column: 1 / -1;
+}
 .danger-zone-copy strong {
   font: 0.72rem var(--mono);
 }
@@ -1340,15 +1348,15 @@ button:hover {
   margin: 0 0 0.7rem;
   font-size: 0.75rem;
 }
-.danger-zone {
+.detail-settings > .danger-zone {
   padding: 1rem;
 }
-.danger-zone h3 {
+.detail-settings > .danger-zone h3 {
   margin: 0;
   color: var(--red);
   font-size: 0.75rem;
 }
-.danger-zone > p {
+.detail-settings > .danger-zone > p {
   color: var(--muted);
   font: 0.6rem / 1.5 var(--mono);
 }
@@ -1410,6 +1418,12 @@ button:hover {
   font: 0.6rem var(--mono);
 }
 .compact-form .full {
+  grid-column: 1 / -1;
+}
+.version-upload-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.version-upload-form > [role="status"] {
   grid-column: 1 / -1;
 }
 .generated-url {
