@@ -1,6 +1,9 @@
 {
   "name": "vardum",
+  "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "repository": "github:frgtn-dot-dev/vardum",
   "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=22"

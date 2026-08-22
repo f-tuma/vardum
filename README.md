@@ -62,6 +62,9 @@ Run the disposable fresh-install check with:
 bash scripts/smoke-production.sh
 ```
 
+Backup, restore and upgrade procedures are documented in
+[`docs/operations.md`](docs/operations.md).
+
 ## Organizations and workspaces
 
 Organizations own members and roles and may contain multiple workspaces. Only
@@ -89,3 +92,12 @@ The Overview records successful `GET` content responses and shows a 30-day UTC
 series for originals and transformations. These are response requests, not
 proof that the client completed a download. Raw events are retained for 90 days
 and removed daily by the worker.
+
+## Security
+
+Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
+Release history is available in [`CHANGELOG.md`](CHANGELOG.md).
+
+## License
+
+Vardum is released under the [MIT License](LICENSE).
