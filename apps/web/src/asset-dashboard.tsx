@@ -695,8 +695,10 @@ function AssetDetailPage({
         <section className="detail-settings">
           {asset.currentVersionId && (
             <TransformationForm
+              key={asset.currentVersionId}
               workspaceId={workspaceId}
               assetId={asset.id}
+              sourceWidth={asset.width}
               onPreviewChange={setPreviewUrl}
             />
           )}
@@ -735,14 +737,17 @@ function AssetDetailPage({
 function TransformationForm({
   workspaceId,
   assetId,
+  sourceWidth,
   onPreviewChange,
 }: {
   workspaceId: string;
   assetId: string;
+  sourceWidth: number | null;
   onPreviewChange: (url: string) => void;
 }) {
+  const defaultWidth = Math.min(sourceWidth ?? 640, 4096);
   const initialTransformation: TransformationInput = {
-    w: 640,
+    w: defaultWidth,
     fit: "inside",
     format: "webp",
     q: 80,
@@ -801,7 +806,7 @@ function TransformationForm({
             type="number"
             min="1"
             max="4096"
-            defaultValue="640"
+            defaultValue={defaultWidth}
           />
         </label>
         <label>
