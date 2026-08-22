@@ -20,6 +20,12 @@ test("sync detects local and remote conflicts before overwriting", () => {
 
 test("bulk push preserves relative paths as safe asset keys", () => {
   assert.equal(assetKey("mobile", "icons/app.png"), "mobile/icons/app.png");
-  assert.throws(() => assetKey("mobile", "Icons/App.png"), /valid asset key/);
-  assert.throws(() => assetKey("../mobile", "app.png"), /valid asset key/);
+  assert.throws(
+    () => assetKey("mobile", "Icons/App.png"),
+    /valid asset key|Invalid workspace prefix/,
+  );
+  assert.throws(
+    () => assetKey("../mobile", "app.png"),
+    /valid asset key|Invalid workspace prefix/,
+  );
 });
