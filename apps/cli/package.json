@@ -1,0 +1,21 @@
+{
+  "name": "@vardum/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "vardum": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "5.9.3"
+  }
+}
