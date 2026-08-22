@@ -2,25 +2,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { AccountSettings } from "./account-settings";
-import {
-  createOrganizationWorkspace,
-  getOrganizationDirectory,
-} from "./asset-api";
+import { getOrganizationDirectory } from "./asset-api";
 import { AssetDashboard } from "./asset-dashboard";
 import { authClient } from "./auth-client";
+import { OrganizationSettings } from "./organization-settings";
 import { WorkspaceOverview } from "./workspace-overview";
 import { WorkspaceSettings } from "./workspace-settings";
 
 export function App({
   routeWorkspaceId,
+  routeOrganizationId,
   assetId,
   prefix = "",
   view = "overview",
 }: {
   routeWorkspaceId?: string;
+  routeOrganizationId?: string;
   assetId?: string;
   prefix?: string;
-  view?: "overview" | "assets" | "settings" | "account";
+  view?: "overview" | "assets" | "settings" | "organization" | "account";
 }) {
   const session = authClient.useSession();
   if (session.isPending) return <div className="loading">Loading…</div>;
@@ -30,6 +30,7 @@ export function App({
       email={session.data.user.email}
       name={session.data.user.name}
       routeWorkspaceId={routeWorkspaceId}
+      routeOrganizationId={routeOrganizationId}
       assetId={assetId}
       prefix={prefix}
       view={view}
@@ -41,6 +42,7 @@ function WorkspaceApp({
   email,
   name,
   routeWorkspaceId,
+  routeOrganizationId,
   assetId,
   prefix,
   view,
@@ -48,17 +50,16 @@ function WorkspaceApp({
   email: string;
   name: string;
   routeWorkspaceId?: string;
+  routeOrganizationId?: string;
   assetId?: string;
   prefix: string;
-  view: "overview" | "assets" | "settings" | "account";
+  view: "overview" | "assets" | "settings" | "organization" | "account";
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const searchRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState(routeWorkspaceId ?? "");
   const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
-  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
-  const [creatingOrganization, setCreatingOrganization] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const directory = useQuery({
@@ -76,7 +77,7 @@ function WorkspaceApp({
     (workspace) => workspace.id === routeWorkspaceId,
   );
   const preferredOrganizationId =
-    selectedOrganizationId || routeWorkspace?.organizationId;
+    routeOrganizationId || selectedOrganizationId || routeWorkspace?.organizationId;
   const selected =
     allWorkspaces.find(
       (workspace) =>
@@ -100,7 +101,12 @@ function WorkspaceApp({
       setSelectedId(selected.id);
       setSelectedOrganizationId(selected.organizationId);
     }
-    if (view !== "account" && !routeWorkspaceId && selected) {
+    if (
+      view !== "account" &&
+      view !== "organization" &&
+      !routeWorkspaceId &&
+      selected
+    ) {
       void navigate({
         to: "/workspaces/$workspaceId",
         params: { workspaceId: selected.id },
@@ -109,6 +115,7 @@ function WorkspaceApp({
   }, [
     navigate,
     routeWorkspaceId,
+    routeOrganizationId,
     selected?.id,
     selected?.organizationId,
     view,
@@ -144,39 +151,12 @@ function WorkspaceApp({
       return;
     }
     setSelectedOrganizationId(result.data.id);
-    setCreatingOrganization(false);
-    setCreatingWorkspace(true);
     formElement.reset();
     await queryClient.invalidateQueries({ queryKey: ["organizations"] });
-  }
-
-  async function createWorkspace(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedOrganization) return;
-    setError("");
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    try {
-      const workspace = await createOrganizationWorkspace(
-        selectedOrganization.id,
-        {
-          name: String(form.get("name")),
-          slug: String(form.get("slug")),
-        },
-      );
-      setSelectedId(workspace.id);
-      setCreatingWorkspace(false);
-      formElement.reset();
-      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
-      await navigate({
-        to: "/workspaces/$workspaceId",
-        params: { workspaceId: workspace.id },
-      });
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Workspace creation failed",
-      );
-    }
+    await navigate({
+      to: "/organizations/$organizationId/settings",
+      params: { organizationId: result.data.id },
+    });
   }
 
   return (
@@ -188,9 +168,11 @@ function WorkspaceApp({
             ? "#assets"
             : view === "settings"
               ? "#settings"
-              : view === "account"
-                ? "#account"
-                : "#overview"
+              : view === "organization"
+                ? "#organization-settings"
+                : view === "account"
+                  ? "#account"
+                  : "#overview"
         }
       >
         Skip to content
@@ -205,90 +187,35 @@ function WorkspaceApp({
           <span aria-hidden="true">╂</span> VARDUM
         </a>
 
-        {organizations.length ? (
+        {allWorkspaces.length ? (
           <div className="workspace-control">
-            <small>ORGANIZATION</small>
-            <select
-              aria-label="Organization"
-              value={selectedOrganization?.id ?? ""}
-              onChange={(event) => {
-                const organization = organizations.find(
-                  ({ id }) => id === event.target.value,
-                );
-                if (!organization) return;
-                setSelectedOrganizationId(organization.id);
-                const workspace = organization.workspaces[0];
-                if (workspace) {
-                  setSelectedId(workspace.id);
-                  setCreatingWorkspace(false);
-                  void navigate({
-                    to: "/workspaces/$workspaceId",
-                    params: { workspaceId: workspace.id },
-                  });
-                } else {
-                  setSelectedId("");
-                  setCreatingWorkspace(true);
-                }
-              }}
-            >
-              {organizations.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
             <small>WORKSPACE</small>
             <select
               id="workspace-select"
               aria-label="Workspace"
               value={selected?.id ?? ""}
-              disabled={!selectedOrganization?.workspaces.length}
               onChange={(event) => {
-                const workspaceId = event.target.value;
-                setSelectedId(workspaceId);
-                setCreatingWorkspace(false);
+                const workspace = allWorkspaces.find(
+                  ({ id }) => id === event.target.value,
+                );
+                if (!workspace) return;
+                setSelectedId(workspace.id);
+                setSelectedOrganizationId(workspace.organizationId);
                 setSearch("");
                 void navigate({
                   to: "/workspaces/$workspaceId",
-                  params: { workspaceId },
+                  params: { workspaceId: workspace.id },
                 });
               }}
             >
-              {!selectedOrganization?.workspaces.length && (
-                <option value="">No workspaces</option>
-              )}
-              {selectedOrganization?.workspaces.map((workspace) => (
+              {allWorkspaces.map((workspace) => (
                 <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
+                  {organizations.length > 1
+                    ? `${organizations.find(({ id }) => id === workspace.organizationId)?.name} / ${workspace.name}`
+                    : workspace.name}
                 </option>
               ))}
             </select>
-            {selectedOrganization?.canCreateWorkspace && (
-              <button
-                className="workspace-create-button"
-                type="button"
-                onClick={() => {
-                  setError("");
-                  setCreatingOrganization(false);
-                  setCreatingWorkspace(true);
-                }}
-              >
-                + New workspace
-              </button>
-            )}
-            {directory.data?.canCreateOrganization && (
-              <button
-                className="workspace-create-button"
-                type="button"
-                onClick={() => {
-                  setError("");
-                  setCreatingWorkspace(false);
-                  setCreatingOrganization(true);
-                }}
-              >
-                + New organization
-              </button>
-            )}
           </div>
         ) : null}
 
@@ -318,6 +245,15 @@ function WorkspaceApp({
             >
               <span>03</span> Settings
             </Link>
+            {selectedOrganization && (
+              <Link
+                to="/organizations/$organizationId/settings"
+                params={{ organizationId: selectedOrganization.id }}
+                activeProps={{ className: "active" }}
+              >
+                <span>04</span> Organization
+              </Link>
+            )}
           </nav>
         )}
 
@@ -359,9 +295,11 @@ function WorkspaceApp({
             <p className="topbar-context">
               {view === "account"
                 ? "account :: settings"
-                : selected
-                  ? `${selected.slug} :: ${view}`
-                  : `workspace :: ${view}`}
+                : view === "organization"
+                  ? `${selectedOrganization?.slug ?? "organization"} :: settings`
+                  : selected
+                    ? `${selected.slug} :: ${view}`
+                    : `workspace :: ${view}`}
             </p>
           )}
         </header>
@@ -374,7 +312,7 @@ function WorkspaceApp({
           <div className="state-panel" role="alert">
             {directory.error.message}
           </div>
-        ) : (creatingOrganization || !organizations.length) &&
+        ) : !organizations.length &&
           directory.data?.canCreateOrganization ? (
           <div className="empty-workspace">
             <h1>Create an organization</h1>
@@ -392,24 +330,8 @@ function WorkspaceApp({
               <button className="primary-button">Create organization</button>
             </form>
           </div>
-        ) : organizations.length ? (creatingWorkspace || !selected) &&
-          selectedOrganization?.canCreateWorkspace ? (
-          <div className="empty-workspace">
-            <h1>Create a workspace</h1>
-            <p>Organization: {selectedOrganization.name}</p>
-            <form onSubmit={createWorkspace}>
-              <label>
-                Name
-                <input name="name" required />
-              </label>
-              <label>
-                Slug
-                <input name="slug" pattern="[a-z0-9-]+" required />
-              </label>
-              {error && <p role="alert">{error}</p>}
-              <button className="primary-button">Create workspace</button>
-            </form>
-          </div>
+        ) : view === "organization" && selectedOrganization ? (
+          <OrganizationSettings organizationId={selectedOrganization.id} />
         ) : selected ? (
           view === "overview" ? (
             <WorkspaceOverview
@@ -433,11 +355,21 @@ function WorkspaceApp({
               prefix={prefix}
             />
           )
-        ) : (
-          <div className="state-panel">This organization has no workspaces.</div>
+        ) : selectedOrganization ? (
+          <div className="state-panel">
+            This organization has no workspaces.{" "}
+            <Link
+              to="/organizations/$organizationId/settings"
+              params={{ organizationId: selectedOrganization.id }}
+            >
+              Open organization settings
+            </Link>
+            .
+          </div>
         ) : (
           <div className="state-panel">
-            You do not belong to an organization. Ask an owner for an invitation.
+            You do not belong to an organization. Ask an owner for an
+            invitation.
           </div>
         )}
       </div>

@@ -41,6 +41,11 @@ const accountRoute = createRoute({
   path: "/account",
   component: AccountPage,
 });
+const organizationSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/organizations/$organizationId/settings",
+  component: OrganizationSettingsPage,
+});
 const workspaceOverviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId",
@@ -73,6 +78,7 @@ const router = createRouter({
     resetPasswordRoute,
     acceptInvitationRoute,
     accountRoute,
+    organizationSettingsRoute,
     workspaceOverviewRoute,
     workspaceSettingsRoute,
     workspaceAssetsRoute,
@@ -98,6 +104,11 @@ function AcceptInvitationPage() {
 
 function AccountPage() {
   return <App view="account" />;
+}
+
+function OrganizationSettingsPage() {
+  const { organizationId } = organizationSettingsRoute.useParams();
+  return <App routeOrganizationId={organizationId} view="organization" />;
 }
 
 function WorkspaceOverviewPage() {

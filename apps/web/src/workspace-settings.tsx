@@ -38,7 +38,7 @@ export function WorkspaceSettings({
       <header className="settings-heading">
         <p>WORKSPACE // SETTINGS</p>
         <h1>Settings</h1>
-        <span>Workspace identity, organization access and developer credentials.</span>
+        <span>Workspace identity, delivery and developer credentials.</span>
       </header>
 
       <div className="settings-stack">
@@ -48,8 +48,6 @@ export function WorkspaceSettings({
           workspaceSlug={workspaceSlug}
         />
         <DomainSettings workspaceId={workspaceId} />
-        <MembersSettings workspaceId={workspaceId} />
-        <InvitationsSettings workspaceId={workspaceId} />
         <ApiKeysSettings workspaceId={workspaceId} />
         <DangerZone
           workspaceId={workspaceId}
@@ -184,7 +182,9 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
           !result.checks?.txt && "TXT",
           !result.checks?.cname && "CNAME",
         ].filter(Boolean);
-        setMessage(`Waiting for ${missing.join(" and ")} record${missing.length > 1 ? "s" : ""}`);
+        setMessage(
+          `Waiting for ${missing.join(" and ")} record${missing.length > 1 ? "s" : ""}`,
+        );
       }
       await refresh();
     } catch (cause) {
@@ -203,7 +203,9 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
       setMessage("Custom domain removed");
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Domain removal failed");
+      setError(
+        cause instanceof Error ? cause.message : "Domain removal failed",
+      );
     }
   }
 
@@ -235,7 +237,10 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
                 required
               />
             </label>
-            <button className="primary-button" disabled={Boolean(pendingAction)}>
+            <button
+              className="primary-button"
+              disabled={Boolean(pendingAction)}
+            >
               {pendingAction === "configure" ? "Saving…" : "Save domain"}
             </button>
           </form>
@@ -262,7 +267,11 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
               {error}
             </p>
           )}
-          {message && <p className="settings-message" role="status">{message}</p>}
+          {message && (
+            <p className="settings-message" role="status">
+              {message}
+            </p>
+          )}
           {record?.domain && (
             <div className="domain-actions">
               <button
@@ -296,7 +305,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function MembersSettings({ workspaceId }: { workspaceId: string }) {
+export function OrganizationMembers({ workspaceId }: { workspaceId: string }) {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState("");
   const [error, setError] = useState("");
@@ -384,7 +393,11 @@ function MembersSettings({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function InvitationsSettings({ workspaceId }: { workspaceId: string }) {
+export function OrganizationInvitations({
+  workspaceId,
+}: {
+  workspaceId: string;
+}) {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState("");
   const [error, setError] = useState("");

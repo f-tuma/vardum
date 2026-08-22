@@ -120,18 +120,6 @@ input:disabled {
 .workspace-control select {
   width: 100%;
 }
-.workspace-create-button {
-  height: 32px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  background: transparent;
-  font: 0.58rem var(--mono);
-  text-align: left;
-}
-.workspace-create-button:hover {
-  border-color: var(--violet);
-  color: var(--text);
-}
 .sidebar-nav {
   display: grid;
   gap: 0.25rem;
@@ -650,6 +638,17 @@ button:hover {
   gap: 1rem;
   padding: 1rem;
 }
+.settings-panel > label {
+  display: grid;
+  gap: 0.45rem;
+  margin: 1rem;
+}
+.settings-panel > .settings-url {
+  margin: 1rem;
+}
+.settings-panel > .settings-actions {
+  padding: 0 1rem 1rem;
+}
 .settings-panel label input,
 .settings-panel label select {
   width: 100%;
@@ -820,14 +819,16 @@ button:hover {
 }
 .member-list,
 .invitation-list,
-.api-key-list {
+.api-key-list,
+.organization-workspace-list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .member-list li,
 .invitation-list li,
-.api-key-list li {
+.api-key-list li,
+.organization-workspace-list li {
   display: flex;
   min-height: 64px;
   align-items: center;
@@ -836,25 +837,30 @@ button:hover {
   border-bottom: 1px solid var(--line);
 }
 .member-identity,
-.api-key-list li > span {
+.api-key-list li > span,
+.organization-workspace-list li > span {
   min-width: 0;
   flex: 1;
 }
 .member-identity strong,
 .member-identity small,
 .api-key-list strong,
-.api-key-list small {
+.api-key-list small,
+.organization-workspace-list strong,
+.organization-workspace-list small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .member-identity strong,
-.api-key-list strong {
+.api-key-list strong,
+.organization-workspace-list strong {
   font: 0.65rem var(--mono);
 }
 .member-identity small,
-.api-key-list small {
+.api-key-list small,
+.organization-workspace-list small {
   margin-top: 0.3rem;
   color: var(--muted);
   font: 0.55rem var(--mono);
@@ -862,6 +868,10 @@ button:hover {
 .member-list select {
   width: 140px;
   flex: none;
+}
+.organization-workspace-list a {
+  color: var(--violet);
+  font: 0.58rem var(--mono);
 }
 .domain-form {
   grid-template-columns: minmax(0, 1fr) auto;
