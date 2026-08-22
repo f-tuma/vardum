@@ -699,6 +699,9 @@ function AssetDetailPage({
               workspaceId={workspaceId}
               assetId={asset.id}
               sourceWidth={asset.width}
+              sourceHeight={asset.height}
+              sourceMimeType={asset.mimeType}
+              originalUrl={path}
               onPreviewChange={setPreviewUrl}
             />
           )}
@@ -734,28 +737,51 @@ function AssetDetailPage({
   );
 }
 
+type DisplayFormat =
+  | NonNullable<TransformationInput["format"]>
+  | "gif"
+  | "svg"
+  | "tiff";
+
+function formatForMimeType(mimeType: string | null): DisplayFormat {
+  if (mimeType === "image/avif") return "avif";
+  if (mimeType === "image/gif") return "gif";
+  if (mimeType === "image/jpeg") return "jpeg";
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/svg+xml") return "svg";
+  if (mimeType === "image/tiff") return "tiff";
+  return "webp";
+}
+
+function isOutputFormat(
+  format: DisplayFormat,
+): format is NonNullable<TransformationInput["format"]> {
+  return ["avif", "jpeg", "png", "webp"].includes(format);
+}
+
 function TransformationForm({
   workspaceId,
   assetId,
   sourceWidth,
+  sourceHeight,
+  sourceMimeType,
+  originalUrl,
   onPreviewChange,
 }: {
   workspaceId: string;
   assetId: string;
   sourceWidth: number | null;
+  sourceHeight: number | null;
+  sourceMimeType: string | null;
+  originalUrl: string;
   onPreviewChange: (url: string) => void;
 }) {
-  const defaultWidth = Math.min(sourceWidth ?? 640, 4096);
-  const initialTransformation: TransformationInput = {
-    w: defaultWidth,
-    fit: "inside",
-    format: "webp",
-    q: 80,
-  };
-  const [transformation, setTransformation] = useState(initialTransformation);
-  const [settledTransformation, setSettledTransformation] = useState(
-    initialTransformation,
-  );
+  const sourceFormat = formatForMimeType(sourceMimeType);
+  const [format, setFormat] = useState<DisplayFormat>(sourceFormat);
+  const [transformation, setTransformation] =
+    useState<TransformationInput | null>(null);
+  const [settledTransformation, setSettledTransformation] =
+    useState<TransformationInput | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(
@@ -772,26 +798,57 @@ function TransformationForm({
       assetId,
       settledTransformation,
     ],
-    queryFn: () =>
-      createTransformationUrl(workspaceId, assetId, settledTransformation),
+    queryFn: () => {
+      if (!settledTransformation) throw new Error("No transformation selected");
+      return createTransformationUrl(
+        workspaceId,
+        assetId,
+        settledTransformation,
+      );
+    },
+    enabled: Boolean(settledTransformation),
     staleTime: Infinity,
   });
+  const generatedUrl = transformation ? preview.data?.url : originalUrl;
 
   useEffect(() => {
-    if (preview.data?.url) onPreviewChange(preview.data.url);
-  }, [onPreviewChange, preview.data?.url]);
+    if (generatedUrl) onPreviewChange(generatedUrl);
+  }, [generatedUrl, onPreviewChange]);
 
   function updatePreview(event: SyntheticEvent<HTMLFormElement>) {
     const form = new FormData(event.currentTarget);
-    const width = String(form.get("width"));
-    const height = String(form.get("height"));
-    const quality = String(form.get("quality"));
+    const width = form.get("width");
+    const height = form.get("height");
+    const quality = form.get("quality");
+    let selectedFormat = String(form.get("format")) as DisplayFormat;
+    const nextWidth = typeof width === "string" && width ? Number(width) : undefined;
+    const nextHeight =
+      typeof height === "string" && height ? Number(height) : undefined;
+    const nextQuality =
+      typeof quality === "string" && quality ? Number(quality) : undefined;
+    if (
+      nextWidth === (sourceWidth ?? undefined) &&
+      nextHeight === (sourceHeight ?? undefined) &&
+      selectedFormat === sourceFormat &&
+      (nextQuality ?? 80) === 80 &&
+      form.get("fit") === "inside"
+    ) {
+      setTransformation(null);
+      return;
+    }
+    if (selectedFormat === "svg") {
+      selectedFormat = "png";
+      setFormat("png");
+    }
+    const outputFormat = isOutputFormat(selectedFormat)
+      ? selectedFormat
+      : undefined;
     setTransformation({
-      w: width ? Number(width) : undefined,
-      h: height ? Number(height) : undefined,
+      w: nextWidth,
+      h: nextHeight,
       fit: String(form.get("fit")) as TransformationInput["fit"],
-      format: String(form.get("format")) as TransformationInput["format"],
-      q: quality ? Number(quality) : undefined,
+      format: outputFormat,
+      q: outputFormat ? nextQuality : undefined,
     });
   }
 
@@ -806,12 +863,18 @@ function TransformationForm({
             type="number"
             min="1"
             max="4096"
-            defaultValue={defaultWidth}
+            defaultValue={sourceWidth ?? ""}
           />
         </label>
         <label>
           Height
-          <input name="height" type="number" min="1" max="4096" />
+          <input
+            name="height"
+            type="number"
+            min="1"
+            max="4096"
+            defaultValue={sourceHeight ?? ""}
+          />
         </label>
         <label>
           Fit
@@ -825,7 +888,16 @@ function TransformationForm({
         </label>
         <label>
           Format
-          <select name="format" defaultValue="webp">
+          <select
+            name="format"
+            value={format}
+            onChange={(event) =>
+              setFormat(event.target.value as DisplayFormat)
+            }
+          >
+            {sourceFormat === "svg" && <option value="svg">SVG</option>}
+            {sourceFormat === "gif" && <option value="gif">GIF</option>}
+            {sourceFormat === "tiff" && <option value="tiff">TIFF</option>}
             <option value="webp">WebP</option>
             <option value="avif">AVIF</option>
             <option value="jpeg">JPEG</option>
@@ -840,6 +912,7 @@ function TransformationForm({
             min="1"
             max="100"
             defaultValue="80"
+            disabled={!isOutputFormat(format)}
           />
         </label>
       </form>
@@ -848,10 +921,10 @@ function TransformationForm({
           {preview.error.message}
         </p>
       )}
-      {preview.data?.url && (
+      {generatedUrl && (
         <div className="generated-url">
-          <a href={preview.data.url} target="_blank" rel="noreferrer">
-            {preview.data.url}
+          <a href={generatedUrl} target="_blank" rel="noreferrer">
+            {generatedUrl}
           </a>
         </div>
       )}
