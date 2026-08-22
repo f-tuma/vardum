@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, max, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNotNull, max, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { fromDrizzle } from "pg-boss";
@@ -11,6 +11,7 @@ import {
   assetFolder,
   assetVersion,
   auditEvent,
+  workspaceSettings,
 } from "./db/app-schema.js";
 import { apikey, organization, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
@@ -352,8 +353,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
         const explicitRemainder = sql<string>`substring(${assetFolder.prefix} from length(${prefix}) + 1)`;
         const explicitFolderName = sql<string>`split_part(${explicitRemainder}, '/', 1)`;
         const [workspace] = await transaction
-          .select({ slug: organization.slug })
+          .select({
+            slug: organization.slug,
+            customDomain: workspaceSettings.customDomain,
+          })
           .from(organization)
+          .leftJoin(
+            workspaceSettings,
+            and(
+              eq(workspaceSettings.workspaceId, organization.id),
+              isNotNull(workspaceSettings.customDomainVerifiedAt),
+            ),
+          )
           .where(eq(organization.id, workspaceId));
         const assets = await transaction
           .select({
@@ -429,12 +440,14 @@ export function registerAssetRoutes(app: FastifyInstance) {
               latestVersionId: latestVersion?.id ?? null,
               status: latestVersion?.status ?? null,
               error: latestVersion?.error ?? null,
+              customDomain: workspace?.customDomain ?? null,
               thumbnailUrl:
                 workspace && item.currentVersionId
                   ? transformedAssetUrl(
                       workspace.slug,
                       item.key,
                       thumbnailTransformation,
+                      workspace.customDomain,
                     )
                   : null,
             };
@@ -462,8 +475,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
         const [workspace] = await transaction
-          .select({ slug: organization.slug })
+          .select({
+            slug: organization.slug,
+            customDomain: workspaceSettings.customDomain,
+          })
           .from(organization)
+          .leftJoin(
+            workspaceSettings,
+            and(
+              eq(workspaceSettings.workspaceId, organization.id),
+              isNotNull(workspaceSettings.customDomainVerifiedAt),
+            ),
+          )
           .where(eq(organization.id, workspaceId));
         const [item] = await transaction
           .select({
@@ -503,12 +526,14 @@ export function registerAssetRoutes(app: FastifyInstance) {
           latestVersionId: latest?.id ?? null,
           status: latest?.status ?? null,
           error: latest?.error ?? null,
+          customDomain: workspace?.customDomain ?? null,
           thumbnailUrl:
             workspace && item.currentVersionId
               ? transformedAssetUrl(
                   workspace.slug,
                   item.key,
                   thumbnailTransformation,
+                  workspace.customDomain,
                 )
               : null,
         };

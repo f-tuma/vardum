@@ -1,9 +1,9 @@
-import { and, eq } from "drizzle-orm";
-import type { FastifyInstance } from "fastify";
+import { and, eq, isNotNull } from "drizzle-orm";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { assetKey } from "./asset-routes.js";
-import { asset, assetVersion } from "./db/app-schema.js";
+import { asset, assetVersion, workspaceSettings } from "./db/app-schema.js";
 import { organization } from "./db/auth-schema.js";
 import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
@@ -12,6 +12,7 @@ import { getObject } from "./storage.js";
 import {
   canonicalizeTransformation,
   deliveryQuerySchema,
+  type Transformation,
   verifyTransformation,
 } from "./transformation.js";
 
@@ -19,56 +20,54 @@ const stableParams = z.object({
   workspaceSlug: z.string().min(1),
   "*": assetKey,
 });
+const rootCustomParams = z.object({ assetKey });
 const immutableParams = stableParams.extend({ versionId: z.uuid() });
+const customImmutableParams = z.object({ versionId: z.uuid(), "*": assetKey });
+type Workspace = { id: string; slug: string };
+type SignedTransformation = Transformation & { sig: string };
 
 export function registerDeliveryRoutes(app: FastifyInstance) {
   const delivery = app.withTypeProvider<ZodTypeProvider>();
 
   delivery.get(
-    "/w/:workspaceSlug/*",
-    { schema: { params: stableParams, querystring: deliveryQuerySchema } },
+    "/w/__v/:versionId/*",
+    {
+      schema: {
+        params: customImmutableParams,
+        querystring: deliveryQuerySchema,
+      },
+    },
     async (request, reply) => {
-      const workspace = await findWorkspace(request.params.workspaceSlug);
+      const workspace = await findCustomWorkspace(request.hostname);
       if (!workspace) return reply.code(404).send({ error: "Asset not found" });
-      const assetKey = request.params["*"];
-      const transformation = "sig" in request.query ? request.query : null;
-      if (
-        transformation &&
-        !verifyTransformation(
-          workspace.slug,
-          assetKey,
-          transformation,
-          transformation.sig,
-        )
-      ) {
-        return reply
-          .code(403)
-          .send({ error: "Invalid transformation signature" });
-      }
-
-      const [current] = await inWorkspace(workspace.id, (transaction) =>
-        transaction
-          .select({ versionId: asset.currentVersionId })
-          .from(asset)
-          .where(
-            and(eq(asset.workspaceId, workspace.id), eq(asset.key, assetKey)),
-          ),
+      const transformation = signedTransformation(request.query);
+      if (!validTransformation(workspace, request.params["*"], transformation))
+        return reply.code(403).send({ error: "Invalid transformation signature" });
+      return deliverVersion(
+        workspace,
+        request.params["*"],
+        request.params.versionId,
+        transformation,
+        request,
+        reply,
       );
-      if (!current?.versionId) {
-        return reply.code(404).send({ error: "Asset not found" });
-      }
+    },
+  );
 
-      const key = assetKey.split("/").map(encodeURIComponent).join("/");
-      const query = transformation
-        ? `?${canonicalizeTransformation(transformation)}&sig=${encodeURIComponent(transformation.sig)}`
-        : "";
-      reply.header(
-        "cache-control",
-        "public, max-age=60, stale-while-revalidate=300",
-      );
-      return reply.redirect(
-        `/w/${encodeURIComponent(workspace.slug)}/__v/${current.versionId}/${key}${query}`,
-        302,
+  delivery.get(
+    "/w/:assetKey",
+    {
+      schema: { params: rootCustomParams, querystring: deliveryQuerySchema },
+    },
+    async (request, reply) => {
+      const workspace = await findCustomWorkspace(request.hostname);
+      if (!workspace) return reply.code(404).send({ error: "Asset not found" });
+      return redirectCurrent(
+        workspace,
+        request.params.assetKey,
+        signedTransformation(request.query),
+        true,
+        reply,
       );
     },
   );
@@ -79,85 +78,38 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const workspace = await findWorkspace(request.params.workspaceSlug);
       if (!workspace) return reply.code(404).send({ error: "Asset not found" });
-      const assetKey = request.params["*"];
-      const transformation = "sig" in request.query ? request.query : null;
-      if (
-        transformation &&
-        !verifyTransformation(
-          workspace.slug,
-          assetKey,
-          transformation,
-          transformation.sig,
-        )
-      ) {
-        return reply
-          .code(403)
-          .send({ error: "Invalid transformation signature" });
-      }
-
-      const [version] = await inWorkspace(workspace.id, (transaction) =>
-        transaction
-          .select({
-            id: assetVersion.id,
-            storageKey: assetVersion.storageKey,
-            filename: assetVersion.filename,
-            mimeType: assetVersion.mimeType,
-            size: assetVersion.size,
-          })
-          .from(assetVersion)
-          .innerJoin(asset, eq(asset.id, assetVersion.assetId))
-          .where(
-            and(
-              eq(assetVersion.workspaceId, workspace.id),
-              eq(assetVersion.id, request.params.versionId),
-              eq(assetVersion.status, "ready"),
-              eq(asset.key, assetKey),
-            ),
-          ),
+      const transformation = signedTransformation(request.query);
+      if (!validTransformation(workspace, request.params["*"], transformation))
+        return reply.code(403).send({ error: "Invalid transformation signature" });
+      return deliverVersion(
+        workspace,
+        request.params["*"],
+        request.params.versionId,
+        transformation,
+        request,
+        reply,
       );
-      if (!version) return reply.code(404).send({ error: "Asset not found" });
+    },
+  );
 
-      try {
-        const delivered = transformation
-          ? await getImageVariant(version, transformation)
-          : {
-              object: await getObject(version.storageKey),
-              mimeType: version.mimeType,
-            };
-        const { object } = delivered;
-        if (!object.Body) throw new Error("S3 returned an empty body");
-
-        reply.headers({
-          "access-control-allow-origin": "*",
-          "cache-control": "public, max-age=31536000, immutable",
-          "content-disposition": `inline; filename*=UTF-8''${encodeFilename(
-            deliveryFilename(
-              version.filename,
-              transformation?.format ??
-                (transformation && version.mimeType === "image/svg+xml"
-                  ? "png"
-                  : undefined),
-            ),
-          )}`,
-          "content-length": object.ContentLength ?? version.size,
-          "content-security-policy":
-            "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-          "cross-origin-resource-policy": "cross-origin",
-          "x-content-type-options": "nosniff",
-        });
-        if (object.ETag) reply.header("etag", object.ETag);
-        if (object.LastModified)
-          reply.header("last-modified", object.LastModified.toUTCString());
-        reply.type(object.ContentType ?? delivered.mimeType);
-
-        return reply.send(object.Body);
-      } catch (error) {
-        request.log.error(
-          { error, versionId: request.params.versionId },
-          "Asset delivery failed",
-        );
-        return reply.code(502).send({ error: "Asset content unavailable" });
-      }
+  delivery.get(
+    "/w/:workspaceSlug/*",
+    { schema: { params: stableParams, querystring: deliveryQuerySchema } },
+    async (request, reply) => {
+      const customWorkspace = await findCustomWorkspace(request.hostname);
+      const workspace =
+        customWorkspace ?? (await findWorkspace(request.params.workspaceSlug));
+      if (!workspace) return reply.code(404).send({ error: "Asset not found" });
+      const key = customWorkspace
+        ? `${request.params.workspaceSlug}/${request.params["*"]}`
+        : request.params["*"];
+      return redirectCurrent(
+        workspace,
+        key,
+        signedTransformation(request.query),
+        Boolean(customWorkspace),
+        reply,
+      );
     },
   );
 
@@ -166,11 +118,143 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
   );
 }
 
+async function redirectCurrent(
+  workspace: Workspace,
+  key: string,
+  transformation: SignedTransformation | null,
+  customDomain: boolean,
+  reply: FastifyReply,
+) {
+  if (!validTransformation(workspace, key, transformation))
+    return reply.code(403).send({ error: "Invalid transformation signature" });
+  const [current] = await inWorkspace(workspace.id, (transaction) =>
+    transaction
+      .select({ versionId: asset.currentVersionId })
+      .from(asset)
+      .where(and(eq(asset.workspaceId, workspace.id), eq(asset.key, key))),
+  );
+  if (!current?.versionId)
+    return reply.code(404).send({ error: "Asset not found" });
+
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  const query = transformation
+    ? `?${canonicalizeTransformation(transformation)}&sig=${encodeURIComponent(transformation.sig)}`
+    : "";
+  const path = customDomain
+    ? `/w/__v/${current.versionId}/${encodedKey}`
+    : `/w/${encodeURIComponent(workspace.slug)}/__v/${current.versionId}/${encodedKey}`;
+  reply.header("cache-control", "public, max-age=60, stale-while-revalidate=300");
+  return reply.redirect(`${path}${query}`, 302);
+}
+
+async function deliverVersion(
+  workspace: Workspace,
+  key: string,
+  versionId: string,
+  transformation: SignedTransformation | null,
+  request: FastifyRequest,
+  reply: FastifyReply,
+) {
+  const [version] = await inWorkspace(workspace.id, (transaction) =>
+    transaction
+      .select({
+        id: assetVersion.id,
+        storageKey: assetVersion.storageKey,
+        filename: assetVersion.filename,
+        mimeType: assetVersion.mimeType,
+        size: assetVersion.size,
+      })
+      .from(assetVersion)
+      .innerJoin(asset, eq(asset.id, assetVersion.assetId))
+      .where(
+        and(
+          eq(assetVersion.workspaceId, workspace.id),
+          eq(assetVersion.id, versionId),
+          eq(assetVersion.status, "ready"),
+          eq(asset.key, key),
+        ),
+      ),
+  );
+  if (!version) return reply.code(404).send({ error: "Asset not found" });
+
+  try {
+    const delivered = transformation
+      ? await getImageVariant(version, transformation)
+      : {
+          object: await getObject(version.storageKey),
+          mimeType: version.mimeType,
+        };
+    const { object } = delivered;
+    if (!object.Body) throw new Error("S3 returned an empty body");
+
+    reply.headers({
+      "access-control-allow-origin": "*",
+      "cache-control": "public, max-age=31536000, immutable",
+      "content-disposition": `inline; filename*=UTF-8''${encodeFilename(
+        deliveryFilename(
+          version.filename,
+          transformation?.format ??
+            (transformation && version.mimeType === "image/svg+xml"
+              ? "png"
+              : undefined),
+        ),
+      )}`,
+      "content-length": object.ContentLength ?? version.size,
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      "cross-origin-resource-policy": "cross-origin",
+      "x-content-type-options": "nosniff",
+    });
+    if (object.ETag) reply.header("etag", object.ETag);
+    if (object.LastModified)
+      reply.header("last-modified", object.LastModified.toUTCString());
+    reply.type(object.ContentType ?? delivered.mimeType);
+    return reply.send(object.Body);
+  } catch (error) {
+    request.log.error({ error, versionId }, "Asset delivery failed");
+    return reply.code(502).send({ error: "Asset content unavailable" });
+  }
+}
+
+function signedTransformation(query: Record<string, unknown>) {
+  return "sig" in query ? (query as SignedTransformation) : null;
+}
+
+function validTransformation(
+  workspace: Workspace,
+  key: string,
+  transformation: SignedTransformation | null,
+) {
+  return (
+    !transformation ||
+    verifyTransformation(
+      workspace.slug,
+      key,
+      transformation,
+      transformation.sig,
+    )
+  );
+}
+
 async function findWorkspace(slug: string) {
   const [workspace] = await db
     .select({ id: organization.id, slug: organization.slug })
     .from(organization)
     .where(eq(organization.slug, slug));
+  return workspace ?? null;
+}
+
+async function findCustomWorkspace(hostname: string) {
+  const [workspace] = await db
+    .select({ id: organization.id, slug: organization.slug })
+    .from(workspaceSettings)
+    .innerJoin(organization, eq(organization.id, workspaceSettings.workspaceId))
+    .where(
+      and(
+        eq(workspaceSettings.customDomain, hostname.toLowerCase()),
+        isNotNull(workspaceSettings.customDomainVerifiedAt),
+      ),
+    );
   return workspace ?? null;
 }
 

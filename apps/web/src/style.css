@@ -801,6 +801,42 @@ button:hover {
   width: 140px;
   flex: none;
 }
+.domain-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  border-bottom: 1px solid var(--line);
+}
+.domain-setup {
+  border-bottom: 1px solid var(--line);
+}
+.domain-setup > div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.domain-setup > div:last-child {
+  border-bottom: 0;
+}
+.domain-setup span {
+  color: var(--violet);
+  font: 0.55rem var(--mono);
+}
+.domain-setup code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font: 0.58rem/1.5 var(--mono);
+}
+.domain-setup .domain-delivery-example {
+  grid-template-columns: 70px minmax(0, 1fr);
+}
+.domain-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem;
+}
 .api-key-form,
 .invitation-form {
   grid-template-columns: minmax(0, 1fr) 180px auto;
@@ -1588,6 +1624,11 @@ button:hover {
   }
   .overview-stats {
     grid-template-columns: 1fr;
+  }
+  .domain-setup > div,
+  .domain-setup .domain-delivery-example {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
   }
   .member-list li,
   .invitation-list li {

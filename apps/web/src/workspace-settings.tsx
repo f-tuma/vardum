@@ -1,17 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type SyntheticEvent } from "react";
 import {
+  configureWorkspaceDomain,
   createWorkspaceApiKey,
   createWorkspaceInvitation,
   deleteWorkspace,
   deleteWorkspaceApiKey,
+  getWorkspaceDomain,
   listWorkspaceApiKeys,
   listWorkspaceInvitations,
   listWorkspaceMembers,
+  removeWorkspaceDomain,
   resendWorkspaceInvitation,
   revokeWorkspaceInvitation,
   updateWorkspace,
   updateWorkspaceMemberRole,
+  verifyWorkspaceDomain,
+  type WorkspaceDomain,
   type WorkspaceInvitation,
   type WorkspaceMember,
 } from "./asset-api";
@@ -42,6 +47,7 @@ export function WorkspaceSettings({
           workspaceName={workspaceName}
           workspaceSlug={workspaceSlug}
         />
+        <DomainSettings workspaceId={workspaceId} />
         <MembersSettings workspaceId={workspaceId} />
         <InvitationsSettings workspaceId={workspaceId} />
         <ApiKeysSettings workspaceId={workspaceId} />
@@ -125,6 +131,167 @@ function GeneralSettings({
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+function DomainSettings({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
+  const [pendingAction, setPendingAction] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const domain = useQuery({
+    queryKey: ["workspace-domain", workspaceId],
+    queryFn: () => getWorkspaceDomain(workspaceId),
+  });
+
+  async function refresh() {
+    await queryClient.invalidateQueries({
+      queryKey: ["workspace-domain", workspaceId],
+    });
+  }
+
+  async function configure(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPendingAction("configure");
+    setMessage("");
+    setError("");
+    try {
+      await configureWorkspaceDomain(
+        workspaceId,
+        String(new FormData(event.currentTarget).get("domain")),
+      );
+      setMessage("Add the DNS records below, then verify the domain");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Domain update failed");
+    } finally {
+      setPendingAction("");
+    }
+  }
+
+  async function verify() {
+    setPendingAction("verify");
+    setMessage("");
+    setError("");
+    try {
+      const result = await verifyWorkspaceDomain(workspaceId);
+      if (result.status === "verified") {
+        setMessage("Domain verified");
+      } else {
+        const missing = [
+          !result.checks?.txt && "TXT",
+          !result.checks?.cname && "CNAME",
+        ].filter(Boolean);
+        setMessage(`Waiting for ${missing.join(" and ")} record${missing.length > 1 ? "s" : ""}`);
+      }
+      await refresh();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Domain verification failed",
+      );
+    } finally {
+      setPendingAction("");
+    }
+  }
+
+  async function remove() {
+    setError("");
+    try {
+      await removeWorkspaceDomain(workspaceId);
+      setMessage("Custom domain removed");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Domain removal failed");
+    }
+  }
+
+  const record: WorkspaceDomain | undefined = domain.data;
+  return (
+    <section className="settings-panel" id="custom-domain">
+      <header>
+        <h2>┌─ CUSTOM DOMAIN</h2>
+        <span>{record?.status.toUpperCase() ?? "LOADING"}</span>
+      </header>
+      {domain.isPending ? (
+        <p className="settings-state">Loading custom domain…</p>
+      ) : domain.isError ? (
+        <p className="error-strip settings-inline-error" role="alert">
+          {domain.error.message}
+        </p>
+      ) : (
+        <>
+          <form className="domain-form" onSubmit={configure}>
+            <label>
+              Domain
+              <input
+                key={record?.domain}
+                name="domain"
+                defaultValue={record?.domain ?? ""}
+                placeholder="assets.example.com"
+                autoComplete="off"
+                spellCheck={false}
+                required
+              />
+            </label>
+            <button className="primary-button" disabled={Boolean(pendingAction)}>
+              {pendingAction === "configure" ? "Saving…" : "Save domain"}
+            </button>
+          </form>
+          {record?.domain && record.verification && (
+            <div className="domain-setup">
+              <div>
+                <span>TXT</span>
+                <code>{record.verification.name}</code>
+                <code>{record.verification.value}</code>
+              </div>
+              <div>
+                <span>CNAME</span>
+                <code>{record.domain}</code>
+                <code>{record.target ?? "Not configured"}</code>
+              </div>
+              <div className="domain-delivery-example">
+                <span>DELIVERY</span>
+                <code>https://{record.domain}/w/&#123;key&#125;</code>
+              </div>
+            </div>
+          )}
+          {error && (
+            <p className="error-strip settings-inline-error" role="alert">
+              {error}
+            </p>
+          )}
+          {message && <p className="settings-message" role="status">{message}</p>}
+          {record?.domain && (
+            <div className="domain-actions">
+              <button
+                type="button"
+                disabled={Boolean(pendingAction)}
+                onClick={() => void verify()}
+              >
+                {pendingAction === "verify" ? "Checking DNS…" : "Verify DNS"}
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={Boolean(pendingAction)}
+                onClick={() => setRemoveOpen(true)}
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      <ConfirmDialog
+        open={removeOpen}
+        title={`Remove custom domain “${record?.domain ?? ""}”?`}
+        description="Delivery through this host will stop immediately. Canonical workspace URLs will keep working."
+        confirmLabel="Remove domain"
+        onCancel={() => setRemoveOpen(false)}
+        onConfirm={remove}
+      />
     </section>
   );
 }

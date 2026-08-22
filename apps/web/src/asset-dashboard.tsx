@@ -508,7 +508,7 @@ function AssetCard({
   prefix: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const path = assetPath(workspaceSlug, asset.key);
+  const path = assetPath(workspaceSlug, asset.key, asset.customDomain);
   const status = asset.status ?? "empty";
 
   async function copyUrl() {
@@ -589,7 +589,7 @@ function AssetDetailPage({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [previewUrl, setPreviewUrl] = useState(asset.thumbnailUrl ?? "");
-  const path = assetPath(workspaceSlug, asset.key);
+  const path = assetPath(workspaceSlug, asset.key, asset.customDomain);
   const status = asset.status ?? "empty";
 
   async function removeAsset() {
@@ -821,7 +821,8 @@ function TransformationForm({
     const height = form.get("height");
     const quality = form.get("quality");
     let selectedFormat = String(form.get("format")) as DisplayFormat;
-    const nextWidth = typeof width === "string" && width ? Number(width) : undefined;
+    const nextWidth =
+      typeof width === "string" && width ? Number(width) : undefined;
     const nextHeight =
       typeof height === "string" && height ? Number(height) : undefined;
     const nextQuality =
@@ -891,9 +892,7 @@ function TransformationForm({
           <select
             name="format"
             value={format}
-            onChange={(event) =>
-              setFormat(event.target.value as DisplayFormat)
-            }
+            onChange={(event) => setFormat(event.target.value as DisplayFormat)}
           >
             {sourceFormat === "svg" && <option value="svg">SVG</option>}
             {sourceFormat === "gif" && <option value="gif">GIF</option>}
@@ -983,8 +982,15 @@ function VersionForm({
   );
 }
 
-function assetPath(workspaceSlug: string, key: string) {
-  return `/w/${encodeURIComponent(workspaceSlug)}/${key.split("/").map(encodeURIComponent).join("/")}`;
+function assetPath(
+  workspaceSlug: string,
+  key: string,
+  customDomain?: string | null,
+) {
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  return customDomain
+    ? `https://${customDomain}/w/${encodedKey}`
+    : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
 }
 
 export function formatBytes(bytes: number) {

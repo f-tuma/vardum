@@ -1,0 +1,1 @@
+CREATE POLICY "verified_custom_domain_lookup" ON "workspace_settings" AS PERMISSIVE FOR SELECT TO public USING ("workspace_settings"."custom_domain_verified_at" is not null);

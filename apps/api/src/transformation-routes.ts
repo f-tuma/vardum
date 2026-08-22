@@ -1,9 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { authorizeAsset } from "./authorization.js";
-import { asset } from "./db/app-schema.js";
+import { asset, workspaceSettings } from "./db/app-schema.js";
 import { organization } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import { transformedAssetUrl, transformationSchema } from "./transformation.js";
@@ -33,11 +33,19 @@ export function registerTransformationRoutes(app: FastifyInstance) {
                         key: asset.key,
                         currentVersionId: asset.currentVersionId,
                         workspaceSlug: organization.slug,
+                        customDomain: workspaceSettings.customDomain,
                     })
                     .from(asset)
                     .innerJoin(
                         organization,
                         eq(organization.id, asset.workspaceId),
+                    )
+                    .leftJoin(
+                        workspaceSettings,
+                        and(
+                            eq(workspaceSettings.workspaceId, asset.workspaceId),
+                            isNotNull(workspaceSettings.customDomainVerifiedAt),
+                        ),
                     )
                     .where(
                         and(
@@ -59,6 +67,7 @@ export function registerTransformationRoutes(app: FastifyInstance) {
                     source.workspaceSlug,
                     source.key,
                     request.body,
+                    source.customDomain,
                 ),
             };
         },

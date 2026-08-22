@@ -20,6 +20,7 @@ const schema = z
     TRANSFORM_SECRET: z.string().min(32).default(developmentSecret),
     BETTER_AUTH_URL: z.url().default("http://localhost:3000"),
     WEB_URL: z.url().default("http://localhost:5173"),
+    CUSTOM_DOMAIN_TARGET: optionalString,
     SMTP_HOST: optionalString,
     SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
     SMTP_SECURE: z

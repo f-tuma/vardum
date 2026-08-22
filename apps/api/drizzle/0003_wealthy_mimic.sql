@@ -1,0 +1,2 @@
+ALTER TABLE "workspace_settings" ADD COLUMN "custom_domain_verification_token" text;--> statement-breakpoint
+ALTER TABLE "workspace_settings" ADD COLUMN "custom_domain_verified_at" timestamp with time zone;

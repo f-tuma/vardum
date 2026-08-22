@@ -13,6 +13,7 @@ export type AssetSummary = {
   width: number | null;
   height: number | null;
   thumbnailUrl: string | null;
+  customDomain?: string | null;
   updatedAt: string;
 };
 
@@ -27,6 +28,14 @@ export type TransformationInput = {
   fit?: "cover" | "contain" | "fill" | "inside" | "outside";
   format?: "avif" | "jpeg" | "png" | "webp";
   q?: number;
+};
+export type WorkspaceDomain = {
+  domain: string | null;
+  status: "unconfigured" | "pending" | "verified";
+  verifiedAt: string | null;
+  target: string | null;
+  verification: { name: string; value: string } | null;
+  checks?: { txt: boolean; cname: boolean };
 };
 export type WorkspaceMember = {
   id: string;
@@ -86,6 +95,31 @@ export function updateWorkspace(workspaceId: string, name: string) {
       body: JSON.stringify({ name }),
     },
   );
+}
+
+export function getWorkspaceDomain(workspaceId: string) {
+  return request<WorkspaceDomain>(`/api/workspaces/${workspaceId}/domain`);
+}
+
+export function configureWorkspaceDomain(workspaceId: string, domain: string) {
+  return request<WorkspaceDomain>(`/api/workspaces/${workspaceId}/domain`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ domain }),
+  });
+}
+
+export function verifyWorkspaceDomain(workspaceId: string) {
+  return request<WorkspaceDomain>(
+    `/api/workspaces/${workspaceId}/domain/verify`,
+    { method: "POST" },
+  );
+}
+
+export function removeWorkspaceDomain(workspaceId: string) {
+  return request(`/api/workspaces/${workspaceId}/domain`, {
+    method: "DELETE",
+  });
 }
 
 export function deleteWorkspace(workspaceId: string, confirmation: string) {

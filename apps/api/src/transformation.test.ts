@@ -31,6 +31,15 @@ test("transformations are canonical and signatures reject tampering", () => {
     transformedAssetUrl("workspace", "brand/logo", transformation),
     /^\/w\/workspace\/brand\/logo\?/,
   );
+  assert.match(
+    transformedAssetUrl(
+      "workspace",
+      "brand/logo",
+      transformation,
+      "assets.example.com",
+    ),
+    /^https:\/\/assets\.example\.com\/w\/brand\/logo\?/,
+  );
   assert.equal(
     verifyTransformation(
       "workspace",

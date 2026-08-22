@@ -52,11 +52,15 @@ export function transformedAssetUrl(
   workspaceSlug: string,
   key: string,
   input: Transformation,
+  customDomain?: string | null,
 ) {
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   const query = canonicalizeTransformation(input);
   const signed = signTransformation(workspaceSlug, key, input);
-  return `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}?${query}&sig=${encodeURIComponent(signed)}`;
+  const path = customDomain
+    ? `https://${customDomain}/w/${encodedKey}`
+    : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
+  return `${path}?${query}&sig=${encodeURIComponent(signed)}`;
 }
 
 export function verifyTransformation(

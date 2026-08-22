@@ -63,3 +63,13 @@ Run the disposable fresh-install check with:
 ```sh
 bash scripts/smoke-production.sh
 ```
+
+## Custom domains
+
+Set `CUSTOM_DOMAIN_TARGET` to the public hostname that routes delivery traffic
+to Vardum. Workspace owners then configure a domain in Settings and add the
+TXT challenge plus CNAME shown there. Only verified domains are used for host
+routing; canonical `/w/{workspaceSlug}/{key}` URLs remain available.
+
+TLS and DNS are intentionally handled by Cloudflare or your reverse proxy. The
+proxy must preserve the original `Host` header.

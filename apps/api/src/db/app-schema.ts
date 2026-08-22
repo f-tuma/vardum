@@ -44,6 +44,10 @@ export const workspaceSettings = pgTable(
       .primaryKey()
       .references(() => organization.id, { onDelete: "cascade" }),
     customDomain: text("custom_domain").unique(),
+    customDomainVerificationToken: text("custom_domain_verification_token"),
+    customDomainVerifiedAt: timestamp("custom_domain_verified_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -54,7 +58,13 @@ export const workspaceSettings = pgTable(
       .notNull(),
     updatedBy: text("updated_by").notNull(),
   },
-  (table) => [tenantPolicy(table.workspaceId)],
+  (table) => [
+    tenantPolicy(table.workspaceId),
+    pgPolicy("verified_custom_domain_lookup", {
+      for: "select",
+      using: sql`${table.customDomainVerifiedAt} is not null`,
+    }),
+  ],
 ).enableRLS();
 
 export const assetFolder = pgTable(
