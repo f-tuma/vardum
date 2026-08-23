@@ -119,12 +119,38 @@ routing; canonical `/w/{workspaceSlug}/{key}` URLs remain available.
 TLS and DNS are intentionally handled by Cloudflare or your reverse proxy. The
 proxy must preserve the original `Host` header.
 
+## Versions
+
+Every upload is a permanent version and the stable URL redirects to whichever
+one is current. The asset page lists the history and restores any ready version
+by moving that pointer; nothing is rewritten, and the restore is recorded as
+`asset.version_restored` in the audit log.
+
+## Importing an existing bucket
+
+Objects already sitting in the bucket can be adopted from the assets page under
+**Import from S3**, or through
+`POST /api/workspaces/{id}/imports` with a `source` prefix. Each object is
+_copied_ into Vardum's own layout and then ingested, so deleting the asset later
+never touches your original file. Vardum's `originals/` and `derived/` prefixes
+are refused, and objects whose name or type cannot become a valid asset are
+counted as skipped rather than renamed. One call handles one page of the
+listing and returns `nextToken` for the next.
+
+## API reference
+
+The API serves its own OpenAPI 3 document at `/api/openapi.json`, generated
+from the same Zod schemas the routes validate with, so it cannot drift from the
+implementation.
+
 ## Delivery analytics
 
 The Overview records successful `GET` content responses and shows a 30-day UTC
 series for originals and transformations. These are response requests, not
-proof that the client completed a download. Raw events are retained for 90 days
-and removed daily by the worker.
+proof that the client completed a download. Transformed responses also record
+whether the variant came from the S3 cache, which the Overview and each asset
+page report as a cache ratio. Raw events are retained for 90 days and removed
+daily by the worker.
 
 ## Security
 
