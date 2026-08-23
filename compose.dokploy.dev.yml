@@ -6,12 +6,12 @@
 # self-hoster sees.
 #
 # Expose two Dokploy Domains in the UI:
-#   dev.vardum.example.com     -> service `web`,   container port 80
-#   dev-cdn.vardum.example.com -> service `minio`, container port 9000
+#   dev.vardum.com     -> service `web`,   container port 80
+#   dev-cdn.vardum.com -> service `minio`, container port 9000
 #
 # Required environment:
-#   APP_URL=https://dev.vardum.example.com
-#   S3_PUBLIC_ENDPOINT=https://dev-cdn.vardum.example.com
+#   APP_URL=https://dev.vardum.com
+#   S3_PUBLIC_ENDPOINT=https://dev-cdn.vardum.com
 #   BETTER_AUTH_SECRET / TRANSFORM_SECRET   (dev-only secrets)
 #   POSTGRES_PASSWORD
 #   MINIO_ROOT_USER / MINIO_ROOT_PASSWORD

@@ -4,8 +4,8 @@
 # owns the /api, /w and web-client split from docker/nginx.marketing.conf.template.
 #
 # Expose two Dokploy Domains in the UI:
-#   apex (vardum.example.com)     -> service `web`,   container port 80
-#   storage (cdn.vardum.example)  -> service `minio`, container port 9000
+#   apex (vardum.com)        -> service `web`,   container port 80
+#   storage (cdn.vardum.com) -> service `minio`, container port 9000
 # Never expose api, worker or postgres. The storage domain must be the one in
 # S3_PUBLIC_ENDPOINT: browsers upload straight to it with a presigned POST.
 #
@@ -16,9 +16,9 @@
 # compose.production.yml.
 #
 # Required environment:
-#   APP_URL=https://vardum.example.com
+#   APP_URL=https://vardum.com
 #   MARKETING_UPSTREAM=vardum-marketing:80
-#   S3_PUBLIC_ENDPOINT=https://cdn.vardum.example.com
+#   S3_PUBLIC_ENDPOINT=https://cdn.vardum.com
 #   BETTER_AUTH_SECRET=...             (openssl rand -base64 32)
 #   TRANSFORM_SECRET=...               (a second, different secret)
 #   POSTGRES_PASSWORD=...              (URL-safe: it is embedded in DATABASE_URL)
