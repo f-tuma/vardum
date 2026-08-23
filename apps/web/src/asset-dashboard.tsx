@@ -31,9 +31,11 @@ export function AssetDashboard({
   prefix: string;
 }) {
   const navigate = useNavigate();
+  const needle = search.trim();
   const assets = useQuery({
-    queryKey: ["assets", workspaceId, prefix],
-    queryFn: () => listAssets(workspaceId, prefix),
+    // ponytail: one request per keystroke; debounce if a workspace ever makes it show.
+    queryKey: ["assets", workspaceId, needle ? "" : prefix, needle],
+    queryFn: () => listAssets(workspaceId, needle ? "" : prefix, needle),
     enabled: !assetId,
     refetchInterval: (query) =>
       query.state.data?.assets.some(({ status }) => status === "processing")
@@ -45,15 +47,8 @@ export function AssetDashboard({
     queryFn: () => getAsset(workspaceId, assetId!),
     enabled: Boolean(assetId),
   });
-  const allAssets = assets.data?.assets ?? [];
-  const folders = assets.data?.folders ?? [];
-  const needle = search.trim().toLowerCase();
-  const filteredAssets = allAssets.filter(({ displayName, key }) =>
-    `${displayName} ${key}`.toLowerCase().includes(needle),
-  );
-  const filteredFolders = folders.filter(({ name }) =>
-    name.toLowerCase().includes(needle),
-  );
+  const filteredAssets = assets.data?.assets ?? [];
+  const filteredFolders = assets.data?.folders ?? [];
 
   function openFolder(nextPrefix: string) {
     void navigate({
@@ -95,7 +90,11 @@ export function AssetDashboard({
             prefix={prefix}
             onNavigate={openFolder}
           />
-          <p>{filteredFolders.length + filteredAssets.length} items</p>
+          <p>
+            {needle
+              ? `${filteredAssets.length} matches across every folder`
+              : `${filteredFolders.length + filteredAssets.length} items`}
+          </p>
         </div>
         <div className="page-actions">
           <NewFolderForm workspaceId={workspaceId} prefix={prefix} />
@@ -236,7 +235,7 @@ function FolderCard({
   );
 }
 
-function FolderBreadcrumbs({
+export function FolderBreadcrumbs({
   workspaceName,
   prefix,
   onNavigate,
@@ -268,7 +267,7 @@ function FolderBreadcrumbs({
   );
 }
 
-function useCloseDetailsOnOutsideClick() {
+export function useCloseDetailsOnOutsideClick() {
   const ref = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
@@ -341,7 +340,10 @@ function NewFolderForm({
   }
 
   return (
-    <details ref={detailsRef} className="upload-drawer folder-drawer">
+    <details
+      ref={detailsRef}
+      className="upload-drawer folder-drawer quiet-summary"
+    >
       <summary>New folder</summary>
       <form onSubmit={submit}>
         <label>
@@ -738,10 +740,7 @@ function AssetDetailPage({
 }
 
 type DisplayFormat =
-  | NonNullable<TransformationInput["format"]>
-  | "gif"
-  | "svg"
-  | "tiff";
+  NonNullable<TransformationInput["format"]> | "gif" | "svg" | "tiff";
 
 function formatForMimeType(mimeType: string | null): DisplayFormat {
   if (mimeType === "image/avif") return "avif";

@@ -250,6 +250,22 @@ export async function listSyncAssets(workspaceId: string) {
   return { assets };
 }
 
+export type AuditEvent = WorkspaceOverview["activity"][number];
+export type AuditFilters = {
+  action?: string;
+  actorType?: "user" | "api_key" | "system";
+  cursor?: string;
+};
+
+export function listAuditEvents(workspaceId: string, filters: AuditFilters) {
+  const query = new URLSearchParams({ limit: "50" });
+  for (const [key, value] of Object.entries(filters))
+    if (value) query.set(key, value);
+  return request<{ events: AuditEvent[]; nextCursor: string | null }>(
+    `/api/workspaces/${workspaceId}/audit?${query}`,
+  );
+}
+
 export function getWorkspaceOverview(workspaceId: string) {
   return request<WorkspaceOverview>(`/api/workspaces/${workspaceId}/overview`);
 }
@@ -410,8 +426,10 @@ export function deleteFolder(workspaceId: string, prefix: string) {
   });
 }
 
-export function listAssets(workspaceId: string, prefix = "") {
+export function listAssets(workspaceId: string, prefix = "", search = "") {
   const query = new URLSearchParams({ prefix });
+  // A search is workspace-wide, so it starts from the root and returns no folders.
+  if (search) query.set("search", search);
   return request<{ folders: AssetFolder[]; assets: AssetSummary[] }>(
     `/api/workspaces/${workspaceId}/assets?${query}`,
   );
