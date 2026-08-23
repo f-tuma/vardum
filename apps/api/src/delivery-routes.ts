@@ -191,17 +191,22 @@ async function deliverVersion(
   if (!version) return reply.code(404).send({ error: "Asset not found" });
 
   try {
+    const range = request.headers.range;
     const delivered = transformation
       ? await getImageVariant(version, transformation)
       : {
-          object: await getObject(version.storageKey),
+          object: await getObject(version.storageKey, range),
           mimeType: version.mimeType,
           cacheHit: null,
         };
     const { object } = delivered;
     if (!object.Body) throw new Error("S3 returned an empty body");
     const bytes = object.ContentLength ?? version.size;
-    const mimeType = object.ContentType ?? delivered.mimeType;
+    // Prefer the DB MIME type for original assets — MinIO/S3 may report a
+    // generic binary type. For transformed variants, the variant's type wins.
+    const mimeType = transformation
+      ? (object.ContentType ?? delivered.mimeType)
+      : (delivered.mimeType ?? object.ContentType);
 
     // ponytail: one synchronous insert per response; batch at the edge when delivery volume warrants it.
     if (request.method === "GET") {
@@ -225,6 +230,7 @@ async function deliverVersion(
 
     reply.headers({
       "access-control-allow-origin": "*",
+      "accept-ranges": "bytes",
       "cache-control": "public, max-age=31536000, immutable",
       "content-disposition": `inline; filename*=UTF-8''${encodeFilename(
         deliveryFilename(
@@ -241,10 +247,12 @@ async function deliverVersion(
       "cross-origin-resource-policy": "cross-origin",
       "x-content-type-options": "nosniff",
     });
+    if (object.ContentRange) reply.header("content-range", object.ContentRange);
     if (object.ETag) reply.header("etag", object.ETag);
     if (object.LastModified)
       reply.header("last-modified", object.LastModified.toUTCString());
     reply.type(mimeType);
+    if (object.ContentRange) reply.code(206);
     return reply.send(object.Body);
   } catch (error) {
     request.log.error({ error, versionId }, "Asset delivery failed");

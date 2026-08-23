@@ -96,9 +96,13 @@ export function inspectUpload(storageKey: string) {
   );
 }
 
-export function getObject(storageKey: string) {
+export function getObject(storageKey: string, range?: string) {
   return storage.send(
-    new GetObjectCommand({ Bucket: config.S3_BUCKET, Key: storageKey }),
+    new GetObjectCommand({
+      Bucket: config.S3_BUCKET,
+      Key: storageKey,
+      Range: range,
+    }),
   );
 }
 
