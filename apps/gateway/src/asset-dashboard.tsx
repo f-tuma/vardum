@@ -628,7 +628,7 @@ function AssetCard({
         <p className="asset-key">{asset.key}</p>
         <div className="asset-meta">
           <span>
-            {asset.mimeType?.replace("image/", "").toUpperCase() ?? "—"}
+            {asset.mimeType ? formatMimeType(asset.mimeType) : "—"}
           </span>
           <span>{formatDimensions(asset)}</span>
           <span>{formatBytes(asset.size ?? 0)}</span>
@@ -719,7 +719,7 @@ function VersionHistory({
                   {version.current && <b> // CURRENT</b>}
                 </strong>
                 <small>
-                  {version.mimeType.replace("image/", "").toUpperCase()} //{" "}
+                  {formatMimeType(version.mimeType)} //{" "}
                   {formatBytes(version.size)} //{" "}
                   {new Date(version.createdAt).toLocaleString()}
                 </small>
@@ -894,7 +894,18 @@ function AssetDetailPage({
           <div className="detail-preview">
             <span className="preview-label">Live preview</span>
             {previewUrl ? (
-              <img src={previewUrl} alt={`Preview of ${asset.displayName}`} />
+              isVideoMimeType(asset.mimeType) ? (
+                <video
+                  src={previewUrl}
+                  controls
+                  style={{ maxWidth: "100%", maxHeight: "100%" }}
+                />
+              ) : (
+                <img
+                  src={previewUrl}
+                  alt={`Preview of ${asset.displayName}`}
+                />
+              )
             ) : (
               <span>No preview</span>
             )}
@@ -982,6 +993,15 @@ function AssetDetailPage({
 
 type DisplayFormat =
   NonNullable<TransformationInput["format"]> | "gif" | "svg" | "tiff";
+
+function formatMimeType(mime: string) {
+  return mime.split("/")[1]?.toUpperCase() ?? mime.toUpperCase();
+}
+
+function isVideoMimeType(mime: string | null): boolean {
+  if (!mime) return false;
+  return mime.startsWith("video/");
+}
 
 function formatForMimeType(mimeType: string | null): DisplayFormat {
   if (mimeType === "image/avif") return "avif";

@@ -16,6 +16,22 @@ export const supportedImageMimeTypes = [
   "image/webp",
 ] as const;
 
+export const supportedVideoMimeTypes = [
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "video/x-msvideo",
+  "video/mpeg",
+] as const;
+
+export const supportedMimeTypes = [
+  ...supportedImageMimeTypes,
+  ...supportedVideoMimeTypes,
+] as const;
+
+export const videoMimeSet = new Set(supportedVideoMimeTypes);
+export const imageMimeSet = new Set(supportedImageMimeTypes);
+
 const payloadSchema = z.object({
   workspaceId: z.string().min(1),
   assetId: z.uuid(),
@@ -56,6 +72,13 @@ export async function processAsset(input: unknown) {
   // ponytail: upload size is capped at 100 MiB; stream to disk if that ceiling grows.
   const bytes = Buffer.from(await object.Body.transformToByteArray());
 
+  // Video: no sharp processing, just checksum + mark ready.
+  if ((supportedVideoMimeTypes as readonly string[]).includes(pending.mimeType)) {
+    const checksum = createHash("sha256").update(bytes).digest("hex");
+    await markReady(payload, checksum, pending.mimeType, null, null);
+    return;
+  }
+
   let metadata: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>;
   try {
     metadata = await sharp(bytes, {
@@ -86,6 +109,16 @@ export async function processAsset(input: unknown) {
   }
 
   const checksum = createHash("sha256").update(bytes).digest("hex");
+  await markReady(payload, checksum, detectedMimeType, width, height);
+}
+
+async function markReady(
+  payload: AssetIngestPayload,
+  checksum: string,
+  mimeType: string,
+  width: number | null,
+  height: number | null,
+) {
   await inWorkspace(payload.workspaceId, async (transaction) => {
     const [version] = await transaction
       .select({ status: assetVersion.status, number: assetVersion.number })
@@ -119,7 +152,7 @@ export async function processAsset(input: unknown) {
       .update(assetVersion)
       .set({
         status: "ready",
-        mimeType: detectedMimeType,
+        mimeType,
         checksum,
         width,
         height,

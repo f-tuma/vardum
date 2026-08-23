@@ -89,8 +89,10 @@ Every asset has a unique key scoped to a workspace. Rules:
 
 ## Upload limits
 - Image types: AVIF, GIF, JPEG, PNG, SVG, TIFF, WebP
-- Max 100 megapixels per upload
+- Video types: MP4, WebM, MOV, AVI, MPEG
+- Max 100 megapixels per image; videos are stored as-is (no transcode)
 - Storage backend caps at 100 MiB per upload
+- Video assets cannot be resized or transformed into variants (images only)
 
 ## Writable outputs
 Only Vard items explicitly marked "Writable" in the UI can be pushed to.
@@ -135,7 +137,14 @@ Folders exist only as key prefixes — no need to "create" them.
 - **editor**: full CRUD on assets, Vards, and presets
 - **owner**: workspace administration (members, API keys, domain, deletion)
 
-A workspace API key carries the permissions of whoever created it, nothing more.`,
+A workspace API key carries the permissions of whoever created it, nothing more.
+
+## Video assets
+MP4, WebM, MOV, AVI and MPEG are accepted. They are stored and delivered as-is —
+Vardum does not transcode video, generate thumbnails, or offer video variants.
+Use a purpose-built video platform for transcoding/streaming needs. For Vardum,
+reference videos by their original key; the \`video\` element plays them directly
+with browser support (H.264 MP4 and WebM have the widest coverage).`,
     },
   ],
 }));
@@ -507,7 +516,7 @@ server.tool(
 
 server.tool(
   "upload_asset_version",
-  "Upload a new image version for an existing asset. Provide base64-encoded image data. The version gets processed asynchronously by the system.",
+  "Upload a new image or video version for an existing asset. Provide base64-encoded data. The version gets processed asynchronously by the system.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     assetId: z.string().describe("Asset ID to upload for"),
@@ -518,7 +527,7 @@ server.tool(
     mimeType: z
       .string()
       .describe(
-        "Image MIME type (image/avif, image/jpeg, image/png, image/webp, image/svg+xml)",
+        "Image or video MIME type (image/avif, image/jpeg, image/png, image/webp, image/svg+xml, video/mp4, video/webm, video/quicktime, video/x-msvideo, video/mpeg)",
       ),
     base64: z.string().describe("Base64-encoded image binary"),
   },

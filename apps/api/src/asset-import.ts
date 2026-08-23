@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { supportedImageMimeTypes } from "./asset-processor.js";
+import {
+  supportedImageMimeTypes,
+  supportedVideoMimeTypes,
+} from "./asset-processor.js";
 
 // Vardum's own layout. Importing from inside it would re-import originals and
 // generated variants as if they were somebody's source files.
@@ -13,10 +16,7 @@ export const importSource = z
     { message: "That prefix holds Vardum's own objects" },
   );
 
-const extensionMimeTypes: Record<
-  string,
-  (typeof supportedImageMimeTypes)[number]
-> = {
+const extensionMimeTypes: Record<string, string> = {
   avif: "image/avif",
   gif: "image/gif",
   jpeg: "image/jpeg",
@@ -26,6 +26,12 @@ const extensionMimeTypes: Record<
   tif: "image/tiff",
   tiff: "image/tiff",
   webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  avi: "video/x-msvideo",
+  mpeg: "video/mpeg",
+  mpg: "video/mpeg",
 };
 
 /**
@@ -54,8 +60,14 @@ export function importedMimeType(
   objectKey: string,
   contentType: string | undefined,
 ) {
-  const declared = supportedImageMimeTypes.find((type) => type === contentType);
+  const declared = supportedImageMimeTypes.find(
+    (type) => type === contentType,
+  );
   if (declared) return declared;
+  const video = (supportedVideoMimeTypes as readonly string[]).find(
+    (type) => type === contentType,
+  );
+  if (video) return video;
   const extension = objectKey.split(".").at(-1)?.toLowerCase() ?? "";
   return extensionMimeTypes[extension] ?? null;
 }

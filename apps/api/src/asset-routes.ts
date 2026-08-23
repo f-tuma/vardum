@@ -10,7 +10,7 @@ import {
   importSource,
   reservedPrefixes,
 } from "./asset-import.js";
-import { supportedImageMimeTypes } from "./asset-processor.js";
+import { supportedMimeTypes } from "./asset-processor.js";
 import { authorizeAsset } from "./authorization.js";
 import {
   asset,
@@ -94,7 +94,7 @@ const uploadBody = z.object({
     .min(1)
     .max(255)
     .regex(/^[^/\\\u0000-\u001f]+$/),
-  mimeType: z.enum(supportedImageMimeTypes),
+  mimeType: z.enum(supportedMimeTypes),
   size: z.number().int().min(1).max(maximumUploadSize),
 });
 

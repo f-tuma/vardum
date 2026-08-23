@@ -153,14 +153,20 @@ export async function imageFiles(root: string) {
 export function mimeFor(filename: string) {
   const extension = filename.toLowerCase().match(/\.([^.]+)$/)?.[1];
   return extension
-    ? {
+    ? ({
         avif: "image/avif",
         jpeg: "image/jpeg",
         jpg: "image/jpeg",
         png: "image/png",
         svg: "image/svg+xml",
         webp: "image/webp",
-      }[extension]
+        mp4: "video/mp4",
+        webm: "video/webm",
+        mov: "video/quicktime",
+        avi: "video/x-msvideo",
+        mpeg: "video/mpeg",
+        mpg: "video/mpeg",
+      } as Record<string, string>)[extension]
     : undefined;
 }
 
