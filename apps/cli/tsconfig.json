@@ -8,5 +8,7 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests run from source with tsx; compiling them would ship them to npm.
+  "exclude": ["src/**/*.test.ts"]
 }

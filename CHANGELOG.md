@@ -13,6 +13,9 @@ All notable changes to Vardum are documented here.
 - `vardum status` and `--json` output for CI.
 - `vardum login`: browser authorization that stores a scoped workspace key.
 
+`vardum login` needs this server release; against an older instance the browser
+opens a page that does not exist. Published as `@vardum/cli` 0.2.0.
+
 ## [0.1.0] - 2026-08-22
 
 ### Added
