@@ -1071,6 +1071,7 @@ button:hover,
 }
 .domain-actions .settings-message {
   margin: 0 1rem 0 0;
+  margin-right: auto;
   align-self: center;
 }
 .invitation-actions {
