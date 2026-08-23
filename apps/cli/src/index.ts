@@ -14,6 +14,11 @@ import {
 import { planPushFolder } from "./interactive.js";
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
 import {
+  maybeWarnOutdated,
+  updateVardum,
+  VERSION,
+} from "./update.js";
+import {
   assetKey,
   atomicWrite,
   checksum,
@@ -59,6 +64,9 @@ type PushLock = {
 
 const [command = "help", ...rawArgs] = process.argv.slice(2);
 
+if (command !== "update" && command !== "help" && command !== "--help" && command !== "-h")
+  maybeWarnOutdated();
+
 try {
   const options = parseOptions(rawArgs);
   if (command === "init") await init(options);
@@ -69,6 +77,7 @@ try {
   else if (command === "push") await push(options);
   else if (command === "push-folder") await pushFolder(options);
   else if (command === "pull-asset") await pullAsset(options);
+  else if (command === "update") await update(options);
   else if (command === "help" || command === "--help" || command === "-h")
     help();
   else throw new Error(`Unknown command: ${command}`);
@@ -452,6 +461,17 @@ async function pushFolder(options: Options) {
   summary(options, changed);
 }
 
+async function update(options: Options) {
+  const result = await updateVardum({
+    json: options.json,
+  });
+  if (options.json) {
+    console.log(result);
+  } else {
+    console.log(result);
+  }
+}
+
 /**
  * Decides the workspace prefix for push-folder. A prefix given on the command
  * line wins. Otherwise, on a TTY without --json, an interactive REPL picks an
@@ -682,12 +702,13 @@ function summary(options: Options, changed: number) {
 }
 
 function help() {
-  console.log(`Vardum asset sync
+  console.log(`Vardum asset sync v${VERSION}
 
 Usage:
   vardum init [--server URL --workspace ID --vard ID] [--force]
   vardum login [--server URL]
   vardum logout [--server URL --workspace ID]
+  vardum update [--json]
   vardum status [--delete]
   vardum sync [--dry-run] [--delete] [--force]
   vardum pull [--dry-run] [--delete] [--force]
@@ -706,5 +727,9 @@ Authentication:
 Safety:
   status is pull without writing anything.
   Pull and push use .vardum.lock for conflict detection.
-  --delete removes only files/assets tracked by a previous CLI run.`);
+  --delete removes only files/assets tracked by a previous CLI run.
+
+Updates:
+  vardum update detects whether the CLI is installed globally or locally
+  and runs the correct package manager to pull the latest version.`);
 }

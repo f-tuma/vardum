@@ -1,6 +1,6 @@
 {
   "name": "@vardum/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Developer-first CLI for syncing Vardum Vards into a project",
   "license": "MIT",
   "type": "module",
