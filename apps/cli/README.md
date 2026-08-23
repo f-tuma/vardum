@@ -28,12 +28,18 @@ VARDUM_API_KEY=vardum_... vardum pull
 
 ```text
 vardum init [--server URL --workspace ID --vard ID] [--force]
+vardum status [--delete]
 vardum sync [--dry-run] [--delete] [--force]
 vardum pull [--dry-run] [--delete] [--force]
 vardum push [--dry-run] [--force]
 vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
 vardum push-folder <directory> [prefix] [--dry-run] [--delete]
 ```
+
+`status` is `pull` that writes nothing, for asking what a sync would do.
+Every command accepts `--json`, which replaces the human output with a single
+`{ dryRun, changed, actions }` object and reports failures on stderr as
+`{ "error": ... }`, so CI can read the result instead of parsing sentences.
 
 `sync` is an alias for `pull`. Pull and mapped push use `.vardum.lock` to detect
 local/remote conflicts. Commit that lockfile when reproducible asset versions

@@ -26,9 +26,19 @@ type Options = {
   dryRun: boolean;
   delete: boolean;
   force: boolean;
+  json: boolean;
   values: Map<string, string>;
   positionals: string[];
 };
+type Action = {
+  action: "pull" | "push" | "delete" | "create";
+  path: string;
+  applied: boolean;
+};
+
+// Every command reports through here, so --json is one branch rather than a
+// second copy of each command's output.
+const actions: Action[] = [];
 type PushLock = {
   schema: 1;
   workspace: string;
@@ -43,6 +53,7 @@ const [command = "help", ...rawArgs] = process.argv.slice(2);
 try {
   const options = parseOptions(rawArgs);
   if (command === "init") await init(options);
+  else if (command === "status") await pull({ ...options, dryRun: true });
   else if (command === "pull" || command === "sync") await pull(options);
   else if (command === "push") await push(options);
   else if (command === "push-folder") await pushFolder(options);
@@ -51,8 +62,11 @@ try {
     help();
   else throw new Error(`Unknown command: ${command}`);
 } catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
   console.error(
-    `vardum: ${error instanceof Error ? error.message : String(error)}`,
+    parseOptions(rawArgs).json
+      ? JSON.stringify({ error: message })
+      : `vardum: ${message}`,
   );
   process.exitCode = 1;
 }
@@ -75,7 +89,8 @@ async function init(options: Options) {
       path,
       Buffer.from(`${JSON.stringify(config, null, 2)}\n`),
     );
-    console.log(`created ${relative(process.cwd(), path) || "vardum.json"}`);
+    report("create", relative(process.cwd(), path) || "vardum.json", options);
+    summary(options, 1);
   } finally {
     prompts.close();
   }
@@ -141,9 +156,7 @@ async function pull(options: Options) {
   for (const plan of planned) {
     let localChecksum = plan.localChecksum;
     if (plan.decision !== "skip") {
-      console.log(
-        `${options.dryRun ? "would pull" : "pull"} ${plan.item.outputPath}`,
-      );
+      report("pull", plan.item.outputPath, options);
       if (!options.dryRun) {
         const bytes = await context.client.download(plan.item.downloadUrl!);
         await atomicWrite(plan.target, bytes);
@@ -161,9 +174,7 @@ async function pull(options: Options) {
 
   if (options.delete)
     for (const [, locked] of stale) {
-      console.log(
-        `${options.dryRun ? "would delete" : "delete"} ${locked.path}`,
-      );
+      report("delete", locked.path, options);
       if (!options.dryRun)
         await removeTracked(
           await safeTarget(context.directory, locked.path),
@@ -207,7 +218,7 @@ async function push(options: Options) {
       throw new Error(
         `Remote and local state diverged for ${item.outputPath}; pull first or use --force`,
       );
-    console.log(`${options.dryRun ? "would push" : "push"} ${item.outputPath}`);
+    report("push", item.outputPath, options);
     changed += 1;
     if (options.dryRun) continue;
     const bytes = await readFile(path);
@@ -283,7 +294,7 @@ async function pushFolder(options: Options) {
       currentAssets[file.key] = existing.id;
       continue;
     }
-    console.log(`${options.dryRun ? "would push" : "push"} ${file.key}`);
+    report("push", file.key, options);
     changed += 1;
     if (options.dryRun) continue;
     const target =
@@ -312,7 +323,7 @@ async function pushFolder(options: Options) {
   if (options.delete)
     for (const [key, assetId] of Object.entries(previous)) {
       if (local.some((file) => file.key === key)) continue;
-      console.log(`${options.dryRun ? "would delete" : "delete"} ${key}`);
+      report("delete", key, options);
       changed += 1;
       if (!options.dryRun)
         await context.client.deleteAsset(context.config.workspace, assetId);
@@ -348,7 +359,7 @@ async function pullAsset(options: Options) {
   if (localChecksum && localChecksum !== asset.checksum && !options.force)
     throw new Error(`${output} already exists; use --force to replace it`);
   if (localChecksum === asset.checksum) return summary(options, 0);
-  console.log(`${options.dryRun ? "would pull" : "pull"} ${key} -> ${output}`);
+  report("pull", `${key} -> ${output}`, options);
   if (!options.dryRun) {
     const bytes = await context.client.download(
       immutableAssetUrl(remote.workspaceSlug, asset.versionId, asset.key),
@@ -477,6 +488,7 @@ function parseOptions(args: string[]): Options {
     dryRun: false,
     delete: false,
     force: false,
+    json: false,
     values: new Map(),
     positionals: [],
   };
@@ -485,6 +497,7 @@ function parseOptions(args: string[]): Options {
     if (argument === "--dry-run") options.dryRun = true;
     else if (argument === "--delete") options.delete = true;
     else if (argument === "--force") options.force = true;
+    else if (argument === "--json") options.json = true;
     else if (["--server", "--workspace", "--vard"].includes(argument)) {
       const value = args[index + 1];
       if (!value) throw new Error(`${argument} requires a value`);
@@ -502,7 +515,19 @@ function requireApiKey() {
     throw new Error("VARDUM_API_KEY is required for push operations");
 }
 
+function report(action: Action["action"], path: string, options: Options) {
+  actions.push({ action, path, applied: !options.dryRun });
+  if (!options.json)
+    console.log(`${options.dryRun ? `would ${action}` : action} ${path}`);
+}
+
 function summary(options: Options, changed: number) {
+  if (options.json) {
+    console.log(
+      JSON.stringify({ dryRun: options.dryRun, changed, actions }, null, 2),
+    );
+    return;
+  }
   console.log(
     `${options.dryRun ? "dry run: " : ""}${changed} change${changed === 1 ? "" : "s"}`,
   );
@@ -513,16 +538,21 @@ function help() {
 
 Usage:
   vardum init [--server URL --workspace ID --vard ID] [--force]
+  vardum status [--delete]
   vardum sync [--dry-run] [--delete] [--force]
   vardum pull [--dry-run] [--delete] [--force]
   vardum push [--dry-run] [--force]
   vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
   vardum push-folder <directory> [prefix] [--dry-run] [--delete]
 
+Options:
+  --json  machine-readable output for CI; errors go to stderr as {"error"}.
+
 Authentication:
   Set VARDUM_API_KEY for private Vards and every push operation.
 
 Safety:
+  status is pull without writing anything.
   Pull and push use .vardum.lock for conflict detection.
   --delete removes only files/assets tracked by a previous CLI run.`);
 }
