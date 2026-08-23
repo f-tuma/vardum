@@ -286,13 +286,13 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
               {error}
             </p>
           )}
-          {message && (
-            <p className="settings-message" role="status">
-              {message}
-            </p>
-          )}
           {record?.domain && (
             <div className="domain-actions">
+              {message && (
+                <p className="settings-message" role="status">
+                  {message}
+                </p>
+              )}
               <button
                 type="button"
                 disabled={Boolean(pendingAction)}

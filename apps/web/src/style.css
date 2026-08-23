@@ -1069,6 +1069,10 @@ button:hover,
   color: var(--green);
   font: 0.58rem var(--mono);
 }
+.domain-actions .settings-message {
+  margin: 0 1rem 0 0;
+  align-self: center;
+}
 .invitation-actions {
   display: flex;
   gap: 0.5rem;
