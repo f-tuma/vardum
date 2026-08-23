@@ -86,6 +86,73 @@ const uploadBody = z.object({
   size: z.number().int().min(1).max(maximumUploadSize),
 });
 
+const auditColumns = {
+  id: auditEvent.id,
+  action: auditEvent.action,
+  targetType: auditEvent.targetType,
+  targetId: auditEvent.targetId,
+  metadata: auditEvent.metadata,
+  actorType: auditEvent.actorType,
+  actorId: auditEvent.actorId,
+  actorName: user.name,
+  actorEmail: user.email,
+  apiKeyName: apikey.name,
+  createdAt: auditEvent.createdAt,
+};
+
+// Keyset cursor over (created_at, id): stable while new events keep arriving,
+// which offset paging is not.
+export const auditCursor = z.string().regex(/^[^|]+\|[0-9a-f-]{36}$/);
+
+export function encodeAuditCursor(event: { createdAt: Date; id: string }) {
+  return `${event.createdAt.toISOString()}|${event.id}`;
+}
+
+export function decodeAuditCursor(cursor: string | undefined) {
+  if (!cursor) return null;
+  const [createdAt, id] = cursor.split("|");
+  const after = new Date(createdAt!);
+  return Number.isNaN(after.getTime()) ? "invalid" : { after, id: id! };
+}
+
+function toAuditEvent({
+  actorName,
+  actorEmail,
+  apiKeyName,
+  actorType,
+  actorId,
+  ...event
+}: {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, unknown>;
+  actorType: "user" | "api_key" | "system";
+  actorId: string | null;
+  actorName: string | null;
+  actorEmail: string | null;
+  apiKeyName: string | null;
+  createdAt: Date;
+}) {
+  return {
+    ...event,
+    actor: {
+      type: actorType,
+      id: actorId,
+      name:
+        actorName ??
+        apiKeyName ??
+        (actorType === "system"
+          ? "System"
+          : actorType === "api_key"
+            ? "API key"
+            : "Unknown user"),
+      email: actorEmail,
+    },
+  };
+}
+
 export function registerAssetRoutes(app: FastifyInstance) {
   const api = app.withTypeProvider<ZodTypeProvider>();
 
@@ -131,19 +198,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
                 ),
               ),
             transaction
-              .select({
-                id: auditEvent.id,
-                action: auditEvent.action,
-                targetType: auditEvent.targetType,
-                targetId: auditEvent.targetId,
-                metadata: auditEvent.metadata,
-                actorType: auditEvent.actorType,
-                actorId: auditEvent.actorId,
-                actorName: user.name,
-                actorEmail: user.email,
-                apiKeyName: apikey.name,
-                createdAt: auditEvent.createdAt,
-              })
+              .select(auditColumns)
               .from(auditEvent)
               .leftJoin(
                 user,
@@ -200,31 +255,78 @@ export function registerAssetRoutes(app: FastifyInstance) {
             bytes30d: delivery.reduce((sum, day) => sum + day.bytes, 0),
             days: delivery,
           },
-          activity: activity.map(
-            ({
-              actorName,
-              actorEmail,
-              apiKeyName,
-              actorType,
-              actorId,
-              ...event
-            }) => ({
-              ...event,
-              actor: {
-                type: actorType,
-                id: actorId,
-                name:
-                  actorName ??
-                  apiKeyName ??
-                  (actorType === "system"
-                    ? "System"
-                    : actorType === "api_key"
-                      ? "API key"
-                      : "Unknown user"),
-                email: actorEmail,
-              },
-            }),
-          ),
+          activity: activity.map(toAuditEvent),
+        };
+      });
+    },
+  );
+
+  // The overview shows the newest handful; this is the whole trail, paged.
+  api.get(
+    "/api/workspaces/:workspaceId/audit",
+    {
+      schema: {
+        params: workspaceParams,
+        querystring: z.object({
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+          cursor: auditCursor.optional(),
+          action: z.string().max(64).optional(),
+          actorType: z.enum(["user", "api_key", "system"]).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "read",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      const { limit, cursor, action, actorType } = request.query;
+      const position = decodeAuditCursor(cursor);
+      if (position === "invalid")
+        return reply.code(400).send({ error: "Invalid cursor" });
+
+      return inWorkspace(workspaceId, async (transaction) => {
+        const rows = await transaction
+          .select(auditColumns)
+          .from(auditEvent)
+          .leftJoin(
+            user,
+            and(
+              eq(auditEvent.actorType, "user"),
+              eq(auditEvent.actorId, user.id),
+            ),
+          )
+          .leftJoin(
+            apikey,
+            and(
+              eq(auditEvent.actorType, "api_key"),
+              eq(auditEvent.actorId, apikey.id),
+            ),
+          )
+          .where(
+            and(
+              eq(auditEvent.workspaceId, workspaceId),
+              action ? eq(auditEvent.action, action) : undefined,
+              actorType ? eq(auditEvent.actorType, actorType) : undefined,
+              position
+                ? sql`(${auditEvent.createdAt}, ${auditEvent.id}) < (${position.after}, ${position.id})`
+                : undefined,
+            ),
+          )
+          .orderBy(desc(auditEvent.createdAt), desc(auditEvent.id))
+          .limit(limit + 1);
+
+        const page = rows.slice(0, limit);
+        const last = rows.length > limit ? page.at(-1) : undefined;
+        return {
+          events: page.map(toAuditEvent),
+          nextCursor: last ? encodeAuditCursor(last) : null,
         };
       });
     },
@@ -369,6 +471,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
         querystring: z.object({
           limit: z.coerce.number().int().min(1).max(100).default(50),
           prefix: assetPrefix,
+          search: z.string().trim().max(255).optional(),
         }),
       },
     },
@@ -385,6 +488,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       const listing = await inWorkspace(workspaceId, async (transaction) => {
         const prefix = request.query.prefix;
+        // A search spans every folder under the prefix and returns a flat list;
+        // browsing stays one level deep so folders stay meaningful.
+        const search = request.query.search;
+        const needle = search
+          ? `%${search.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
+          : null;
         const remainder = sql<string>`substring(${asset.key} from length(${prefix}) + 1)`;
         const startsWithPrefix = sql`starts_with(${asset.key}, ${prefix})`;
         const folderName = sql<string>`split_part(${remainder}, '/', 1)`;
@@ -422,33 +531,39 @@ export function registerAssetRoutes(app: FastifyInstance) {
             and(
               eq(asset.workspaceId, workspaceId),
               startsWithPrefix,
-              sql`position('/' in ${remainder}) = 0`,
+              needle
+                ? sql`(${asset.key} ilike ${needle} escape '\\' or ${asset.displayName} ilike ${needle} escape '\\')`
+                : sql`position('/' in ${remainder}) = 0`,
             ),
           )
           .orderBy(asc(asset.key))
           .limit(request.query.limit);
-        const assetFolders = await transaction
-          .selectDistinct({ name: folderName })
-          .from(asset)
-          .where(
-            and(
-              eq(asset.workspaceId, workspaceId),
-              startsWithPrefix,
-              sql`position('/' in ${remainder}) > 0`,
-            ),
-          )
-          .limit(100);
-        const explicitFolders = await transaction
-          .selectDistinct({ name: explicitFolderName })
-          .from(assetFolder)
-          .where(
-            and(
-              eq(assetFolder.workspaceId, workspaceId),
-              sql`starts_with(${assetFolder.prefix}, ${prefix})`,
-              sql`length(${assetFolder.prefix}) > length(${prefix})`,
-            ),
-          )
-          .limit(100);
+        const assetFolders = needle
+          ? []
+          : await transaction
+              .selectDistinct({ name: folderName })
+              .from(asset)
+              .where(
+                and(
+                  eq(asset.workspaceId, workspaceId),
+                  startsWithPrefix,
+                  sql`position('/' in ${remainder}) > 0`,
+                ),
+              )
+              .limit(100);
+        const explicitFolders = needle
+          ? []
+          : await transaction
+              .selectDistinct({ name: explicitFolderName })
+              .from(assetFolder)
+              .where(
+                and(
+                  eq(assetFolder.workspaceId, workspaceId),
+                  sql`starts_with(${assetFolder.prefix}, ${prefix})`,
+                  sql`length(${assetFolder.prefix}) > length(${prefix})`,
+                ),
+              )
+              .limit(100);
         const latest = await transaction
           .selectDistinctOn([assetVersion.assetId], {
             assetId: assetVersion.assetId,
