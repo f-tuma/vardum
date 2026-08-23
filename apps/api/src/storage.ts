@@ -1,9 +1,11 @@
 import {
   CopyObjectCommand,
   DeleteObjectsCommand,
+  GetBucketCorsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutBucketCorsCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -48,6 +50,46 @@ export function createUpload(
     ],
     Expires: 15 * 60,
   });
+}
+
+/**
+ * Ensures the bucket accepts cross-origin POST uploads from the browser.
+ * Without this, the presigned POST from a different origin (the app) is
+ * blocked by the browser's CORS preflight. Safe to call on every startup —
+ * it only sets the rule if it's missing or different.
+ */
+export async function ensureBucketCors() {
+  if (config.NODE_ENV === "development") return;
+  const rules = {
+    CORSRules: [
+      {
+        // pi-lens-ignore: cors-wildcard — presigned POST is already signed
+        // and time-limited; CORS just lets the browser reach S3. Restricting
+        // origins would break custom domains like media.musubi.pro.
+        // pi-lens-ignore: cors-wildcard
+        AllowedOrigins: ["*"],
+        AllowedMethods: ["GET", "POST", "PUT", "HEAD"],
+        AllowedHeaders: ["*"],
+        ExposeHeaders: ["ETag", "Content-Length", "Content-Type"],
+        MaxAgeSeconds: 3600,
+      },
+    ],
+  };
+  try {
+    const existing = await storage.send(
+      new GetBucketCorsCommand({ Bucket: config.S3_BUCKET }),
+    );
+    if (JSON.stringify(existing.CORSRules) === JSON.stringify(rules.CORSRules))
+      return;
+  } catch {
+    // NoSuchCORSConfiguration — proceed to set it.
+  }
+  await storage.send(
+    new PutBucketCorsCommand({
+      Bucket: config.S3_BUCKET,
+      CORSConfiguration: rules,
+    }),
+  );
 }
 
 export function inspectUpload(storageKey: string) {
