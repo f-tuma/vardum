@@ -51,8 +51,7 @@ export async function verifyDomainRecords(
           (record) => record.toLowerCase().replace(/\.$/, "") === target,
         ),
       )
-      .catch(() => false)) ||
-    (await resolveCnameWithFallback(domain, target));
+      .catch(() => false)) || (await resolveCnameWithFallback(domain, target));
 
   return { txt, cname };
 }
@@ -72,9 +71,7 @@ async function resolveCnameWithFallback(
         )
       )
         return true;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return false;
 }
