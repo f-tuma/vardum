@@ -18,10 +18,23 @@ vardum pull
 vardum push
 ```
 
-Private Vards and all write operations use a workspace API key:
+Private Vards and all write operations need a workspace key. Authorize the
+machine once and the CLI keeps it:
 
 ```sh
-VARDUM_API_KEY=vardum_... vardum pull
+vardum login
+```
+
+That opens the browser, asks which workspace and whether the key may push, and
+stores it in `$XDG_CONFIG_HOME/vardum/credentials.json` with mode `0600`. The
+key carries your own permissions and nothing more, and appears in Settings //
+API keys as `cli@<machine>`. `vardum logout` revokes it on the server and
+removes it locally.
+
+For CI, keep passing the key explicitly — it overrides anything stored:
+
+```sh
+VARDUM_API_KEY=varda_... vardum pull
 ```
 
 ## Commands

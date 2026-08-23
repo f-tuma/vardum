@@ -6,7 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { fromDrizzle } from "pg-boss";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { authorizeWorkspaceAdmin } from "./authorization.js";
+import { authorizeAsset, authorizeWorkspaceAdmin } from "./authorization.js";
 import {
   assetVersion,
   auditEvent,
@@ -37,6 +37,16 @@ const assetPermissions = {
   read: { asset: ["read"] },
   write: { asset: ["read", "create", "update", "delete", "publish"] },
 } as const;
+const createCliKeyBody = z.object({
+  // Named after the machine, so a stale key is recognisable in the key list.
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(24)
+    .regex(/^[a-zA-Z0-9._-]+$/),
+  access: z.enum(["read", "write"]),
+});
 
 export function registerWorkspaceRoutes(app: FastifyInstance) {
   const api = app.withTypeProvider<ZodTypeProvider>();
@@ -266,6 +276,105 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       });
 
       return { ...created, key, access: request.body.access };
+    },
+  );
+
+  // What `vardum login` calls once the browser has confirmed it. Separate from
+  // the admin endpoint above because this mints a key for yourself: it is
+  // authorized by the very permissions the key will carry, so it can never hand
+  // out more access than the person asking already has.
+  api.post(
+    "/api/workspaces/:workspaceId/cli-keys",
+    { schema: { params: workspaceParams, body: createCliKeyBody } },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const { label, access } = request.body;
+      const authorization = await authorizeAsset(
+        request,
+        workspaceId,
+        [...assetPermissions[access].asset],
+      );
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+      // A key must not be able to mint another key; only a signed-in person can.
+      if (authorization.principal.actorType !== "user")
+        return reply.code(403).send({ error: "Forbidden" });
+
+      const key = `varda_${generateRandomString(64, "a-z", "A-Z")}`;
+      const id = randomUUID();
+      const now = new Date();
+      const name = `cli@${label}`.slice(0, 32);
+      const created = await inWorkspace(workspaceId, async (transaction) => {
+        const [record] = await transaction
+          .insert(apikey)
+          .values({
+            id,
+            configId: "workspace",
+            name,
+            start: key.slice(0, 6),
+            prefix: "varda_",
+            key: await defaultKeyHasher(key),
+            referenceId: workspaceId,
+            createdAt: now,
+            updatedAt: now,
+            permissions: JSON.stringify(assetPermissions[access]),
+          })
+          .returning({ id: apikey.id, name: apikey.name });
+        if (!record) throw new Error("API key creation failed");
+
+        await transaction.insert(auditEvent).values({
+          workspaceId,
+          actorType: authorization.principal.actorType,
+          actorId: authorization.principal.actorId,
+          action: "workspace.api_key_created",
+          targetType: "api_key",
+          targetId: record.id,
+          metadata: { name: record.name, access, source: "cli" },
+          requestId: request.id,
+        });
+        return record;
+      });
+
+      return { id: created.id, name: created.name, key, access };
+    },
+  );
+
+  // Revoking the key this CLI holds, without needing workspace administration.
+  api.delete(
+    "/api/workspaces/:workspaceId/cli-keys",
+    { schema: { params: workspaceParams } },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "read",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+      // Only the key presenting itself may be revoked this way.
+      if (authorization.principal.actorType !== "api_key")
+        return reply.code(403).send({ error: "Forbidden" });
+
+      const keyId = authorization.principal.actorId;
+      await inWorkspace(workspaceId, async (transaction) => {
+        await transaction.delete(apikey).where(eq(apikey.id, keyId));
+        await transaction.insert(auditEvent).values({
+          workspaceId,
+          actorType: "api_key",
+          actorId: keyId,
+          action: "workspace.api_key_deleted",
+          targetType: "api_key",
+          targetId: keyId,
+          metadata: { source: "cli" },
+          requestId: request.id,
+        });
+      });
+      return reply.code(204).send();
     },
   );
 

@@ -5,6 +5,14 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { VardumClient, type Manifest, type VardConfig } from "./client.js";
 import {
+  credentialsPath,
+  machineLabel,
+  readCredential,
+  removeCredential,
+  writeCredential,
+} from "./credentials.js";
+import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
+import {
   assetKey,
   atomicWrite,
   checksum,
@@ -53,6 +61,8 @@ const [command = "help", ...rawArgs] = process.argv.slice(2);
 try {
   const options = parseOptions(rawArgs);
   if (command === "init") await init(options);
+  else if (command === "login") await login(options);
+  else if (command === "logout") await logout(options);
   else if (command === "status") await pull({ ...options, dryRun: true });
   else if (command === "pull" || command === "sync") await pull(options);
   else if (command === "push") await push(options);
@@ -93,6 +103,71 @@ async function init(options: Options) {
     summary(options, 1);
   } finally {
     prompts.close();
+  }
+}
+
+async function login(options: Options) {
+  const server =
+    options.values.get("server") ?? (await optionalContext())?.config.server;
+  if (!server)
+    throw new Error("Run vardum login inside a project, or pass --server URL");
+
+  const state = newState();
+  const label = machineLabel();
+  const listener = awaitGrant(state);
+  try {
+    const port = await listener.listening;
+    const url = loginUrl(server, port, state, label);
+    if (!options.json) {
+      console.log(`Opening ${url}`);
+      console.log("Waiting for the browser to authorize this machine…");
+    }
+    openBrowser(url);
+
+    const grant = await listener.grant;
+    await writeCredential(server, grant.workspace, grant.key);
+    report("create", `${server} // ${grant.workspace}`, options);
+    if (!options.json)
+      console.log(`Key stored in ${credentialsPath()} as cli@${label}`);
+    summary(options, 1);
+  } finally {
+    listener.close();
+  }
+}
+
+async function logout(options: Options) {
+  const context = await optionalContext();
+  const server = options.values.get("server") ?? context?.config.server;
+  const workspace =
+    options.values.get("workspace") ?? context?.config.workspace;
+  if (!server || !workspace)
+    throw new Error(
+      "Run vardum logout inside a project, or pass --server and --workspace",
+    );
+
+  // Revoke first: a key left behind on the server outlives the file.
+  const stored = await readCredential(server, workspace);
+  if (stored) {
+    try {
+      await new VardumClient(server, stored).revokeCliKey(workspace);
+    } catch (error) {
+      if (!options.json)
+        console.error(
+          `vardum: could not revoke the key on the server (${error instanceof Error ? error.message : String(error)}); remove it from Settings // API keys`,
+        );
+    }
+  }
+  const removed = await removeCredential(server, workspace);
+  if (removed) report("delete", `${server} // ${workspace}`, options);
+  summary(options, removed ? 1 : 0);
+}
+
+/** The project context, or nothing when the command runs outside a project. */
+async function optionalContext() {
+  try {
+    return await loadContext();
+  } catch {
+    return null;
   }
 }
 
@@ -190,8 +265,8 @@ async function pull(options: Options) {
 }
 
 async function push(options: Options) {
-  requireApiKey();
   const context = await loadContext();
+  requireApiKey(context.client);
   let manifest = await context.client.manifest(context.config, true);
   assertManifest(manifest, context.config);
   const lockPath = join(context.directory, ".vardum.lock");
@@ -256,11 +331,11 @@ async function push(options: Options) {
 }
 
 async function pushFolder(options: Options) {
-  requireApiKey();
   const [source, prefix = ""] = options.positionals;
   if (!source)
     throw new Error("Usage: vardum push-folder <directory> [prefix]");
   const context = await loadContext();
+  requireApiKey(context.client);
   const directory = resolve(source);
   const files = await imageFiles(directory);
   const remote = await context.client.syncAssets(
@@ -380,10 +455,15 @@ async function loadContext() {
     );
   }
   const config = validateConfig(raw);
+  // VARDUM_API_KEY wins: CI must never pick up whatever a developer logged into.
+  const apiKey =
+    process.env.VARDUM_API_KEY ??
+    (await readCredential(config.server, config.workspace)) ??
+    undefined;
   return {
     ...found,
     config,
-    client: new VardumClient(config.server),
+    client: new VardumClient(config.server, apiKey),
   };
 }
 
@@ -510,9 +590,11 @@ function parseOptions(args: string[]): Options {
   return options;
 }
 
-function requireApiKey() {
-  if (!process.env.VARDUM_API_KEY)
-    throw new Error("VARDUM_API_KEY is required for push operations");
+function requireApiKey(client: VardumClient) {
+  if (!client.authenticated)
+    throw new Error(
+      "Pushing needs a key: run vardum login, or set VARDUM_API_KEY",
+    );
 }
 
 function report(action: Action["action"], path: string, options: Options) {
@@ -538,6 +620,8 @@ function help() {
 
 Usage:
   vardum init [--server URL --workspace ID --vard ID] [--force]
+  vardum login [--server URL]
+  vardum logout [--server URL --workspace ID]
   vardum status [--delete]
   vardum sync [--dry-run] [--delete] [--force]
   vardum pull [--dry-run] [--delete] [--force]
@@ -549,7 +633,9 @@ Options:
   --json  machine-readable output for CI; errors go to stderr as {"error"}.
 
 Authentication:
-  Set VARDUM_API_KEY for private Vards and every push operation.
+  vardum login authorizes this machine in the browser and stores a
+  workspace key scoped to your own permissions.
+  VARDUM_API_KEY overrides that stored key, so CI stays explicit.
 
 Safety:
   status is pull without writing anything.

@@ -56,6 +56,18 @@ export class VardumClient {
     this.server = server.replace(/\/$/, "");
   }
 
+  get authenticated() {
+    return Boolean(this.apiKey);
+  }
+
+  /** Revokes the key this client is holding. */
+  async revokeCliKey(workspaceId: string) {
+    await this.request<void>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/cli-keys`,
+      { method: "DELETE" },
+    );
+  }
+
   manifest(config: VardConfig, requireAuthentication = false) {
     if (this.apiKey || requireAuthentication)
       return this.request<Manifest>(

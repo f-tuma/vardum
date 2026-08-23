@@ -58,7 +58,7 @@ server {
   # The routes the web client owns, listed rather than caught, so that the apex
   # can belong to something else. Keep in sync with apps/web/src/main.tsx: a
   # route missing here quietly serves the marketing 404 instead.
-  location ~ ^/(?:app|account|organizations|workspaces|reset-password|accept-invitation)(?:/|$) {
+  location ~ ^/(?:app|account|organizations|workspaces|reset-password|accept-invitation|cli-login)(?:/|$) {
     try_files $uri /index.html;
   }
 

@@ -208,9 +208,9 @@ async function rejectSymlinkPath(root: string, target: string) {
 function isMissing(error: unknown): error is NodeJS.ErrnoException {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT",
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "ENOENT",
   );
 }
 

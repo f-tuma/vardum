@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc -b && vite build",
     "dev": "vite",
+    "test": "node --import tsx --test src/*.test.ts",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {

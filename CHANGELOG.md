@@ -11,6 +11,7 @@ All notable changes to Vardum are documented here.
 - OpenAPI 3 document at `/api/openapi.json`, generated from the route schemas.
 - Per-asset delivery figures and a transform cache ratio.
 - `vardum status` and `--json` output for CI.
+- `vardum login`: browser authorization that stores a scoped workspace key.
 
 ## [0.1.0] - 2026-08-22
 

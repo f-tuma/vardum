@@ -10,6 +10,7 @@ import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { AcceptInvitation } from "./accept-invitation";
 import { App } from "./app";
+import { CliLogin } from "./cli-login";
 import { ResetPassword } from "./reset-password";
 import "./style.css";
 
@@ -42,6 +43,16 @@ const acceptInvitationRoute = createRoute({
     id: typeof search.id === "string" ? search.id : "",
   }),
   component: AcceptInvitationPage,
+});
+const cliLoginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cli-login",
+  validateSearch: (search: Record<string, unknown>) => ({
+    callback: typeof search.callback === "string" ? search.callback : "",
+    state: typeof search.state === "string" ? search.state : "",
+    label: typeof search.label === "string" ? search.label : "cli",
+  }),
+  component: CliLoginPage,
 });
 const accountRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -100,6 +111,7 @@ const router = createRouter({
     appRoute,
     resetPasswordRoute,
     acceptInvitationRoute,
+    cliLoginRoute,
     accountRoute,
     organizationSettingsRoute,
     workspaceOverviewRoute,
@@ -126,6 +138,11 @@ function ResetPasswordPage() {
 function AcceptInvitationPage() {
   const { id } = acceptInvitationRoute.useSearch();
   return <AcceptInvitation invitationId={id} />;
+}
+
+function CliLoginPage() {
+  const { callback, state, label } = cliLoginRoute.useSearch();
+  return <CliLogin callback={callback} state={state} label={label} />;
 }
 
 function AccountPage() {

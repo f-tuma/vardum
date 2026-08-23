@@ -288,6 +288,20 @@ export function listAuditEvents(workspaceId: string, filters: AuditFilters) {
   );
 }
 
+export function createCliKey(
+  workspaceId: string,
+  input: { label: string; access: "read" | "write" },
+) {
+  return request<{ id: string; name: string; key: string; access: string }>(
+    `/api/workspaces/${workspaceId}/cli-keys`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function getWorkspaceOverview(workspaceId: string) {
   return request<WorkspaceOverview>(`/api/workspaces/${workspaceId}/overview`);
 }
