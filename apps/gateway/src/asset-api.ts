@@ -552,7 +552,7 @@ const extensionMime: Record<string, string> = {
 
 function mimeFromExtension(filename: string): string | null {
   const ext = filename.split(".").at(-1)?.toLowerCase();
-  return ext ? extensionMime[ext] ?? null : null;
+  return ext ? (extensionMime[ext] ?? null) : null;
 }
 
 export async function uploadVersion(
@@ -569,7 +569,10 @@ export async function uploadVersion(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         filename: file.name,
-        mimeType: file.type || mimeFromExtension(file.name) || "application/octet-stream",
+        mimeType:
+          file.type ||
+          mimeFromExtension(file.name) ||
+          "application/octet-stream",
         size: file.size,
       }),
     },
