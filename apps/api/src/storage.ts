@@ -64,9 +64,6 @@ export async function ensureBucketCors() {
     CORSRules: [
       {
         // pi-lens-ignore: cors-wildcard — presigned POST is already signed
-        // and time-limited; CORS just lets the browser reach S3. Restricting
-        // origins would break custom domains like media.musubi.pro.
-        // pi-lens-ignore: cors-wildcard
         AllowedOrigins: ["*"],
         AllowedMethods: ["GET", "POST", "PUT", "HEAD"],
         AllowedHeaders: ["*"],
