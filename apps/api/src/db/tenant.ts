@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "./index.js";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export function inWorkspace<T>(
   workspaceId: string,

@@ -4,6 +4,12 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { fromDrizzle } from "pg-boss";
 import { z } from "zod";
+import {
+  importedAssetKey,
+  importedMimeType,
+  importSource,
+  reservedPrefixes,
+} from "./asset-import.js";
 import { supportedImageMimeTypes } from "./asset-processor.js";
 import { authorizeAsset } from "./authorization.js";
 import {
@@ -17,9 +23,15 @@ import {
 } from "./db/app-schema.js";
 import { apikey, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
-import { deliveryWindowStart, fillDeliveryDays } from "./delivery-analytics.js";
+import { deliverySummary } from "./delivery-analytics.js";
 import { assetDeleteQueue, assetIngestQueue, boss } from "./queue.js";
-import { createUpload, inspectUpload } from "./storage.js";
+import {
+  copyObject,
+  createUpload,
+  headObject,
+  inspectUpload,
+  listObjectPage,
+} from "./storage.js";
 import { transformedAssetUrl, type Transformation } from "./transformation.js";
 
 // ponytail: single-request uploads are capped at 100 MiB; add multipart above this ceiling.
@@ -172,8 +184,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       return inWorkspace(workspaceId, async (transaction) => {
         const now = new Date();
-        const deliveryDay = sql<string>`to_char(${deliveryEvent.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
-        const [[assets], [versions], [storage], activity, deliveryRows] =
+        const [[assets], [versions], [storage], activity, delivery] =
           await Promise.all([
             transaction
               .select({ count: count() })
@@ -217,44 +228,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
               .where(eq(auditEvent.workspaceId, workspaceId))
               .orderBy(desc(auditEvent.createdAt))
               .limit(6),
-            transaction
-              .select({
-                date: deliveryDay,
-                requests: count(),
-                transformed:
-                  sql<number>`count(*) filter (where ${deliveryEvent.transformed})`.mapWith(
-                    Number,
-                  ),
-                bytes:
-                  sql<number>`coalesce(sum(${deliveryEvent.bytes}), 0)`.mapWith(
-                    Number,
-                  ),
-              })
-              .from(deliveryEvent)
-              .where(
-                and(
-                  eq(deliveryEvent.workspaceId, workspaceId),
-                  sql`${deliveryEvent.createdAt} >= ${deliveryWindowStart(now)}`,
-                ),
-              )
-              .groupBy(deliveryDay)
-              .orderBy(deliveryDay),
+            deliverySummary(
+              transaction,
+              eq(deliveryEvent.workspaceId, workspaceId),
+              now,
+            ),
           ]);
-        const delivery = fillDeliveryDays(deliveryRows, now);
 
         return {
           assets: assets?.count ?? 0,
           versions: versions?.count ?? 0,
           storageBytes: storage?.bytes ?? 0,
-          delivery: {
-            requests30d: delivery.reduce((sum, day) => sum + day.requests, 0),
-            transformed30d: delivery.reduce(
-              (sum, day) => sum + day.transformed,
-              0,
-            ),
-            bytes30d: delivery.reduce((sum, day) => sum + day.bytes, 0),
-            days: delivery,
-          },
+          delivery,
           activity: activity.map(toAuditEvent),
         };
       });
@@ -329,6 +314,168 @@ export function registerAssetRoutes(app: FastifyInstance) {
           nextCursor: last ? encodeAuditCursor(last) : null,
         };
       });
+    },
+  );
+
+  // Adopt objects that are already in the bucket. One page per call, so a large
+  // prefix is a loop the caller can watch rather than one request that hangs.
+  api.post(
+    "/api/workspaces/:workspaceId/imports",
+    {
+      schema: {
+        params: workspaceParams,
+        body: z.object({
+          source: importSource,
+          prefix: assetPrefix,
+          token: z.string().min(1).optional(),
+          limit: z.number().int().min(1).max(100).default(50),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "create",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      const { source, prefix, token, limit } = request.body;
+      const page = await listObjectPage(source, token, limit);
+      let imported = 0;
+      let skipped = 0;
+
+      for (const object of page.objects) {
+        if (
+          reservedPrefixes.some((reserved) =>
+            object.key.startsWith(reserved),
+          ) ||
+          object.size > maximumUploadSize
+        ) {
+          skipped += 1;
+          continue;
+        }
+
+        const key = importedAssetKey(prefix, source, object.key);
+        // The extension decides the declared type; S3 metadata is the fallback,
+        // and ingest still checks the bytes either way.
+        let mimeType = key ? importedMimeType(object.key, undefined) : null;
+        if (key && !mimeType) {
+          const head = await headObject(object.key).catch(() => null);
+          mimeType = importedMimeType(object.key, head?.ContentType);
+        }
+        if (!key || !mimeType) {
+          skipped += 1;
+          continue;
+        }
+
+        const assetId = randomUUID();
+        const versionId = randomUUID();
+        const storageKey = `originals/${workspaceId}/${assetId}/${versionId}/source`;
+        const filename = object.key.split("/").at(-1) ?? key;
+
+        const created = await inWorkspace(workspaceId, async (transaction) => {
+          const [row] = await transaction
+            .insert(asset)
+            .values({
+              id: assetId,
+              workspaceId,
+              key,
+              displayName: filename,
+              createdBy: authorization.principal.reference,
+              updatedBy: authorization.principal.reference,
+            })
+            .onConflictDoNothing()
+            .returning({ id: asset.id });
+          if (!row) return false;
+
+          await transaction.insert(assetVersion).values({
+            id: versionId,
+            workspaceId,
+            assetId,
+            number: 1,
+            storageKey,
+            filename,
+            mimeType,
+            size: object.size,
+            createdBy: authorization.principal.reference,
+            updatedBy: authorization.principal.reference,
+          });
+          await transaction.insert(auditEvent).values([
+            {
+              workspaceId,
+              actorType: authorization.principal.actorType,
+              actorId: authorization.principal.actorId,
+              action: "asset.created",
+              targetType: "asset",
+              targetId: assetId,
+              metadata: { key, displayName: filename, source: object.key },
+              requestId: request.id,
+            },
+            {
+              workspaceId,
+              actorType: authorization.principal.actorType,
+              actorId: authorization.principal.actorId,
+              action: "asset.version_created",
+              targetType: "asset_version",
+              targetId: versionId,
+              metadata: {
+                assetId,
+                key,
+                displayName: filename,
+                number: 1,
+                filename,
+                mimeType,
+                size: object.size,
+                source: object.key,
+              },
+              requestId: request.id,
+            },
+          ]);
+          return true;
+        });
+        if (!created) {
+          skipped += 1;
+          continue;
+        }
+
+        try {
+          await copyObject(object.key, storageKey, mimeType);
+        } catch (error) {
+          // Roll the record back rather than leave a version whose object never
+          // arrives; the cascade takes the version with it.
+          request.log.warn(
+            { error, key: object.key },
+            "Asset import copy failed",
+          );
+          await inWorkspace(workspaceId, (transaction) =>
+            transaction.delete(asset).where(eq(asset.id, assetId)),
+          );
+          skipped += 1;
+          continue;
+        }
+
+        await inWorkspace(workspaceId, async (transaction) => {
+          await boss.send(
+            assetIngestQueue,
+            { workspaceId, assetId, versionId, requestId: request.id },
+            { db: fromDrizzle(transaction, sql), singletonKey: versionId },
+          );
+          await transaction
+            .update(assetVersion)
+            .set({
+              status: "processing",
+              updatedBy: authorization.principal.reference,
+            })
+            .where(eq(assetVersion.id, versionId));
+        });
+        imported += 1;
+      }
+
+      return { imported, skipped, nextToken: page.nextToken };
     },
   );
 
@@ -820,6 +967,189 @@ export function registerAssetRoutes(app: FastifyInstance) {
         }
         throw error;
       }
+    },
+  );
+
+  api.get(
+    "/api/workspaces/:workspaceId/assets/:assetId/delivery",
+    { schema: { params: assetParams } },
+    async (request, reply) => {
+      const { workspaceId, assetId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "read",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      return inWorkspace(workspaceId, async (transaction) => {
+        const [target] = await transaction
+          .select({ id: asset.id })
+          .from(asset)
+          .where(
+            and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)),
+          );
+        if (!target) return reply.code(404).send({ error: "Asset not found" });
+
+        return deliverySummary(
+          transaction,
+          and(
+            eq(deliveryEvent.workspaceId, workspaceId),
+            eq(deliveryEvent.assetId, assetId),
+          ),
+        );
+      });
+    },
+  );
+
+  api.get(
+    "/api/workspaces/:workspaceId/assets/:assetId/versions",
+    {
+      schema: {
+        params: assetParams,
+        querystring: z.object({
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { workspaceId, assetId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "read",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      return inWorkspace(workspaceId, async (transaction) => {
+        const [target] = await transaction
+          .select({ currentVersionId: asset.currentVersionId })
+          .from(asset)
+          .where(
+            and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)),
+          );
+        if (!target) return reply.code(404).send({ error: "Asset not found" });
+
+        const versions = await transaction
+          .select({
+            id: assetVersion.id,
+            number: assetVersion.number,
+            status: assetVersion.status,
+            filename: assetVersion.filename,
+            mimeType: assetVersion.mimeType,
+            size: assetVersion.size,
+            width: assetVersion.width,
+            height: assetVersion.height,
+            checksum: assetVersion.checksum,
+            error: assetVersion.error,
+            createdAt: assetVersion.createdAt,
+            createdBy: assetVersion.createdBy,
+          })
+          .from(assetVersion)
+          .where(
+            and(
+              eq(assetVersion.workspaceId, workspaceId),
+              eq(assetVersion.assetId, assetId),
+            ),
+          )
+          .orderBy(desc(assetVersion.number))
+          .limit(request.query.limit);
+
+        return {
+          currentVersionId: target.currentVersionId,
+          versions: versions.map((version) => ({
+            ...version,
+            current: version.id === target.currentVersionId,
+          })),
+        };
+      });
+    },
+  );
+
+  // Versions are immutable, so going back is moving the pointer, not restoring
+  // bytes. The old current version stays exactly where it was.
+  api.post(
+    "/api/workspaces/:workspaceId/assets/:assetId/versions/:versionId/restore",
+    { schema: { params: versionParams } },
+    async (request, reply) => {
+      const { workspaceId, assetId, versionId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "publish",
+      ]);
+      if (!("principal" in authorization)) {
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      }
+
+      const result = await inWorkspace(workspaceId, async (transaction) => {
+        const [target] = await transaction
+          .select({
+            key: asset.key,
+            displayName: asset.displayName,
+            currentVersionId: asset.currentVersionId,
+          })
+          .from(asset)
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
+          .for("update");
+        if (!target) return { error: "Asset not found" as const };
+
+        const [version] = await transaction
+          .select({
+            id: assetVersion.id,
+            number: assetVersion.number,
+            status: assetVersion.status,
+          })
+          .from(assetVersion)
+          .where(
+            and(
+              eq(assetVersion.workspaceId, workspaceId),
+              eq(assetVersion.assetId, assetId),
+              eq(assetVersion.id, versionId),
+            ),
+          );
+        if (!version) return { error: "Version not found" as const };
+        if (version.status !== "ready")
+          return { conflict: "Only a ready version can be restored" as const };
+        if (target.currentVersionId === versionId)
+          return { currentVersionId: versionId, number: version.number };
+
+        await transaction
+          .update(asset)
+          .set({
+            currentVersionId: versionId,
+            updatedBy: authorization.principal.reference,
+          })
+          .where(eq(asset.id, assetId));
+        await transaction.insert(auditEvent).values({
+          workspaceId,
+          actorType: authorization.principal.actorType,
+          actorId: authorization.principal.actorId,
+          action: "asset.version_restored",
+          targetType: "asset_version",
+          targetId: versionId,
+          metadata: {
+            assetId,
+            key: target.key,
+            displayName: target.displayName,
+            number: version.number,
+            previousVersionId: target.currentVersionId,
+          },
+          requestId: request.id,
+        });
+
+        return { currentVersionId: versionId, number: version.number };
+      });
+
+      if ("error" in result)
+        return reply.code(404).send({ error: result.error });
+      if ("conflict" in result)
+        return reply.code(409).send({ error: result.conflict });
+      return result;
     },
   );
 
