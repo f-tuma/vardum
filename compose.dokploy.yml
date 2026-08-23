@@ -1,0 +1,202 @@
+# Vardum — the full production stack on Dokploy.
+#
+# Traefik already terminates TLS, so nginx serves plain HTTP inside Docker and
+# owns the /api, /w and web-client split from docker/nginx.marketing.conf.template.
+#
+# Expose two Dokploy Domains in the UI:
+#   apex (vardum.example.com)     -> service `web`,   container port 80
+#   storage (cdn.vardum.example)  -> service `minio`, container port 9000
+# Never expose api, worker or postgres. The storage domain must be the one in
+# S3_PUBLIC_ENDPOINT: browsers upload straight to it with a presigned POST.
+#
+# The apex belongs to the marketing site, which is its own Dokploy application
+# on dokploy-network with no domain of its own. Point MARKETING_UPSTREAM at its
+# service alias; nginx proxies `/` there and keeps /app for the product. Want
+# the app on the apex instead? That is the self-hosted stack — use
+# compose.production.yml.
+#
+# Required environment:
+#   APP_URL=https://vardum.example.com
+#   MARKETING_UPSTREAM=vardum-marketing:80
+#   S3_PUBLIC_ENDPOINT=https://cdn.vardum.example.com
+#   BETTER_AUTH_SECRET=...             (openssl rand -base64 32)
+#   TRANSFORM_SECRET=...               (a second, different secret)
+#   POSTGRES_PASSWORD=...              (URL-safe: it is embedded in DATABASE_URL)
+#   MINIO_ROOT_USER / MINIO_ROOT_PASSWORD
+#
+# Upgrade: redeploy the branch. Migrations run once before api and worker start
+# and are forward-only, so a rollback also needs the pre-upgrade backup from
+# docs/operations.md.
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  DATABASE_URL: postgres://varda:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/varda
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+  TRANSFORM_SECRET: ${TRANSFORM_SECRET:?set TRANSFORM_SECRET}
+  BETTER_AUTH_URL: ${APP_URL:?set APP_URL}
+  WEB_URL: ${APP_URL:?set APP_URL}
+  CUSTOM_DOMAIN_TARGET: ${CUSTOM_DOMAIN_TARGET:-}
+  ORGANIZATION_CREATION: ${ORGANIZATION_CREATION:-allowlist}
+  ORGANIZATION_CREATOR_EMAILS: ${ORGANIZATION_CREATOR_EMAILS:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-varda}
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+  S3_FORCE_PATH_STYLE: "true"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: varda
+      POSTGRES_USER: varda
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - dokploy-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U varda -d varda"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Presigned URLs and redirects must carry the public hostname, not minio:9000.
+      MINIO_SERVER_URL: ${S3_PUBLIC_ENDPOINT}
+    volumes:
+      - dokploy-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # The S3 API port is the only one Traefik should reach; the console stays on
+    # the project network.
+    expose:
+      - "9000"
+      - "9001"
+    networks:
+      dokploy-network:
+        aliases:
+          - vardum-minio
+      default: {}
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-varda}
+    entrypoint: >-
+      /bin/sh -ec "mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/$$S3_BUCKET"
+
+  migrate:
+    image: vardum-api:${VARDUM_VERSION:-dokploy}
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment: *app-environment
+    command: ["node", "dist/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: vardum-api:${VARDUM_VERSION:-dokploy}
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "3000"
+    networks:
+      # App traffic never leaves the project network: nginx reaches the API by
+      # this alias, and nothing else needs to.
+      default:
+        aliases:
+          - vardum-api-internal
+    restart: unless-stopped
+
+  worker:
+    image: vardum-api:${VARDUM_VERSION:-dokploy}
+    environment: *app-environment
+    command: ["node", "dist/worker.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    image: vardum-web:${VARDUM_VERSION:-dokploy}
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        VITE_UPLOAD_ORIGINS: ${S3_PUBLIC_ENDPOINT}
+    environment:
+      API_UPSTREAM: vardum-api-internal:3000
+      MARKETING_UPSTREAM: ${MARKETING_UPSTREAM:?set MARKETING_UPSTREAM to the marketing deployment alias, e.g. vardum-marketing:80}
+    # Replaces the baked-in config: `/` goes to the marketing deployment and the
+    # client keeps the routes it owns. Checked in, so routing is reviewable.
+    volumes:
+      - ./docker/nginx.marketing.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # /app, not /, so the probe fails on a broken client rather than on a
+      # marketing site that happens to be redeploying.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "80"
+    networks:
+      # dokploy-network for Traefik on the way in, and for the marketing
+      # deployment on the way out.
+      dokploy-network: {}
+      default: {}
+    restart: unless-stopped
+
+volumes:
+  dokploy-postgres-data:
+  dokploy-minio-data:
+
+networks:
+  dokploy-network:
+    external: true

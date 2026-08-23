@@ -1,0 +1,179 @@
+# Vardum — a Dokploy dev deployment built from the selected branch.
+#
+# Same shape as compose.dokploy.yml with two differences: images are built here
+# rather than reused, and there is no marketing site, so the dev domain opens
+# the app directly from the baked-in docker/nginx.conf — exactly what a
+# self-hoster sees.
+#
+# Expose two Dokploy Domains in the UI:
+#   dev.vardum.example.com     -> service `web`,   container port 80
+#   dev-cdn.vardum.example.com -> service `minio`, container port 9000
+#
+# Required environment:
+#   APP_URL=https://dev.vardum.example.com
+#   S3_PUBLIC_ENDPOINT=https://dev-cdn.vardum.example.com
+#   BETTER_AUTH_SECRET / TRANSFORM_SECRET   (dev-only secrets)
+#   POSTGRES_PASSWORD
+#   MINIO_ROOT_USER / MINIO_ROOT_PASSWORD
+#
+# Volumes are named separately from production so the two stacks can share a
+# host without ever sharing data.
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  DATABASE_URL: postgres://varda:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/varda
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+  TRANSFORM_SECRET: ${TRANSFORM_SECRET:?set TRANSFORM_SECRET}
+  BETTER_AUTH_URL: ${APP_URL:?set APP_URL}
+  WEB_URL: ${APP_URL:?set APP_URL}
+  CUSTOM_DOMAIN_TARGET: ${CUSTOM_DOMAIN_TARGET:-}
+  ORGANIZATION_CREATION: ${ORGANIZATION_CREATION:-open}
+  ORGANIZATION_CREATOR_EMAILS: ${ORGANIZATION_CREATOR_EMAILS:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-varda}
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+  S3_FORCE_PATH_STYLE: "true"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: varda
+      POSTGRES_USER: varda
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - dev-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U varda -d varda"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SERVER_URL: ${S3_PUBLIC_ENDPOINT}
+    volumes:
+      - dev-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "9000"
+      - "9001"
+    networks:
+      dokploy-network:
+        aliases:
+          - vardum-dev-minio
+      default: {}
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-varda}
+    entrypoint: >-
+      /bin/sh -ec "mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/$$S3_BUCKET"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment: *app-environment
+    command: ["node", "dist/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "3000"
+    networks:
+      default:
+        aliases:
+          - vardum-api-internal
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment: *app-environment
+    command: ["node", "dist/worker.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        VITE_UPLOAD_ORIGINS: ${S3_PUBLIC_ENDPOINT}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "80"
+    networks:
+      dokploy-network: {}
+      default: {}
+    restart: unless-stopped
+
+volumes:
+  dev-postgres-data:
+  dev-minio-data:
+
+networks:
+  dokploy-network:
+    external: true

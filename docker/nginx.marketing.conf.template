@@ -1,0 +1,78 @@
+# Vardum gateway for a deployment whose apex belongs to a separate marketing
+# site. Mounted into /etc/nginx/templates/, so the nginx image substitutes
+# ${API_UPSTREAM} and ${MARKETING_UPSTREAM} at container start.
+#
+# WHY ONE ORIGIN: the client calls the API with relative /api/* URLs and the
+# Better Auth session cookie has to stay first-party. Splitting the client and
+# the API across two hostnames is not a supported configuration. The marketing
+# site has no such constraint — it is a separate deployment reached across
+# dokploy-network — but it lives on the same origin so the apex can be a
+# landing page while /app is the product.
+#
+# The self-hosted stack uses docker/nginx.conf instead, where `/` is the app.
+
+server {
+  listen 80;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # The API owns its REST surface, asset delivery and the health probes. These
+  # come first so nothing below can shadow them.
+  location ^~ /api/ {
+    proxy_pass http://${API_UPSTREAM};
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location ~ ^/(?:v|w)/ {
+    proxy_pass http://${API_UPSTREAM};
+    proxy_buffering off;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location = /health {
+    proxy_pass http://${API_UPSTREAM};
+  }
+
+  location = /ready {
+    proxy_pass http://${API_UPSTREAM};
+  }
+
+  # The built bundle, with the legacy /assets/ delivery prefix as the fallback.
+  location ^~ /assets/ {
+    try_files $uri @legacy_assets;
+  }
+
+  location @legacy_assets {
+    proxy_pass http://${API_UPSTREAM};
+    proxy_buffering off;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  # The routes the web client owns, listed rather than caught, so that the apex
+  # can belong to something else. Keep in sync with apps/web/src/main.tsx: a
+  # route missing here quietly serves the marketing 404 instead.
+  location ~ ^/(?:app|account|organizations|workspaces|reset-password|accept-invitation)(?:/|$) {
+    try_files $uri /index.html;
+  }
+
+  location = /favicon.svg {
+    try_files $uri =404;
+  }
+
+  # Everything left over — the apex and whatever the marketing site puts beside
+  # it. MARKETING_UPSTREAM is the marketing deployment's dokploy-network alias
+  # as host:port, e.g. vardum-marketing:80.
+  location / {
+    proxy_pass http://${MARKETING_UPSTREAM};
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}

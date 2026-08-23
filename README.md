@@ -65,6 +65,28 @@ bash scripts/smoke-production.sh
 Backup, restore and upgrade procedures are documented in
 [`docs/operations.md`](docs/operations.md).
 
+## Dokploy
+
+Two further Compose files deploy the same stack on Dokploy, where Traefik
+already terminates TLS:
+
+| File                      | Use                                                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `compose.dokploy.yml`     | Production. Apex serves a separate marketing deployment; the app lives on `/app` of the same origin. |
+| `compose.dokploy.dev.yml` | Branch deployment. No marketing site, so the dev domain opens the app directly.                      |
+
+Copy `.env.dokploy.example` into the Dokploy environment editor and expose two
+Domains: the app hostname on service `web` port 80, and the storage hostname on
+service `minio` port 9000. The storage Domain must match `S3_PUBLIC_ENDPOINT`,
+because browsers upload to it directly with a presigned POST.
+
+In production the marketing site is its own Dokploy application, joined to
+`dokploy-network` and given no Domain of its own. Point `MARKETING_UPSTREAM` at
+its service alias; `docker/nginx.marketing.conf.template` proxies `/` there and
+keeps `/api/*`, `/w/*` and the client's own routes on this stack. That template
+lists the client routes explicitly — a route added to `apps/web/src/main.tsx`
+and not to the template quietly serves the marketing 404.
+
 ## Organizations and workspaces
 
 Organizations own members and roles and may contain multiple workspaces. Only

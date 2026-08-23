@@ -32,4 +32,6 @@ jobs:
             - run: pnpm typecheck
             - run: pnpm build
             - run: docker compose --env-file .env.production.example -f compose.production.yml config --quiet
+            - run: docker compose --env-file .env.dokploy.example -f compose.dokploy.yml config --quiet
+            - run: docker compose --env-file .env.dokploy.example -f compose.dokploy.dev.yml config --quiet
             - run: bash scripts/smoke-production.sh
