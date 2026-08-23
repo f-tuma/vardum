@@ -9,6 +9,7 @@ export const activityLabels: Record<string, string> = {
   "asset.version_created": "Version created",
   "asset.version_queued": "Version queued",
   "asset.version_processed": "Version ready",
+  "asset.version_restored": "Version restored",
   "asset.version_failed": "Version failed",
   "folder.created": "Folder created",
   "folder.deleted": "Folder deleted",
@@ -161,6 +162,8 @@ export function WorkspaceOverview({
           <span>
             {delivery.transformed30d.toLocaleString()} transformed //{" "}
             {formatBytes(delivery.bytes30d)} response bytes
+            {delivery.cacheHitRatio !== null &&
+              ` // ${Math.round(delivery.cacheHitRatio * 100)}% transform cache`}
           </span>
         </header>
         <ol aria-label="Daily successful delivery responses">

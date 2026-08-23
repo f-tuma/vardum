@@ -56,6 +56,38 @@ export type SyncAsset = {
 
 export type AssetFolder = { name: string; prefix: string };
 
+export type AssetVersion = {
+  id: string;
+  number: number;
+  status: "pending" | "processing" | "ready" | "failed";
+  filename: string;
+  mimeType: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  checksum: string | null;
+  error: string | null;
+  createdAt: string;
+  createdBy: string;
+  current: boolean;
+};
+
+export type DeliverySummary = {
+  requests30d: number;
+  transformed30d: number;
+  bytes30d: number;
+  cacheHits30d: number;
+  cacheHitRatio: number | null;
+  days: Array<{
+    date: string;
+    requests: number;
+    transformed: number;
+    bytes: number;
+    cacheHits: number;
+    cacheMisses: number;
+  }>;
+};
+
 export type AssetSummary = {
   id: string;
   key: string;
@@ -122,17 +154,7 @@ export type WorkspaceOverview = {
   assets: number;
   versions: number;
   storageBytes: number;
-  delivery: {
-    requests30d: number;
-    transformed30d: number;
-    bytes30d: number;
-    days: Array<{
-      date: string;
-      requests: number;
-      transformed: number;
-      bytes: number;
-    }>;
-  };
+  delivery: DeliverySummary;
   activity: Array<{
     id: string;
     action: string;
@@ -433,6 +455,44 @@ export function listAssets(workspaceId: string, prefix = "", search = "") {
   return request<{ folders: AssetFolder[]; assets: AssetSummary[] }>(
     `/api/workspaces/${workspaceId}/assets?${query}`,
   );
+}
+
+export function listAssetVersions(workspaceId: string, assetId: string) {
+  return request<{ currentVersionId: string | null; versions: AssetVersion[] }>(
+    `/api/workspaces/${workspaceId}/assets/${assetId}/versions`,
+  );
+}
+
+export function restoreAssetVersion(
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+) {
+  return request<{ currentVersionId: string; number: number }>(
+    `/api/workspaces/${workspaceId}/assets/${assetId}/versions/${versionId}/restore`,
+    { method: "POST" },
+  );
+}
+
+export function getAssetDelivery(workspaceId: string, assetId: string) {
+  return request<DeliverySummary>(
+    `/api/workspaces/${workspaceId}/assets/${assetId}/delivery`,
+  );
+}
+
+export function importAssets(
+  workspaceId: string,
+  input: { source: string; prefix: string; token?: string },
+) {
+  return request<{
+    imported: number;
+    skipped: number;
+    nextToken: string | null;
+  }>(`/api/workspaces/${workspaceId}/imports`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 export function getAsset(workspaceId: string, assetId: string) {

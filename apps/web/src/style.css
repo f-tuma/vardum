@@ -1156,8 +1156,15 @@ button:hover,
 }
 .folder-form-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 1rem;
   margin-top: 1rem;
+}
+.folder-form-actions > [role="status"] {
+  margin-right: auto;
+  color: var(--muted);
+  font: 0.55rem var(--mono);
 }
 .form-grid {
   display: grid;
@@ -1486,6 +1493,41 @@ button:hover,
   grid-template-columns: minmax(0, 1fr) 420px;
   gap: 1rem;
   padding-block: 1rem;
+}
+.inspector-note {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font: 0.55rem / 1.5 var(--mono);
+}
+.version-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 0.4rem;
+  list-style: none;
+}
+.version-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.version-list strong,
+.version-list small {
+  display: block;
+  font: 0.6rem var(--mono);
+}
+.version-list strong b {
+  color: var(--violet);
+  font-weight: 400;
+}
+.version-list small {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.55rem;
 }
 .asset-preview-column {
   display: grid;

@@ -8,7 +8,11 @@ import {
   deleteAsset,
   deleteFolder,
   getAsset,
+  getAssetDelivery,
+  importAssets,
   listAssets,
+  listAssetVersions,
+  restoreAssetVersion,
   uploadVersion,
   type AssetSummary,
   type TransformationInput,
@@ -97,6 +101,7 @@ export function AssetDashboard({
           </p>
         </div>
         <div className="page-actions">
+          <ImportForm workspaceId={workspaceId} prefix={prefix} />
           <NewFolderForm workspaceId={workspaceId} prefix={prefix} />
           <NewAssetForm workspaceId={workspaceId} prefix={prefix} />
         </div>
@@ -300,6 +305,92 @@ function normalizeFolderName(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+}
+
+function ImportForm({
+  workspaceId,
+  prefix,
+}: {
+  workspaceId: string;
+  prefix: string;
+}) {
+  const queryClient = useQueryClient();
+  const detailsRef = useCloseDetailsOnOutsideClick();
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState("");
+  const [pending, setPending] = useState(false);
+
+  // The endpoint walks one page per call, so the loop lives here and the user
+  // watches the count climb instead of waiting on one long request.
+  async function submit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const source = String(new FormData(formElement).get("source"));
+    setPending(true);
+    setError("");
+    setProgress("");
+    try {
+      let imported = 0;
+      let skipped = 0;
+      let token: string | undefined;
+      do {
+        const page = await importAssets(workspaceId, {
+          source,
+          prefix,
+          token,
+        });
+        imported += page.imported;
+        skipped += page.skipped;
+        token = page.nextToken ?? undefined;
+        setProgress(`${imported} imported, ${skipped} skipped…`);
+      } while (token);
+      setProgress(`${imported} imported, ${skipped} skipped`);
+      formElement.reset();
+      await queryClient.invalidateQueries({
+        queryKey: ["assets", workspaceId],
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Import failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <details
+      ref={detailsRef}
+      className="upload-drawer folder-drawer quiet-summary"
+    >
+      <summary>Import from S3</summary>
+      <form onSubmit={submit}>
+        <label>
+          Bucket prefix
+          <input
+            name="source"
+            placeholder="legacy-photos/"
+            maxLength={1024}
+            required
+          />
+          <small>
+            Objects already in the bucket are copied into this folder and
+            ingested. Vardum's own <code>originals/</code> and{" "}
+            <code>derived/</code> are refused.
+          </small>
+        </label>
+        {error && (
+          <p className="error-strip" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="folder-form-actions">
+          <span role="status">{progress}</span>
+          <button className="primary-button" disabled={pending}>
+            {pending ? "Importing…" : "Import"}
+          </button>
+        </div>
+      </form>
+    </details>
+  );
 }
 
 function NewFolderForm({
@@ -573,6 +664,150 @@ function AssetCard({
   );
 }
 
+function VersionHistory({
+  workspaceId,
+  assetId,
+  currentVersionId,
+}: {
+  workspaceId: string;
+  assetId: string;
+  currentVersionId: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const [pendingId, setPendingId] = useState("");
+  const [error, setError] = useState("");
+  const history = useQuery({
+    queryKey: ["asset-versions", workspaceId, assetId, currentVersionId],
+    queryFn: () => listAssetVersions(workspaceId, assetId),
+  });
+
+  async function restore(versionId: string) {
+    setPendingId(versionId);
+    setError("");
+    try {
+      await restoreAssetVersion(workspaceId, assetId, versionId);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["asset", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["assets", workspaceId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["asset-versions", workspaceId, assetId],
+        }),
+      ]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Restore failed");
+    } finally {
+      setPendingId("");
+    }
+  }
+
+  return (
+    <section className="inspector-section">
+      <h3>Version history</h3>
+      {history.isPending ? (
+        <p className="inspector-note">Loading versions…</p>
+      ) : history.isError ? (
+        <p className="error-strip" role="alert">
+          {history.error.message}
+        </p>
+      ) : (
+        <ul className="version-list">
+          {history.data.versions.map((version) => (
+            <li key={version.id}>
+              <span>
+                <strong>
+                  v{version.number}
+                  {version.current && <b> // CURRENT</b>}
+                </strong>
+                <small>
+                  {version.mimeType.replace("image/", "").toUpperCase()} //{" "}
+                  {formatBytes(version.size)} //{" "}
+                  {new Date(version.createdAt).toLocaleString()}
+                </small>
+              </span>
+              {/* Versions are immutable, so this only moves the pointer. */}
+              <button
+                type="button"
+                disabled={
+                  version.current ||
+                  version.status !== "ready" ||
+                  Boolean(pendingId)
+                }
+                onClick={() => void restore(version.id)}
+              >
+                {pendingId === version.id
+                  ? "Restoring…"
+                  : version.status === "ready"
+                    ? "Restore"
+                    : version.status}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && (
+        <p className="error-strip" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function AssetDelivery({
+  workspaceId,
+  assetId,
+}: {
+  workspaceId: string;
+  assetId: string;
+}) {
+  const delivery = useQuery({
+    queryKey: ["asset-delivery", workspaceId, assetId],
+    queryFn: () => getAssetDelivery(workspaceId, assetId),
+  });
+
+  return (
+    <section className="inspector-section">
+      <h3>Delivery // last 30 days</h3>
+      {delivery.isPending ? (
+        <p className="inspector-note">Loading figures…</p>
+      ) : delivery.isError ? (
+        <p className="error-strip" role="alert">
+          {delivery.error.message}
+        </p>
+      ) : (
+        <>
+          <dl className="asset-metadata">
+            <div>
+              <dt>Responses</dt>
+              <dd>{delivery.data.requests30d.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Transformed</dt>
+              <dd>{delivery.data.transformed30d.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Bytes</dt>
+              <dd>{formatBytes(delivery.data.bytes30d)}</dd>
+            </div>
+            <div>
+              <dt>Transform cache</dt>
+              <dd>
+                {delivery.data.cacheHitRatio === null
+                  ? "—"
+                  : `${Math.round(delivery.data.cacheHitRatio * 100)}% served from cache`}
+              </dd>
+            </div>
+          </dl>
+          <p className="inspector-note">
+            Successful responses, not confirmed downloads. Raw events are kept
+            for 90 days.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 function AssetDetailPage({
   asset,
   workspaceId,
@@ -708,6 +943,12 @@ function AssetDetailPage({
             />
           )}
           <VersionForm workspaceId={workspaceId} assetId={asset.id} />
+          <VersionHistory
+            workspaceId={workspaceId}
+            assetId={asset.id}
+            currentVersionId={asset.currentVersionId}
+          />
+          <AssetDelivery workspaceId={workspaceId} assetId={asset.id} />
           <section className="danger-zone">
             <h3>Delete asset</h3>
             <p>Permanently deletes this asset and every stored version.</p>
