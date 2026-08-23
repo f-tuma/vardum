@@ -29,7 +29,7 @@ export const supportedMimeTypes = [
   ...supportedVideoMimeTypes,
 ] as const;
 
-export const videoMimeSet = new Set(supportedVideoMimeTypes);
+export const videoMimeSet: Set<string> = new Set(supportedVideoMimeTypes);
 export const imageMimeSet = new Set(supportedImageMimeTypes);
 
 const payloadSchema = z.object({

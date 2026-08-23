@@ -666,7 +666,16 @@ function AssetCard({
     <li className="asset-card">
       <div className="asset-preview">
         {asset.thumbnailUrl ? (
-          <img src={asset.thumbnailUrl} alt="" loading="lazy" />
+          isVideoMimeType(asset.mimeType) ? (
+            <video
+              src={asset.thumbnailUrl}
+              muted
+              playsInline
+              preload="metadata"
+            />
+          ) : (
+            <img src={asset.thumbnailUrl} alt="" loading="lazy" />
+          )
         ) : (
           <span className="asset-preview-placeholder">No preview</span>
         )}

@@ -10,7 +10,7 @@ import {
   importSource,
   reservedPrefixes,
 } from "./asset-import.js";
-import { supportedMimeTypes } from "./asset-processor.js";
+import { supportedMimeTypes, videoMimeSet } from "./asset-processor.js";
 import { authorizeAsset } from "./authorization.js";
 import {
   asset,
@@ -32,7 +32,11 @@ import {
   inspectUpload,
   listObjectPage,
 } from "./storage.js";
-import { transformedAssetUrl, type Transformation } from "./transformation.js";
+import {
+  originalAssetUrl,
+  transformedAssetUrl,
+  type Transformation,
+} from "./transformation.js";
 
 // ponytail: single-request uploads are capped at 100 MiB; add multipart above this ceiling.
 const maximumUploadSize = 100 * 1024 * 1024;
@@ -743,12 +747,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
               customDomain: workspace?.customDomain ?? null,
               thumbnailUrl:
                 workspace && item.currentVersionId
-                  ? transformedAssetUrl(
-                      workspace.slug,
-                      item.key,
-                      thumbnailTransformation,
-                      workspace.customDomain,
-                    )
+                  ? videoMimeSet.has(item.mimeType ?? "")
+                    ? originalAssetUrl(
+                        workspace.slug,
+                        item.key,
+                        workspace.customDomain,
+                      )
+                    : transformedAssetUrl(
+                        workspace.slug,
+                        item.key,
+                        thumbnailTransformation,
+                        workspace.customDomain,
+                      )
                   : null,
             };
           }),
@@ -829,12 +839,18 @@ export function registerAssetRoutes(app: FastifyInstance) {
           customDomain: workspace?.customDomain ?? null,
           thumbnailUrl:
             workspace && item.currentVersionId
-              ? transformedAssetUrl(
-                  workspace.slug,
-                  item.key,
-                  thumbnailTransformation,
-                  workspace.customDomain,
-                )
+              ? videoMimeSet.has(item.mimeType ?? "")
+                ? originalAssetUrl(
+                    workspace.slug,
+                    item.key,
+                    workspace.customDomain,
+                  )
+                : transformedAssetUrl(
+                    workspace.slug,
+                    item.key,
+                    thumbnailTransformation,
+                    workspace.customDomain,
+                  )
               : null,
         };
       });

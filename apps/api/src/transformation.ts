@@ -48,6 +48,17 @@ export function signTransformation(
   return signature(workspaceSlug, key, canonicalizeTransformation(input));
 }
 
+export function originalAssetUrl(
+  workspaceSlug: string,
+  key: string,
+  customDomain?: string | null,
+) {
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  return customDomain
+    ? `https://${customDomain}/w/${encodedKey}`
+    : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
+}
+
 export function transformedAssetUrl(
   workspaceSlug: string,
   key: string,

@@ -63,7 +63,8 @@ export async function ensureBucketCors() {
   const rules = {
     CORSRules: [
       {
-        // pi-lens-ignore: cors-wildcard — presigned POST is already signed
+        // pi-lens-ignore: cors-wildcard — presigned POST is signed + time-limited;
+        // CORS just lets the browser reach S3. Restricting origins breaks custom domains.
         AllowedOrigins: ["*"],
         AllowedMethods: ["GET", "POST", "PUT", "HEAD"],
         AllowedHeaders: ["*"],
