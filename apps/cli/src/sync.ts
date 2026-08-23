@@ -153,20 +153,22 @@ export async function imageFiles(root: string) {
 export function mimeFor(filename: string) {
   const extension = filename.toLowerCase().match(/\.([^.]+)$/)?.[1];
   return extension
-    ? ({
-        avif: "image/avif",
-        jpeg: "image/jpeg",
-        jpg: "image/jpeg",
-        png: "image/png",
-        svg: "image/svg+xml",
-        webp: "image/webp",
-        mp4: "video/mp4",
-        webm: "video/webm",
-        mov: "video/quicktime",
-        avi: "video/x-msvideo",
-        mpeg: "video/mpeg",
-        mpg: "video/mpeg",
-      } as Record<string, string>)[extension]
+    ? (
+        {
+          avif: "image/avif",
+          jpeg: "image/jpeg",
+          jpg: "image/jpeg",
+          png: "image/png",
+          svg: "image/svg+xml",
+          webp: "image/webp",
+          mp4: "video/mp4",
+          webm: "video/webm",
+          mov: "video/quicktime",
+          avi: "video/x-msvideo",
+          mpeg: "video/mpeg",
+          mpg: "video/mpeg",
+        } as Record<string, string>
+      )[extension]
     : undefined;
 }
 
@@ -214,9 +216,9 @@ async function rejectSymlinkPath(root: string, target: string) {
 function isMissing(error: unknown): error is NodeJS.ErrnoException {
   return Boolean(
     error &&
-    typeof error === "object" &&
-    "code" in error &&
-    error.code === "ENOENT",
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT",
   );
 }
 

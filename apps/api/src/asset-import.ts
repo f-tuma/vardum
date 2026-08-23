@@ -60,9 +60,7 @@ export function importedMimeType(
   objectKey: string,
   contentType: string | undefined,
 ) {
-  const declared = supportedImageMimeTypes.find(
-    (type) => type === contentType,
-  );
+  const declared = supportedImageMimeTypes.find((type) => type === contentType);
   if (declared) return declared;
   const video = (supportedVideoMimeTypes as readonly string[]).find(
     (type) => type === contentType,

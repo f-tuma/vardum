@@ -73,7 +73,9 @@ export async function processAsset(input: unknown) {
   const bytes = Buffer.from(await object.Body.transformToByteArray());
 
   // Video: no sharp processing, just checksum + mark ready.
-  if ((supportedVideoMimeTypes as readonly string[]).includes(pending.mimeType)) {
+  if (
+    (supportedVideoMimeTypes as readonly string[]).includes(pending.mimeType)
+  ) {
     const checksum = createHash("sha256").update(bytes).digest("hex");
     await markReady(payload, checksum, pending.mimeType, null, null);
     return;
