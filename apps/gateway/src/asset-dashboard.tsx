@@ -953,11 +953,7 @@ function AssetDetailPage({
             <span className="preview-label">Live preview</span>
             {previewUrl ? (
               isVideoMimeType(asset.mimeType) ? (
-                <video
-                  src={previewUrl}
-                  controls
-                  style={{ maxWidth: "100%", maxHeight: "100%" }}
-                />
+                <video src={previewUrl} controls />
               ) : (
                 <img src={previewUrl} alt={`Preview of ${asset.displayName}`} />
               )
@@ -996,7 +992,7 @@ function AssetDetailPage({
           )}
         </section>
         <section className="detail-settings">
-          {asset.currentVersionId && (
+          {asset.currentVersionId && !isVideoMimeType(asset.mimeType) && (
             <TransformationForm
               key={asset.currentVersionId}
               workspaceId={workspaceId}
