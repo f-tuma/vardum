@@ -628,14 +628,24 @@ function validateUploadUrl(value: string) {
     throw new Error("Storage returned an invalid upload URL");
   }
 
+  // In production, the S3 presigned URL points to the bucket endpoint, which
+  // is a different origin from the app. Allow any HTTPS URL in production.
+  if (!import.meta.env.DEV) {
+    if (url.protocol !== "https:" && url.protocol !== "http:")
+      throw new Error("Storage upload URL must be HTTP(S)");
+    return url;
+  }
+
+  // In dev, restrict to localhost or configured origins so a crafted URL
+  // can't exfiltrate data to an attacker's server.
   const configured = String(import.meta.env.VITE_UPLOAD_ORIGINS ?? "")
     .split(",")
     .filter(Boolean);
   const allowedOrigins = new Set([window.location.origin, ...configured]);
-  if (import.meta.env.DEV) allowedOrigins.add("http://localhost:9000");
+  allowedOrigins.add("http://localhost:9000");
   if (!allowedOrigins.has(url.origin))
     throw new Error("Storage upload origin is not allowed");
-  if (import.meta.env.DEV && url.origin === "http://localhost:9000") {
+  if (url.origin === "http://localhost:9000") {
     return new URL(
       `/storage${url.pathname}${url.search}`,
       window.location.origin,
