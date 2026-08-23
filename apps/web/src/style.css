@@ -425,6 +425,14 @@ button:hover,
   font: 0.62rem var(--mono);
   text-decoration: none;
 }
+.auth-url {
+  color: var(--muted);
+  font: 0.6rem var(--mono);
+  text-align: center;
+}
+.auth-url code {
+  color: var(--violet);
+}
 .invitation-accept-button {
   margin: 2rem 0 1rem;
 }

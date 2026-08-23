@@ -136,9 +136,8 @@ export function CliLogin({
                   <option value="read">Pull only</option>
                 </select>
               </label>
-              <div className="settings-url">
-                <span>SENDS THE KEY TO</span>
-                <code>{target.origin}</code>
+              <div className="auth-url">
+                <code>{target.origin}</code> will receive the key
               </div>
               {error && (
                 <p className="error-strip" role="alert">
