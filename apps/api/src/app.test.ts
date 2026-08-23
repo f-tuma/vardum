@@ -48,7 +48,7 @@ test("S3 credentials must be provided together", () => {
 });
 
 test("legacy asset URLs redirect to the short delivery path", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -60,7 +60,7 @@ test("legacy asset URLs redirect to the short delivery path", async (context) =>
 });
 
 test("GET /health reports liveness", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({ method: "GET", url: "/health" });
@@ -69,7 +69,7 @@ test("GET /health reports liveness", async (context) => {
 });
 
 test("asset list enforces its bounded limit", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -80,7 +80,7 @@ test("asset list enforces its bounded limit", async (context) => {
 });
 
 test("folder creation normalizes human names before authorization", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -92,7 +92,7 @@ test("folder creation normalizes human names before authorization", async (conte
 });
 
 test("asset folders reject unsafe prefixes", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -103,7 +103,7 @@ test("asset folders reject unsafe prefixes", async (context) => {
 });
 
 test("ingest accepts only supported image types", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -119,7 +119,7 @@ test("ingest accepts only supported image types", async (context) => {
 });
 
 test("workspace settings reject invalid roles and blank credentials", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const role = await app.inject({
@@ -143,7 +143,7 @@ test("workspace settings reject invalid roles and blank credentials", async (con
 });
 
 test("organization deletion is not exposed", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -155,7 +155,7 @@ test("organization deletion is not exposed", async (context) => {
 });
 
 test("organization workspace creation is authenticated and validates slugs", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const directory = await app.inject({
@@ -172,7 +172,7 @@ test("organization workspace creation is authenticated and validates slugs", asy
 });
 
 test("workspace identity confirmations cannot be blank", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -190,7 +190,7 @@ test("workspace identity confirmations cannot be blank", async (context) => {
 });
 
 test("asset keys cannot escape their virtual path", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const response = await app.inject({
@@ -202,7 +202,7 @@ test("asset keys cannot escape their virtual path", async (context) => {
 });
 
 test("Vard routes validate manifests before authorization", async (context) => {
-  const app = buildApp();
+  const app = await buildApp();
   context.after(() => app.close());
 
   const invalid = await app.inject({
@@ -223,4 +223,30 @@ test("Vard routes validate manifests before authorization", async (context) => {
   });
   assert.equal(invalid.statusCode, 400);
   assert.equal(manifest.statusCode, 401);
+});
+
+test("the OpenAPI document is generated from the route schemas", async () => {
+  const app = await buildApp();
+  await app.ready();
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/openapi.json",
+  });
+  assert.equal(response.statusCode, 200);
+
+  const document = response.json();
+  assert.equal(document.openapi.startsWith("3."), true);
+  const versions =
+    document.paths["/api/workspaces/{workspaceId}/assets/{assetId}/versions"];
+  assert.ok(versions?.get, "the version history endpoint must be described");
+  assert.ok(
+    versions.get.parameters?.some(
+      (parameter: { name: string }) => parameter.name === "workspaceId",
+    ),
+    "path parameters must come from the Zod schema",
+  );
+  assert.equal(document.paths["/api/openapi.json"], undefined);
+
+  await app.close();
 });

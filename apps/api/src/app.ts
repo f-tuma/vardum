@@ -1,7 +1,9 @@
 import cors from "@fastify/cors";
+import swagger from "@fastify/swagger";
 import { sql } from "drizzle-orm";
 import Fastify from "fastify";
 import {
+  jsonSchemaTransform,
   serializerCompiler,
   validatorCompiler,
   type ZodTypeProvider,
@@ -19,20 +21,44 @@ import { registerTransformationRoutes } from "./transformation-routes.js";
 import { registerVardRoutes } from "./vard-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
 
-export function buildApp() {
+// Async because @fastify/swagger only sees routes registered after its plugin
+// has loaded, and every route below is added in this same call.
+export async function buildApp() {
   const app = Fastify({
     logger: process.env.NODE_ENV !== "test",
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  app.register(cors, {
+  await app.register(cors, {
     origin: [
       config.WEB_URL,
       ...(config.NODE_ENV === "development" ? ["https://vite.f-tuma.dev"] : []),
     ],
     credentials: true,
   });
+  // The route schemas are already Zod; this turns them into the API reference
+  // instead of maintaining a second description of the same thing by hand.
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: "Vardum API",
+        description:
+          "Workspace, asset, Vard and delivery endpoints. Session cookie, or x-api-key for a workspace-scoped key.",
+        version: "0.1.0",
+      },
+      components: {
+        securitySchemes: {
+          apiKey: { type: "apiKey", name: "x-api-key", in: "header" },
+        },
+      },
+    },
+    transform: jsonSchemaTransform,
+  });
+  app.get("/api/openapi.json", { schema: { hide: true } }, async () =>
+    app.swagger(),
+  );
+
   registerAuthRoute(app);
   registerOrganizationRoutes(app);
   registerWorkspaceRoutes(app);
