@@ -36,13 +36,17 @@ export async function verifyDomainRecords(
   resolver: Resolver = dns,
 ) {
   const challenge = `${challengePrefix}${token}`;
-  const txt = await resolver
-    .resolveTxt(`_vardum-challenge.${domain}`)
-    .then((records) => records.some((parts) => parts.join("") === challenge))
-    .catch(() => false);
 
   // Docker's internal DNS proxy (127.0.0.11) sometimes fails to forward CNAME
-  // queries, so fall back to a public resolver if the system one fails.
+  // and TXT queries, so fall back to a public resolver if the system one fails.
+  const txt =
+    (await resolver
+      .resolveTxt(`_vardum-challenge.${domain}`)
+      .then((records) =>
+        records.some((parts) => parts.join("") === challenge),
+      )
+      .catch(() => false)) || (await resolveTxtWithFallback(domain, challenge));
+
   const cname =
     (await resolver
       .resolveCname(domain)
@@ -71,7 +75,28 @@ async function resolveCnameWithFallback(
         )
       )
         return true;
-    } catch {}
+    } catch {
+      // Try the next public DNS server on failure.
+    }
+  }
+  return false;
+}
+
+async function resolveTxtWithFallback(
+  domain: string,
+  challenge: string,
+): Promise<boolean> {
+  for (const server of ["1.1.1.1", "8.8.8.8"]) {
+    try {
+      const fallback = new dns.Resolver();
+      fallback.setServers([server]);
+      const records = await fallback.resolveTxt(
+        `_vardum-challenge.${domain}`,
+      );
+      if (records.some((parts) => parts.join("") === challenge)) return true;
+    } catch {
+      // Try the next public DNS server on failure.
+    }
   }
   return false;
 }
