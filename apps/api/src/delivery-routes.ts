@@ -2,6 +2,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { videoMimeSet } from "./asset-processor.js";
 import { assetKey } from "./asset-routes.js";
 import {
   asset,
@@ -189,6 +190,11 @@ async function deliverVersion(
       ),
   );
   if (!version) return reply.code(404).send({ error: "Asset not found" });
+  if (transformation && videoMimeSet.has(version.mimeType)) {
+    return reply
+      .code(415)
+      .send({ error: "Video assets cannot be transformed" });
+  }
 
   try {
     const range = request.headers.range;
@@ -242,8 +248,10 @@ async function deliverVersion(
         ),
       )}`,
       "content-length": bytes,
+      // media-src: a video opened directly becomes a media document, and the
+      // browser loads it through a <video> element that default-src blocks.
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        "default-src 'none'; media-src *; style-src 'unsafe-inline'; sandbox",
       "cross-origin-resource-policy": "cross-origin",
       "x-content-type-options": "nosniff",
     });
