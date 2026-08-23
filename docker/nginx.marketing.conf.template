@@ -68,11 +68,26 @@ server {
 
   # Everything left over — the apex and whatever the marketing site puts beside
   # it. MARKETING_UPSTREAM is the marketing deployment's dokploy-network alias
-  # as host:port, e.g. vardum-marketing:80.
+  # as host:port, e.g. vardum-marketing:80. Left at its default it points at the
+  # loopback server below, so an install with no marketing site yet opens the
+  # app on the apex instead of failing to start.
   location / {
     proxy_pass http://${MARKETING_UPSTREAM};
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+
+# The stand-in for a marketing site: the client itself, on a loopback port so
+# the `/` handler above can reach it without recursing into its own server.
+server {
+  listen 127.0.0.1:8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location / {
+    try_files $uri $uri/ /index.html;
   }
 }

@@ -97,15 +97,16 @@ already terminates TLS:
 | `compose.dokploy.yml`     | Production. Apex serves a separate marketing deployment; the app lives on `/app` of the same origin. |
 | `compose.dokploy.dev.yml` | Branch deployment. No marketing site, so the dev domain opens the app directly.                      |
 
-Copy `.env.dokploy.example` into the Dokploy environment editor and expose two
-Domains: the app hostname on service `web` port 80, and the storage hostname on
-service `minio` port 9000. The storage Domain must match `S3_PUBLIC_ENDPOINT`,
-because browsers upload to it directly with a presigned POST.
+Copy `.env.dokploy.example` into the Dokploy environment editor and expose one
+Domain: the app hostname on service `web`, container port 80. Objects live in
+the bucket named by those variables, so there is no storage service to publish
+unless you set `COMPOSE_PROFILES=minio` to run one in the stack.
 
 In production the marketing site is its own Dokploy application, joined to
 `dokploy-network` and given no Domain of its own. Point `MARKETING_UPSTREAM` at
 its service alias; `docker/nginx.marketing.conf.template` proxies `/` there and
-keeps `/api/*`, `/w/*` and the client's own routes on this stack. That template
+keeps `/api/*`, `/w/*` and the client's own routes on this stack. Leave it unset
+until that application exists and the apex serves the app instead. That template
 lists the client routes explicitly — a route added to `apps/web/src/main.tsx`
 and not to the template quietly serves the marketing 404.
 
