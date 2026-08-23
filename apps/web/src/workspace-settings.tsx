@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 import {
   configureWorkspaceDomain,
   createWorkspaceApiKey,
@@ -158,9 +158,13 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
+  const autoVerifyingRef = useRef(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const domain = useQuery({
     queryKey: ["workspace-domain", workspaceId],
     queryFn: () => getWorkspaceDomain(workspaceId),
+    refetchInterval: queryState =>
+      queryState.state.data?.status === "pending" ? 12_000 : false,
   });
 
   async function refresh() {
@@ -168,6 +172,53 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
       queryKey: ["workspace-domain", workspaceId],
     });
   }
+
+  // Auto-verify every 12s while domain is pending (DNS propagation)
+  const autoVerify = useCallback(async () => {
+    if (domain.data?.status !== "pending" || autoVerifyingRef.current) return;
+    autoVerifyingRef.current = true;
+    try {
+      const result = await verifyWorkspaceDomain(workspaceId);
+      if (result.status === "verified") {
+        setMessage("Domain verified");
+      } else {
+        const missing = [
+          !result.checks?.txt && "TXT",
+          !result.checks?.cname && "CNAME",
+        ].filter(Boolean);
+        if (missing.length === 2) {
+          setMessage("Waiting for DNS records to propagate…");
+        } else {
+          setMessage(
+            `Waiting for ${missing.join(" and ")} record${missing.length > 1 ? "s" : ""}`,
+          );
+        }
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ["workspace-domain", workspaceId],
+      });
+    } catch {
+      // DNS timeouts happen, retry next interval
+    } finally {
+      autoVerifyingRef.current = false;
+    }
+  }, [domain.data?.status, workspaceId, queryClient, setMessage]);
+
+  useEffect(() => {
+    if (domain.data?.status !== "pending") {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      return;
+    }
+    if (!intervalRef.current) {
+      intervalRef.current = setInterval(autoVerify, 12_000);
+      autoVerify(); // also try immediately
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    };
+  }, [domain.data?.status, autoVerify]);
 
   async function configure(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -233,7 +284,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
     <section className="settings-panel" id="custom-domain">
       <header>
         <h2>┌─ CUSTOM DOMAIN</h2>
-        <span>{record?.status.toUpperCase() ?? "LOADING"}</span>
+        <span>{record?.status.toUpperCase() ?? "LOADING"}{record?.status === "pending" ? " · POLLING" : ""}</span>
       </header>
       {domain.isPending ? (
         <p className="settings-state">Loading custom domain…</p>
