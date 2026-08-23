@@ -1,8 +1,9 @@
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { realpath } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdir, realpath } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { credentialsPath } from "./credentials.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let pkgVersion = "0.0.0";
@@ -15,30 +16,61 @@ try {
 }
 export const VERSION = pkgVersion;
 
-// Session cache: avoid fetching the registry on every command.
-let latestVersion: string | null = null;
-let lastCheck = 0;
-const cacheMs = 86_400_000; // 24 h
+// The check result is cached on disk for 24 h: an in-process cache would mean
+// one registry request per command.
+const cacheMs = 86_400_000;
+const cachePath = join(dirname(credentialsPath()), "version-check.json");
+
+type VersionCache = { latest: string; at: number };
+
+function readCache(): VersionCache | null {
+  try {
+    const cache = JSON.parse(readFileSync(cachePath, "utf8")) as VersionCache;
+    return typeof cache.latest === "string" && typeof cache.at === "number"
+      ? cache
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Returns the latest published version of @vardum/cli, or null on failure.
- * Cached for 24 hours so the CLI never blocks on the network for routine work.
+ * Reads through the on-disk cache so routine commands never hit the network.
  */
 export async function fetchLatestVersion(): Promise<string | null> {
-  const now = Date.now();
-  if (latestVersion && now - lastCheck < cacheMs) return latestVersion;
+  const cached = readCache();
+  if (cached && Date.now() - cached.at < cacheMs) return cached.latest;
   try {
     const res = await fetch("https://registry.npmjs.org/@vardum/cli/latest", {
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(2_000),
     });
     if (!res.ok) return null;
     const { version } = (await res.json()) as { version: string };
-    latestVersion = version;
-    lastCheck = now;
+    try {
+      mkdirSync(dirname(cachePath), { recursive: true });
+      writeFileSync(
+        cachePath,
+        JSON.stringify({ latest: version, at: Date.now() }),
+      );
+    } catch {
+      // An unwritable config dir just means we check again next time.
+    }
     return version;
   } catch {
     return null;
   }
+}
+
+/** True when `candidate` is a higher semver than `current`. */
+export function isNewer(candidate: string, current: string) {
+  const parse = (value: string) =>
+    value.split(/[.-]/).map((part) => Number(part) || 0);
+  const [left, right] = [parse(candidate), parse(current)];
+  for (let index = 0; index < 3; index++)
+    if ((left[index] ?? 0) !== (right[index] ?? 0))
+      return (left[index] ?? 0) > (right[index] ?? 0);
+  return false;
 }
 
 /**
@@ -48,7 +80,7 @@ export async function fetchLatestVersion(): Promise<string | null> {
  */
 export async function maybeWarnOutdated() {
   const latest = await fetchLatestVersion();
-  if (!latest || latest === VERSION) return;
+  if (!latest || !isNewer(latest, VERSION)) return;
   const msg = `vardum: version ${latest} is available (you have ${VERSION}) — run "vardum update" to upgrade`;
   console.error(msg);
 }
@@ -70,27 +102,25 @@ export async function detectInstall(): Promise<InstallType> {
   const real = await realpath(ownPath).catch(() => ownPath);
   const dir = dirname(real);
 
-  // Linked via `npm link` / `pnpm link` — the real path points into the
-  // source tree, not a node_modules.
-  if (real !== ownPath) return { kind: "link" };
-
-  // Global installs live in a well-known prefix.
-  const globalPrefixes = [
-    "/usr/local/lib/node_modules",
-    "/usr/lib/node_modules",
-    "/usr/local/share/.config/yarn/global",
-  ];
+  // Global installs live in a well-known prefix. Each prefix names its manager,
+  // so there is nothing to guess: asking `pnpm --version` only tells us pnpm is
+  // installed, not that it installed this copy.
   const home = process.env.HOME ?? "";
-  if (home) {
-    globalPrefixes.push(`${home}/.local/share/pnpm/global`);
-    globalPrefixes.push(`${home}/.npm-packages/lib/node_modules`);
-    globalPrefixes.push(`${home}/.node_modules`);
-  }
-  const isGlobal = globalPrefixes.some((prefix) => dir.startsWith(prefix));
-  if (isGlobal) {
-    const manager = detectGlobalManager();
-    return { kind: "global", manager };
-  }
+  const globalPrefixes: Array<[string, "npm" | "pnpm" | "yarn"]> = [
+    ["/usr/local/lib/node_modules", "npm"],
+    ["/usr/lib/node_modules", "npm"],
+    ["/usr/local/share/.config/yarn/global", "yarn"],
+    ...(home
+      ? ([
+          [`${home}/.local/share/pnpm/global`, "pnpm"],
+          [`${home}/.config/yarn/global`, "yarn"],
+          [`${home}/.npm-packages/lib/node_modules`, "npm"],
+          [`${home}/.node_modules`, "npm"],
+        ] as Array<[string, "npm" | "pnpm" | "yarn"]>)
+      : []),
+  ];
+  const global = globalPrefixes.find(([prefix]) => dir.startsWith(prefix));
+  if (global) return { kind: "global", manager: global[1] };
 
   // Local install: inside a project's node_modules.
   if (dir.includes(`${sep}node_modules${sep}`)) {
@@ -98,24 +128,11 @@ export async function detectInstall(): Promise<InstallType> {
     return { kind: "local", manager };
   }
 
-  return { kind: "unknown" };
-}
+  // Linked via `npm link` / `pnpm link` — the real path points into a source
+  // tree rather than any install location.
+  if (real !== ownPath) return { kind: "link" };
 
-function detectGlobalManager(): "npm" | "pnpm" | "yarn" {
-  try {
-    execSync("pnpm --version", { stdio: "ignore" });
-    const pnpmDir = `${process.env.HOME ?? ""}/.local/share/pnpm/global`;
-    if (fileURLToPath(import.meta.url).startsWith(pnpmDir)) return "pnpm";
-  } catch {
-    /* not pnpm */
-  }
-  try {
-    execSync("yarn --version", { stdio: "ignore" });
-    return "yarn";
-  } catch {
-    /* not yarn */
-  }
-  return "npm";
+  return { kind: "unknown" };
 }
 
 async function detectLocalManager(): Promise<"npm" | "pnpm" | "yarn"> {
@@ -123,9 +140,7 @@ async function detectLocalManager(): Promise<"npm" | "pnpm" | "yarn"> {
   let cwd = process.cwd();
   while (true) {
     try {
-      const entries = await import("node:fs/promises").then((m) =>
-        m.readdir(cwd),
-      );
+      const entries = await readdir(cwd);
       if (entries.includes("pnpm-lock.yaml")) return "pnpm";
       if (entries.includes("yarn.lock")) return "yarn";
       if (entries.includes("package-lock.json")) return "npm";
