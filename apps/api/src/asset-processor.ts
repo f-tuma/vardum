@@ -1,35 +1,11 @@
 import { createHash } from "node:crypto";
+import { videoMimeSet } from "@vardum/shared";
 import { and, eq } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 import { asset, assetVersion, auditEvent } from "./db/app-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import { getObject } from "./storage.js";
-
-export const supportedImageMimeTypes = [
-  "image/avif",
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/svg+xml",
-  "image/tiff",
-  "image/webp",
-] as const;
-
-export const supportedVideoMimeTypes = [
-  "video/mp4",
-  "video/webm",
-  "video/quicktime",
-  "video/x-msvideo",
-  "video/mpeg",
-] as const;
-
-export const supportedMimeTypes = [
-  ...supportedImageMimeTypes,
-  ...supportedVideoMimeTypes,
-] as const;
-
-export const videoMimeSet: Set<string> = new Set(supportedVideoMimeTypes);
 
 const payloadSchema = z.object({
   workspaceId: z.string().min(1),

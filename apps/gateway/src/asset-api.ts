@@ -1,3 +1,21 @@
+import { mimeForFilename } from "@vardum/shared";
+import type {
+  SyncAsset,
+  Transformation as TransformationInput,
+  VardItem,
+  VardManifest,
+} from "@vardum/shared";
+
+export type { SyncAsset, TransformationInput, VardItem, VardManifest };
+
+export type VardSummary = {
+  id: string;
+  name: string;
+  isPublic: boolean;
+  updatedAt: string;
+  itemCount: number;
+};
+
 export type OrganizationDirectory = {
   canCreateOrganization: boolean;
   organizations: Array<{
@@ -8,50 +26,6 @@ export type OrganizationDirectory = {
     canCreateWorkspace: boolean;
     workspaces: Array<{ id: string; name: string; slug: string }>;
   }>;
-};
-
-export type VardSummary = {
-  id: string;
-  name: string;
-  isPublic: boolean;
-  updatedAt: string;
-  itemCount: number;
-};
-export type VardItem = {
-  id: string;
-  assetId: string;
-  key: string;
-  outputPath: string;
-  writable: boolean;
-  pinned: boolean;
-  transformation: TransformationInput | null;
-  versionId: string | null;
-  sourceChecksum: string | null;
-  mimeType: string | null;
-  size: number | null;
-  fingerprint: string | null;
-  downloadUrl: string | null;
-};
-export type VardManifest = {
-  schema: 1;
-  id: string;
-  workspaceId: string;
-  name: string;
-  isPublic: boolean;
-  updatedAt: string;
-  items: VardItem[];
-};
-export type SyncAsset = {
-  id: string;
-  key: string;
-  displayName: string;
-  versionId: string;
-  checksum: string | null;
-  mimeType: string;
-  size: number;
-  width: number | null;
-  height: number | null;
-  updatedAt: string;
 };
 
 export type AssetFolder = { name: string; prefix: string };
@@ -109,13 +83,6 @@ type CreatedAsset = Pick<AssetSummary, "id" | "key" | "displayName">;
 type UploadVersion = {
   id: string;
   upload: { method: "POST"; url: string; fields: Record<string, string> };
-};
-export type TransformationInput = {
-  w?: number;
-  h?: number;
-  fit?: "cover" | "contain" | "fill" | "inside" | "outside";
-  format?: "avif" | "jpeg" | "png" | "webp";
-  q?: number;
 };
 export type WorkspaceDomain = {
   domain: string | null;
@@ -532,34 +499,11 @@ export function createAsset(
   });
 }
 
-const extensionMime: Record<string, string> = {
-  avif: "image/avif",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  png: "image/png",
-  svg: "image/svg+xml",
-  tiff: "image/tiff",
-  tif: "image/tiff",
-  webp: "image/webp",
-  mp4: "video/mp4",
-  webm: "video/webm",
-  mov: "video/quicktime",
-  avi: "video/x-msvideo",
-  mpeg: "video/mpeg",
-  mpg: "video/mpeg",
-};
-
-function mimeFromExtension(filename: string): string | null {
-  const ext = filename.split(".").at(-1)?.toLowerCase();
-  return ext ? (extensionMime[ext] ?? null) : null;
-}
-
 export async function uploadVersion(
   workspaceId: string,
   assetId: string,
   file: File,
-  onProgress?: (status: string) => void,
+  onProgress?: (status: string, fraction?: number) => void,
 ) {
   onProgress?.("Requesting upload…");
   const version = await request<UploadVersion>(
@@ -570,7 +514,7 @@ export async function uploadVersion(
       body: JSON.stringify({
         filename: file.name,
         mimeType:
-          mimeFromExtension(file.name) ||
+          mimeForFilename(file.name) ||
           file.type ||
           "application/octet-stream",
         size: file.size,
@@ -588,14 +532,26 @@ export async function uploadVersion(
     version.upload.fields["Content-Type"] ??
     (file.type || "application/octet-stream");
   form.append("file", new Blob([file], { type: mimeType }), file.name);
-  onProgress?.("Uploading…");
-  const uploadRequest = new Request(validateUploadUrl(version.upload.url), {
-    method: version.upload.method,
-    body: form,
+  onProgress?.("Uploading…", 0);
+  // XMLHttpRequest, not fetch: it is the only way to observe upload progress,
+  // and a large video upload without a percentage looks stuck.
+  await new Promise<void>((resolve, reject) => {
+    const requestUrl = validateUploadUrl(version.upload.url);
+    const upload = new XMLHttpRequest();
+    upload.open(version.upload.method, requestUrl.href);
+    upload.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const fraction = event.loaded / event.total;
+      onProgress?.(`Uploading… ${Math.round(fraction * 100)}%`, fraction);
+    };
+    upload.onload = () =>
+      upload.status >= 200 && upload.status < 300
+        ? resolve()
+        : reject(new Error(`Storage upload failed (${upload.status})`));
+    upload.onerror = () => reject(new Error("Storage upload failed"));
+    upload.onabort = () => reject(new Error("Storage upload cancelled"));
+    upload.send(form);
   });
-  const uploaded = await fetch(uploadRequest);
-  if (!uploaded.ok)
-    throw new Error(`Storage upload failed (${uploaded.status})`);
 
   onProgress?.("Processing…");
   await request(

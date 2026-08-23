@@ -1,3 +1,4 @@
+import { isVideoMimeType, uploadAccept } from "@vardum/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
@@ -41,15 +42,16 @@ export function AssetDashboard({
       id: string;
       filename: string;
       status: string;
+      progress?: number;
     }>
   >([]);
 
   function addUpload(id: string, filename: string) {
     setUploadQueue((prev) => [...prev, { id, filename, status: "Starting…" }]);
   }
-  function updateUpload(id: string, status: string) {
+  function updateUpload(id: string, status: string, progress?: number) {
     setUploadQueue((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, status } : u)),
+      prev.map((u) => (u.id === id ? { ...u, status, progress } : u)),
     );
   }
   function removeUpload(id: string) {
@@ -184,7 +186,10 @@ export function AssetDashboard({
         <div className="upload-queue">
           {uploadQueue.map((entry) => (
             <span key={entry.id} className="upload-queue-item">
-              {entry.filename}
+              <span className="upload-queue-name">{entry.filename}</span>
+              {entry.progress === undefined ? null : (
+                <progress value={entry.progress} max={1} />
+              )}
               <small>{entry.status}</small>
             </span>
           ))}
@@ -512,7 +517,7 @@ function NewAssetForm({
   workspaceId: string;
   prefix: string;
   onAddUpload: (id: string, filename: string) => void;
-  onUpdateUpload: (id: string, status: string) => void;
+  onUpdateUpload: (id: string, status: string, progress?: number) => void;
   onRemoveUpload: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
@@ -533,9 +538,9 @@ function NewAssetForm({
     try {
       if (!(file instanceof File) || !file.size)
         throw new Error("Choose a file");
-      const onProgress = (s: string) => {
+      const onProgress = (s: string, progress?: number) => {
         setStatus(s);
-        onUpdateUpload(uploadId, s);
+        onUpdateUpload(uploadId, s, progress);
       };
       onAddUpload(uploadId, file.name);
       // Close the drawer immediately — progress moves to the global queue.
@@ -617,7 +622,7 @@ function NewAssetForm({
               <input
                 name="file"
                 type="file"
-                accept=".avif,.gif,.jpeg,.jpg,.png,.svg,.tiff,.tif,.webp,.mp4,.webm,.mov,.avi,.mpeg,.mpg"
+                accept={uploadAccept}
                 onChange={inferFields}
                 required
               />
@@ -1055,11 +1060,6 @@ function formatMimeType(mime: string) {
   return mime.split("/")[1]?.toUpperCase() ?? mime.toUpperCase();
 }
 
-function isVideoMimeType(mime: string | null): boolean {
-  if (!mime) return false;
-  return mime.startsWith("video/");
-}
-
 function formatForMimeType(mimeType: string | null): DisplayFormat {
   if (mimeType === "image/avif") return "avif";
   if (mimeType === "image/gif") return "gif";
@@ -1266,7 +1266,7 @@ function VersionForm({
     try {
       if (!(file instanceof File) || !file.size)
         throw new Error("Choose a file");
-      await uploadVersion(workspaceId, assetId, file);
+      await uploadVersion(workspaceId, assetId, file, setStatus);
       formElement.reset();
       setStatus("Processing…");
       await queryClient.invalidateQueries({
@@ -1286,11 +1286,11 @@ function VersionForm({
           <input
             name="file"
             type="file"
-            accept="image/avif,image/gif,image/jpeg,image/png,image/svg+xml,image/tiff,image/webp"
+            accept={uploadAccept}
             required
           />
         </label>
-        <button disabled={status === "Uploading…"}>Upload</button>
+        <button disabled={status.startsWith("Uploading")}>Upload</button>
         <span className="muted" role="status">
           {status}
         </span>

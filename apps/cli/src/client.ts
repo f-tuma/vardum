@@ -1,44 +1,14 @@
+import type { SyncAsset, VardItem, VardManifest } from "@vardum/shared";
+
+export type Manifest = VardManifest;
+export type ManifestItem = VardItem;
+export type { SyncAsset };
+
 export type VardConfig = {
   schema: 1;
   server: string;
   workspace: string;
   vard: string;
-};
-
-export type ManifestItem = {
-  id: string;
-  assetId: string;
-  key: string;
-  outputPath: string;
-  writable: boolean;
-  pinned: boolean;
-  transformation: Record<string, unknown> | null;
-  versionId: string | null;
-  sourceChecksum: string | null;
-  mimeType: string | null;
-  size: number | null;
-  fingerprint: string | null;
-  downloadUrl: string | null;
-};
-
-export type Manifest = {
-  schema: 1;
-  id: string;
-  workspaceId: string;
-  name: string;
-  isPublic: boolean;
-  updatedAt: string;
-  items: ManifestItem[];
-};
-
-export type SyncAsset = {
-  id: string;
-  key: string;
-  displayName: string;
-  versionId: string;
-  checksum: string | null;
-  mimeType: string;
-  size: number;
 };
 
 type Upload = {

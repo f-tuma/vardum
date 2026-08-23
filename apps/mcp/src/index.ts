@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { supportedMimeTypes } from "@vardum/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -526,9 +527,7 @@ server.tool(
       .describe("Filename with extension (e.g. 'logo.avif')"),
     mimeType: z
       .string()
-      .describe(
-        "Image or video MIME type (image/avif, image/jpeg, image/png, image/webp, image/svg+xml, video/mp4, video/webm, video/quicktime, video/x-msvideo, video/mpeg)",
-      ),
+      .describe(`Image or video MIME type (${supportedMimeTypes.join(", ")})`),
     base64: z.string().describe("Base64-encoded image binary"),
   },
   async ({ workspaceId, assetId, filename, mimeType, base64 }) => {

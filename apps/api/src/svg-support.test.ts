@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import sharp from "sharp";
-import { detectMimeType, supportedImageMimeTypes } from "./asset-processor.js";
+import { supportedImageMimeTypes } from "@vardum/shared";
+import { detectMimeType } from "./asset-processor.js";
 
 const svg = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60"><rect width="120" height="60"/></svg>',

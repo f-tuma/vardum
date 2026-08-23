@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
+import { mimeForFilename } from "@vardum/shared";
 import { stdin, stdout } from "node:process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
@@ -22,7 +23,6 @@ import {
   findConfig,
   imageFiles,
   immutableAssetUrl,
-  mimeFor,
   pullDecision,
   pushDecision,
   readLock,
@@ -328,7 +328,7 @@ async function push(options: Options) {
     changed += 1;
     if (options.dryRun) continue;
     const bytes = await readFile(path);
-    const mimeType = mimeFor(path);
+    const mimeType = mimeForFilename(path);
     if (!mimeType)
       throw new Error(`Unsupported image type: ${item.outputPath}`);
     const previousVersion = item.versionId;

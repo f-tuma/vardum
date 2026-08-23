@@ -1,5 +1,5 @@
+import { mimeForFilename, supportedMimeTypes } from "@vardum/shared";
 import { z } from "zod";
-import { supportedMimeTypes } from "./asset-processor.js";
 
 // Vardum's own layout. Importing from inside it would re-import originals and
 // generated variants as if they were somebody's source files.
@@ -12,24 +12,6 @@ export const importSource = z
     (value) => !reservedPrefixes.some((prefix) => value.startsWith(prefix)),
     { message: "That prefix holds Vardum's own objects" },
   );
-
-const extensionMimeTypes: Record<string, string> = {
-  avif: "image/avif",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  png: "image/png",
-  svg: "image/svg+xml",
-  tif: "image/tiff",
-  tiff: "image/tiff",
-  webp: "image/webp",
-  mp4: "video/mp4",
-  webm: "video/webm",
-  mov: "video/quicktime",
-  avi: "video/x-msvideo",
-  mpeg: "video/mpeg",
-  mpg: "video/mpeg",
-};
 
 /**
  * The asset key an object lands on: its path below the source prefix, with each
@@ -58,9 +40,7 @@ export function importedMimeType(
   contentType: string | undefined,
 ) {
   const declared = supportedMimeTypes.find((type) => type === contentType);
-  if (declared) return declared;
-  const extension = objectKey.split(".").at(-1)?.toLowerCase() ?? "";
-  return extensionMimeTypes[extension] ?? null;
+  return declared ?? mimeForFilename(objectKey);
 }
 
 function slugSegment(segment: string) {

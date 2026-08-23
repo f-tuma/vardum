@@ -21,6 +21,7 @@
     "@better-auth/drizzle-adapter": "^1.7.1",
     "@fastify/cors": "^11.3.0",
     "@fastify/swagger": "^9.8.1",
+    "@vardum/shared": "workspace:*",
     "better-auth": "^1.7.1",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.1",

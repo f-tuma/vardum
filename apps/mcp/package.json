@@ -1,7 +1,7 @@
 {
   "name": "@vardum/mcp",
   "version": "0.1.0",
-  "description": "MCP server for Vardum — let AI agents manage assets, Vards, workspaces, and more.",
+  "description": "MCP server for Vardum \u2014 let AI agents manage assets, Vards, workspaces, and more.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.0",
+    "@vardum/shared": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {

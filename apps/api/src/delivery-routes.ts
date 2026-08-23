@@ -1,8 +1,8 @@
+import { videoMimeSet } from "@vardum/shared";
 import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { videoMimeSet } from "./asset-processor.js";
 import { assetKey } from "./asset-routes.js";
 import {
   asset,

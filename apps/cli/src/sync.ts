@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { mimeForFilename } from "@vardum/shared";
 import {
   lstat,
   mkdir,
@@ -134,7 +135,7 @@ export async function imageFiles(root: string) {
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) await walk(absolute);
       else if (entry.isFile()) {
-        const mimeType = mimeFor(entry.name);
+        const mimeType = mimeForFilename(entry.name);
         if (mimeType)
           files.push({
             absolute,
@@ -148,28 +149,6 @@ export async function imageFiles(root: string) {
   return files.sort((left, right) =>
     left.relative.localeCompare(right.relative),
   );
-}
-
-export function mimeFor(filename: string) {
-  const extension = filename.toLowerCase().match(/\.([^.]+)$/)?.[1];
-  return extension
-    ? (
-        {
-          avif: "image/avif",
-          jpeg: "image/jpeg",
-          jpg: "image/jpeg",
-          png: "image/png",
-          svg: "image/svg+xml",
-          webp: "image/webp",
-          mp4: "video/mp4",
-          webm: "video/webm",
-          mov: "video/quicktime",
-          avi: "video/x-msvideo",
-          mpeg: "video/mpeg",
-          mpg: "video/mpeg",
-        } as Record<string, string>
-      )[extension]
-    : undefined;
 }
 
 export function assetPrefix(prefix: string) {

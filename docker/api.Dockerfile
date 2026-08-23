@@ -5,9 +5,11 @@ WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/gateway/package.json apps/gateway/package.json
+COPY packages/shared/package.json packages/shared/package.json
 RUN pnpm install --frozen-lockfile
+COPY packages/shared packages/shared
 COPY apps/api apps/api
-RUN pnpm --filter @vardum/api build \
+RUN pnpm --filter "@vardum/api..." build \
   && pnpm --filter @vardum/api deploy --legacy --prod /output \
   && cp -R apps/api/dist apps/api/drizzle /output/
 

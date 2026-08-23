@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { supportedMimeTypes, videoMimeSet } from "@vardum/shared";
 import { and, asc, count, desc, eq, isNotNull, max, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
@@ -10,7 +11,7 @@ import {
   importSource,
   reservedPrefixes,
 } from "./asset-import.js";
-import { supportedMimeTypes, videoMimeSet } from "./asset-processor.js";
+
 import { authorizeAsset } from "./authorization.js";
 import {
   asset,
