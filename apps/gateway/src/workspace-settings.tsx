@@ -158,6 +158,22 @@ function GeneralSettings({
   );
 }
 
+/**
+ * Verification hinges on the TXT challenge: a domain proxied through Cloudflare
+ * hides its CNAME behind flattened A records, so a missing CNAME is only worth
+ * mentioning once ownership is proven.
+ */
+function verificationMessage(result: {
+  status: string;
+  checks?: { txt: boolean; cname: boolean };
+}) {
+  if (result.status === "verified")
+    return result.checks?.cname
+      ? "Domain verified"
+      : "Domain verified — CNAME not visible (normal behind Cloudflare)";
+  return "Waiting for the TXT record to propagate…";
+}
+
 function DomainSettings({ workspaceId }: { workspaceId: string }) {
   const queryClient = useQueryClient();
   const [pendingAction, setPendingAction] = useState("");
@@ -169,8 +185,6 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   const domain = useQuery({
     queryKey: ["workspace-domain", workspaceId],
     queryFn: () => getWorkspaceDomain(workspaceId),
-    refetchInterval: (queryState) =>
-      queryState.state.data?.status === "pending" ? 12_000 : false,
   });
 
   async function refresh() {
@@ -185,21 +199,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
     autoVerifyingRef.current = true;
     try {
       const result = await verifyWorkspaceDomain(workspaceId);
-      if (result.status === "verified") {
-        setMessage("Domain verified");
-      } else {
-        const missing = [
-          !result.checks?.txt && "TXT",
-          !result.checks?.cname && "CNAME",
-        ].filter(Boolean);
-        if (missing.length === 2) {
-          setMessage("Waiting for DNS records to propagate…");
-        } else {
-          setMessage(
-            `Waiting for ${missing.join(" and ")} record${missing.length > 1 ? "s" : ""}`,
-          );
-        }
-      }
+      setMessage(verificationMessage(result));
       await queryClient.invalidateQueries({
         queryKey: ["workspace-domain", workspaceId],
       });
@@ -251,17 +251,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
     setError("");
     try {
       const result = await verifyWorkspaceDomain(workspaceId);
-      if (result.status === "verified") {
-        setMessage("Domain verified");
-      } else {
-        const missing = [
-          !result.checks?.txt && "TXT",
-          !result.checks?.cname && "CNAME",
-        ].filter(Boolean);
-        setMessage(
-          `Waiting for ${missing.join(" and ")} record${missing.length > 1 ? "s" : ""}`,
-        );
-      }
+      setMessage(verificationMessage(result));
       await refresh();
     } catch (cause) {
       setError(

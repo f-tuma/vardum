@@ -36,62 +36,53 @@ export async function verifyDomainRecords(
   resolver: Resolver = dns,
 ) {
   const challenge = `${challengePrefix}${token}`;
-
-  // Docker's internal DNS proxy (127.0.0.11) sometimes fails to forward CNAME
-  // and TXT queries, so fall back to a public resolver if the system one fails.
-  const txt =
-    (await resolver
+  const txt = await lookup(resolver, (dnsResolver) =>
+    dnsResolver
       .resolveTxt(`_vardum-challenge.${domain}`)
-      .then((records) => records.some((parts) => parts.join("") === challenge))
-      .catch(() => false)) || (await resolveTxtWithFallback(domain, challenge));
-
-  const cname =
-    (await resolver
+      .then((records) => records.some((parts) => parts.join("") === challenge)),
+  );
+  const cname = await lookup(resolver, (dnsResolver) =>
+    dnsResolver
       .resolveCname(domain)
       .then((records) =>
         records.some(
           (record) => record.toLowerCase().replace(/\.$/, "") === target,
         ),
-      )
-      .catch(() => false)) || (await resolveCnameWithFallback(domain, target));
-
+      ),
+  );
   return { txt, cname };
 }
 
-async function resolveCnameWithFallback(
-  domain: string,
-  target: string,
-): Promise<boolean> {
-  for (const server of ["1.1.1.1", "8.8.8.8"]) {
-    try {
-      const fallback = new dns.Resolver();
-      fallback.setServers([server]);
-      const records = await fallback.resolveCname(domain);
-      if (
-        records.some(
-          (record) => record.toLowerCase().replace(/\.$/, "") === target,
-        )
-      )
-        return true;
-    } catch {
-      // Try the next public DNS server on failure.
-    }
-  }
-  return false;
+/**
+ * The TXT challenge is the ownership proof. The CNAME is advisory: a domain
+ * proxied through Cloudflare answers with flattened A records, so its CNAME is
+ * invisible to us even when traffic reaches Vardum correctly.
+ */
+export function domainIsVerified(checks: { txt: boolean; cname: boolean }) {
+  return checks.txt;
 }
 
-async function resolveTxtWithFallback(
-  domain: string,
-  challenge: string,
-): Promise<boolean> {
+/**
+ * Runs a DNS lookup against the system resolver, falling back to public
+ * resolvers when it errors — Docker's internal DNS proxy (127.0.0.11)
+ * sometimes fails to forward CNAME and TXT queries.
+ */
+async function lookup(
+  resolver: Resolver,
+  run: (resolver: Resolver) => Promise<boolean>,
+) {
+  try {
+    return await run(resolver);
+  } catch {
+    // Fall through to the public resolvers.
+  }
   for (const server of ["1.1.1.1", "8.8.8.8"]) {
+    const fallback = new dns.Resolver();
+    fallback.setServers([server]);
     try {
-      const fallback = new dns.Resolver();
-      fallback.setServers([server]);
-      const records = await fallback.resolveTxt(`_vardum-challenge.${domain}`);
-      if (records.some((parts) => parts.join("") === challenge)) return true;
+      return await run(fallback);
     } catch {
-      // Try the next public DNS server on failure.
+      // Try the next public DNS server.
     }
   }
   return false;
@@ -240,7 +231,7 @@ export function registerDomainRoutes(app: FastifyInstance) {
         pending.token,
         domainTarget,
       );
-      const verifiedAt = checks.txt && checks.cname ? new Date() : null;
+      const verifiedAt = domainIsVerified(checks) ? new Date() : null;
       const record = await inWorkspace(workspaceId, async (transaction) => {
         const [current] = await transaction
           .select({

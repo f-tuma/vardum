@@ -139,11 +139,16 @@ lockfiles, safe deletion and bulk folder push.
 
 Set `CUSTOM_DOMAIN_TARGET` to the public hostname that routes delivery traffic
 to Vardum. Workspace owners then configure a domain in Settings and add the
-TXT challenge plus CNAME shown there. Only verified domains are used for host
-routing; canonical `/w/{workspaceSlug}/{key}` URLs remain available.
+TXT challenge plus CNAME shown there. Verification hinges on the TXT record:
+a domain proxied through Cloudflare answers with flattened A records, so its
+CNAME is invisible to us even when traffic arrives correctly. Only verified
+domains are used for host routing; canonical `/w/{workspaceSlug}/{key}` URLs
+remain available.
 
 TLS and DNS are intentionally handled by Cloudflare or your reverse proxy. The
-proxy must preserve the original `Host` header.
+proxy must preserve the original `Host` header, and it needs a certificate for
+each custom domain — behind Cloudflare that means either proxy mode with
+Flexible SSL or an origin certificate the proxy serves for that hostname.
 
 ## Versions
 
