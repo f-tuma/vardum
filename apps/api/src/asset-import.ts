@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  supportedImageMimeTypes,
-  supportedVideoMimeTypes,
-} from "./asset-processor.js";
+import { supportedMimeTypes } from "./asset-processor.js";
 
 // Vardum's own layout. Importing from inside it would re-import originals and
 // generated variants as if they were somebody's source files.
@@ -60,12 +57,8 @@ export function importedMimeType(
   objectKey: string,
   contentType: string | undefined,
 ) {
-  const declared = supportedImageMimeTypes.find((type) => type === contentType);
+  const declared = supportedMimeTypes.find((type) => type === contentType);
   if (declared) return declared;
-  const video = (supportedVideoMimeTypes as readonly string[]).find(
-    (type) => type === contentType,
-  );
-  if (video) return video;
   const extension = objectKey.split(".").at(-1)?.toLowerCase() ?? "";
   return extensionMimeTypes[extension] ?? null;
 }

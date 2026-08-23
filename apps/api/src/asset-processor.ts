@@ -30,7 +30,6 @@ export const supportedMimeTypes = [
 ] as const;
 
 export const videoMimeSet: Set<string> = new Set(supportedVideoMimeTypes);
-export const imageMimeSet = new Set(supportedImageMimeTypes);
 
 const payloadSchema = z.object({
   workspaceId: z.string().min(1),
@@ -73,9 +72,7 @@ export async function processAsset(input: unknown) {
   const bytes = Buffer.from(await object.Body.transformToByteArray());
 
   // Video: no sharp processing, just checksum + mark ready.
-  if (
-    (supportedVideoMimeTypes as readonly string[]).includes(pending.mimeType)
-  ) {
+  if (videoMimeSet.has(pending.mimeType)) {
     const checksum = createHash("sha256").update(bytes).digest("hex");
     await markReady(payload, checksum, pending.mimeType, null, null);
     return;

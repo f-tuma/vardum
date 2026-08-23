@@ -169,6 +169,25 @@ function toAuditEvent({
   };
 }
 
+/**
+ * Videos have no derived thumbnail — sharp only handles images — so the card
+ * previews the original file instead.
+ */
+function thumbnailUrl(
+  workspace: { slug: string; customDomain: string | null } | undefined,
+  item: { key: string; mimeType: string | null; currentVersionId: string | null },
+) {
+  if (!workspace || !item.currentVersionId) return null;
+  return videoMimeSet.has(item.mimeType ?? "")
+    ? originalAssetUrl(workspace.slug, item.key, workspace.customDomain)
+    : transformedAssetUrl(
+        workspace.slug,
+        item.key,
+        thumbnailTransformation,
+        workspace.customDomain,
+      );
+}
+
 export function registerAssetRoutes(app: FastifyInstance) {
   const api = app.withTypeProvider<ZodTypeProvider>();
 
@@ -745,21 +764,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
               status: latestVersion?.status ?? null,
               error: latestVersion?.error ?? null,
               customDomain: workspace?.customDomain ?? null,
-              thumbnailUrl:
-                workspace && item.currentVersionId
-                  ? videoMimeSet.has(item.mimeType ?? "")
-                    ? originalAssetUrl(
-                        workspace.slug,
-                        item.key,
-                        workspace.customDomain,
-                      )
-                    : transformedAssetUrl(
-                        workspace.slug,
-                        item.key,
-                        thumbnailTransformation,
-                        workspace.customDomain,
-                      )
-                  : null,
+              thumbnailUrl: thumbnailUrl(workspace, item),
             };
           }),
         };
@@ -837,21 +842,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           status: latest?.status ?? null,
           error: latest?.error ?? null,
           customDomain: workspace?.customDomain ?? null,
-          thumbnailUrl:
-            workspace && item.currentVersionId
-              ? videoMimeSet.has(item.mimeType ?? "")
-                ? originalAssetUrl(
-                    workspace.slug,
-                    item.key,
-                    workspace.customDomain,
-                  )
-                : transformedAssetUrl(
-                    workspace.slug,
-                    item.key,
-                    thumbnailTransformation,
-                    workspace.customDomain,
-                  )
-              : null,
+          thumbnailUrl: thumbnailUrl(workspace, item),
         };
       });
 
