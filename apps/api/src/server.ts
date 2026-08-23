@@ -17,12 +17,12 @@ process.once("SIGTERM", shutdown);
 
 try {
   await startQueue();
-  // Ensure the S3 bucket accepts browser uploads from any origin. Without
-  // CORS, the presigned POST is blocked by the browser's preflight check.
-  await ensureBucketCors().catch((error) =>
+  await app.listen({ host: config.HOST, port: config.PORT });
+  // Configure S3 bucket CORS after the server is listening so a slow or
+  // unreachable S3 endpoint never blocks startup or trips the health check.
+  ensureBucketCors().catch((error) =>
     app.log.warn({ error }, "Could not configure S3 bucket CORS"),
   );
-  await app.listen({ host: config.HOST, port: config.PORT });
 } catch (error) {
   app.log.error(error);
   await shutdown();
