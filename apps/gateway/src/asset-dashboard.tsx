@@ -187,10 +187,11 @@ export function AssetDashboard({
           {uploadQueue.map((entry) => (
             <span key={entry.id} className="upload-queue-item">
               <span className="upload-queue-name">{entry.filename}</span>
-              {entry.progress === undefined ? null : (
-                <progress value={entry.progress} max={1} />
-              )}
-              <small>{entry.status}</small>
+              <small>
+                {entry.progress === undefined
+                  ? entry.status
+                  : asciiBar(entry.progress)}
+              </small>
             </span>
           ))}
         </div>
@@ -1056,6 +1057,12 @@ type DisplayFormat =
   | "svg"
   | "tiff";
 
+/** Upload progress in the same box-drawing style as the rest of the shell. */
+function asciiBar(fraction: number, width = 12) {
+  const filled = Math.round(Math.min(Math.max(fraction, 0), 1) * width);
+  return `[${"█".repeat(filled)}${"░".repeat(width - filled)}]`;
+}
+
 function formatMimeType(mime: string) {
   return mime.split("/")[1]?.toUpperCase() ?? mime.toUpperCase();
 }
@@ -1257,16 +1264,20 @@ function VersionForm({
 }) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState("");
+  const [pending, setPending] = useState(false);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("Uploading…");
+    setPending(true);
     const formElement = event.currentTarget;
     const file = new FormData(formElement).get("file");
     try {
       if (!(file instanceof File) || !file.size)
         throw new Error("Choose a file");
-      await uploadVersion(workspaceId, assetId, file, setStatus);
+      await uploadVersion(workspaceId, assetId, file, (label, progress) =>
+        setStatus(progress === undefined ? label : asciiBar(progress)),
+      );
       formElement.reset();
       setStatus("Processing…");
       await queryClient.invalidateQueries({
@@ -1274,6 +1285,8 @@ function VersionForm({
       });
     } catch (cause) {
       setStatus(cause instanceof Error ? cause.message : "Upload failed");
+    } finally {
+      setPending(false);
     }
   }
 
@@ -1290,7 +1303,7 @@ function VersionForm({
             required
           />
         </label>
-        <button disabled={status.startsWith("Uploading")}>Upload</button>
+        <button disabled={pending}>Upload</button>
         <span className="muted" role="status">
           {status}
         </span>

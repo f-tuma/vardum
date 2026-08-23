@@ -1302,25 +1302,9 @@ button:hover,
   white-space: nowrap;
 }
 .upload-queue-item small {
+  flex: none;
   color: var(--muted);
-  flex: none;
-}
-.upload-queue-item progress {
-  width: 4rem;
-  height: 4px;
-  flex: none;
-  appearance: none;
-  border: 0;
-  background: var(--surface-2);
-}
-.upload-queue-item progress::-webkit-progress-bar {
-  background: var(--surface-2);
-}
-.upload-queue-item progress::-webkit-progress-value {
-  background: var(--violet);
-}
-.upload-queue-item progress::-moz-progress-bar {
-  background: var(--violet);
+  white-space: pre;
 }
 
 .folder-section {

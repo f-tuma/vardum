@@ -541,8 +541,7 @@ export async function uploadVersion(
     upload.open(version.upload.method, requestUrl.href);
     upload.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
-      const fraction = event.loaded / event.total;
-      onProgress?.(`Uploading… ${Math.round(fraction * 100)}%`, fraction);
+      onProgress?.("Uploading…", event.loaded / event.total);
     };
     upload.onload = () =>
       upload.status >= 200 && upload.status < 300
