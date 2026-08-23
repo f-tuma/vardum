@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -78,6 +79,54 @@ export async function listObjectKeys(prefix: string) {
     continuationToken = result.NextContinuationToken;
   } while (continuationToken);
   return keys;
+}
+
+// One page at a time: an import walks a prefix the caller does not control, so
+// the request stays bounded and hands back a token instead of a long stall.
+export async function listObjectPage(
+  prefix: string,
+  token: string | undefined,
+  limit: number,
+) {
+  const result = await storage.send(
+    new ListObjectsV2Command({
+      Bucket: config.S3_BUCKET,
+      Prefix: prefix,
+      ContinuationToken: token,
+      MaxKeys: limit,
+    }),
+  );
+  return {
+    objects: (result.Contents ?? []).flatMap(({ Key, Size }) =>
+      Key && Size ? [{ key: Key, size: Size }] : [],
+    ),
+    nextToken: result.NextContinuationToken ?? null,
+  };
+}
+
+export function headObject(storageKey: string) {
+  return storage.send(
+    new HeadObjectCommand({ Bucket: config.S3_BUCKET, Key: storageKey }),
+  );
+}
+
+// Import copies rather than referencing the object in place: deleting an asset
+// deletes its stored objects, and that must never reach into the caller's own
+// files.
+export function copyObject(
+  sourceKey: string,
+  storageKey: string,
+  contentType: string,
+) {
+  return storage.send(
+    new CopyObjectCommand({
+      Bucket: config.S3_BUCKET,
+      CopySource: `${config.S3_BUCKET}/${encodeURIComponent(sourceKey)}`,
+      Key: storageKey,
+      ContentType: contentType,
+      MetadataDirective: "REPLACE",
+    }),
+  );
 }
 
 export function deleteObjects(storageKeys: string[]) {
