@@ -11,6 +11,7 @@ import {
   removeCredential,
   writeCredential,
 } from "./credentials.js";
+import { planPushFolder } from "./interactive.js";
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
 import {
   assetKey,
@@ -84,17 +85,37 @@ try {
 async function init(options: Options) {
   const prompts = createInterface({ input: stdin, output: stdout });
   try {
-    const server =
-      options.values.get("server") ?? (await prompts.question("Vardum URL: "));
+    const givenServer = options.values.get("server");
+    const givenWorkspace = options.values.get("workspace");
+    const givenVard = options.values.get("vard");
+    // A pasted value usually carries a trailing newline, so the last prompt
+    // can resolve the instant it lands. Confirming the write separately means
+    // a stray paste never silently creates vardum.json.
+    const prompted =
+      givenServer === undefined ||
+      givenWorkspace === undefined ||
+      givenVard === undefined;
+    const server = givenServer ?? (await prompts.question("Vardum URL: "));
     const workspace =
-      options.values.get("workspace") ??
-      (await prompts.question("Workspace ID: "));
-    const vard =
-      options.values.get("vard") ?? (await prompts.question("Vard ID: "));
+      givenWorkspace ?? (await prompts.question("Workspace ID: "));
+    const vard = givenVard ?? (await prompts.question("Vard ID: "));
     const config = validateConfig({ schema: 1, server, workspace, vard });
     const path = resolve("vardum.json");
     if ((await checksumFile(path)) && !options.force)
       throw new Error("vardum.json already exists; use --force to replace it");
+    if (prompted && !options.json && !options.force) {
+      console.log("");
+      console.log(`  server:    ${config.server}`);
+      console.log(`  workspace: ${config.workspace}`);
+      console.log(`  vard:      ${config.vard}`);
+      const answer = (await prompts.question("Write vardum.json? [Y/n] "))
+        .trim()
+        .toLowerCase();
+      if (answer && !["y", "yes"].includes(answer)) {
+        console.log("Aborted.");
+        return;
+      }
+    }
     await atomicWrite(
       path,
       Buffer.from(`${JSON.stringify(config, null, 2)}\n`),
@@ -331,13 +352,27 @@ async function push(options: Options) {
 }
 
 async function pushFolder(options: Options) {
-  const [source, prefix = ""] = options.positionals;
+  const [source, positionalPrefix] = options.positionals;
   if (!source)
     throw new Error("Usage: vardum push-folder <directory> [prefix]");
   const context = await loadContext();
   requireApiKey(context.client);
   const directory = resolve(source);
   const files = await imageFiles(directory);
+  if (!files.length)
+    throw new Error(
+      `No images found in ${relative(process.cwd(), directory) || "."}`,
+    );
+
+  const prefix = await resolveFolderPrefix(
+    options,
+    positionalPrefix,
+    context,
+    directory,
+    files,
+  );
+  if (prefix === null) return summary(options, 0);
+
   const remote = await context.client.syncAssets(
     context.config.workspace,
     prefix,
@@ -415,6 +450,37 @@ async function pushFolder(options: Options) {
     );
   }
   summary(options, changed);
+}
+
+/**
+ * Decides the workspace prefix for push-folder. A prefix given on the command
+ * line wins. Otherwise, on a TTY without --json, an interactive REPL picks an
+ * existing folder or creates a new one and confirms the plan. CI and pipes
+ * fall back to the workspace root, so non-interactive callers never block.
+ */
+async function resolveFolderPrefix(
+  options: Options,
+  positionalPrefix: string | undefined,
+  context: { client: VardumClient; config: VardConfig },
+  directory: string,
+  files: Array<{ absolute: string; relative: string; mimeType: string }>,
+): Promise<string | null> {
+  if (positionalPrefix !== undefined) return positionalPrefix;
+  if (!options.json && stdin.isTTY) {
+    const prompts = createInterface({ input: stdin, output: stdout });
+    try {
+      return await planPushFolder(
+        prompts,
+        context.client,
+        context.config.workspace,
+        directory,
+        files,
+      );
+    } finally {
+      prompts.close();
+    }
+  }
+  return "";
 }
 
 async function pullAsset(options: Options) {

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { createCliKey, getOrganizationDirectory } from "./asset-api";
+import { AuthForm } from "./auth-form";
 import { authClient } from "./auth-client";
 import { loopbackCallback } from "./loopback";
 
@@ -59,6 +60,38 @@ export function CliLogin({
     }
   }
 
+  if (!target)
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="auth-brand">
+            <span aria-hidden="true">╂</span> VARDUM
+          </div>
+          <h1>Authorize the CLI</h1>
+          <p role="alert">
+            This link does not come from a CLI running on your machine, so it
+            cannot be authorized. Start over with <code>vardum login</code>.
+          </p>
+        </section>
+      </main>
+    );
+  // No session yet: let the user sign in right here. better-auth's useSession
+  // is reactive, so this component re-renders into the authorize form below
+  // the moment the sign-in succeeds — same tab, same callback/state.
+  if (session.isPending)
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="auth-brand">
+            <span aria-hidden="true">╂</span> VARDUM
+          </div>
+          <h1>Authorize the CLI</h1>
+          <p className="muted">Checking your account…</p>
+        </section>
+      </main>
+    );
+  if (!session.data) return <AuthForm />;
+
   return (
     <main className="auth-shell">
       <section className="auth-panel">
@@ -66,18 +99,7 @@ export function CliLogin({
           <span aria-hidden="true">╂</span> VARDUM
         </div>
         <h1>Authorize the CLI</h1>
-        {!target ? (
-          <p role="alert">
-            This link does not come from a CLI running on your machine, so it
-            cannot be authorized. Start over with <code>vardum login</code>.
-          </p>
-        ) : session.isPending ? (
-          <p className="muted">Checking your account…</p>
-        ) : !session.data ? (
-          <p className="muted">
-            Sign in first, then run <code>vardum login</code> again.
-          </p>
-        ) : status ? (
+        {status ? (
           <p className="auth-status" role="status">
             {status}
           </p>
