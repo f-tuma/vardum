@@ -40,15 +40,43 @@ export async function verifyDomainRecords(
     .resolveTxt(`_vardum-challenge.${domain}`)
     .then((records) => records.some((parts) => parts.join("") === challenge))
     .catch(() => false);
-  const cname = await resolver
-    .resolveCname(domain)
-    .then((records) =>
-      records.some(
-        (record) => record.toLowerCase().replace(/\.$/, "") === target,
-      ),
-    )
-    .catch(() => false);
+
+  // Docker's internal DNS proxy (127.0.0.11) sometimes fails to forward CNAME
+  // queries, so fall back to a public resolver if the system one fails.
+  const cname =
+    (await resolver
+      .resolveCname(domain)
+      .then((records) =>
+        records.some(
+          (record) => record.toLowerCase().replace(/\.$/, "") === target,
+        ),
+      )
+      .catch(() => false)) ||
+    (await resolveCnameWithFallback(domain, target));
+
   return { txt, cname };
+}
+
+async function resolveCnameWithFallback(
+  domain: string,
+  target: string,
+): Promise<boolean> {
+  for (const server of ["1.1.1.1", "8.8.8.8"]) {
+    try {
+      const fallback = new dns.Resolver();
+      fallback.setServers([server]);
+      const records = await fallback.resolveCname(domain);
+      if (
+        records.some(
+          (record) => record.toLowerCase().replace(/\.$/, "") === target,
+        )
+      )
+        return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 export function registerDomainRoutes(app: FastifyInstance) {
