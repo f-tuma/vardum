@@ -570,8 +570,8 @@ export async function uploadVersion(
       body: JSON.stringify({
         filename: file.name,
         mimeType:
-          file.type ||
           mimeFromExtension(file.name) ||
+          file.type ||
           "application/octet-stream",
         size: file.size,
       }),

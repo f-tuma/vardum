@@ -528,6 +528,7 @@ function NewAssetForm({
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const file = form.get("file");
+    const uploadId = crypto.randomUUID();
 
     try {
       if (!(file instanceof File) || !file.size)
@@ -536,7 +537,6 @@ function NewAssetForm({
         setStatus(s);
         onUpdateUpload(uploadId, s);
       };
-      const uploadId = crypto.randomUUID();
       onAddUpload(uploadId, file.name);
       // Close the drawer immediately — progress moves to the global queue.
       formElement.closest("details")?.removeAttribute("open");
@@ -553,6 +553,9 @@ function NewAssetForm({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
       setStatus("");
+      // Without this the entry sits in the queue forever, still saying "Uploading…".
+      onUpdateUpload(uploadId, "Failed");
+      setTimeout(() => onRemoveUpload(uploadId), 5000);
     } finally {
       await queryClient.invalidateQueries({
         queryKey: ["assets", workspaceId],
