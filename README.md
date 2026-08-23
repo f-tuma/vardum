@@ -35,20 +35,42 @@ features remain disabled.
 
 ## Production / self-hosting
 
-The production stack includes PostgreSQL, MinIO, migrations, API, worker and a
-static nginx web container:
+The production stack runs PostgreSQL, migrations, API, worker and a static
+nginx web container, and stores objects in a bucket you bring:
 
 ```sh
 cp .env.production.example .env.production
-# Replace every secret and set the public APP_URL/S3_PUBLIC_ENDPOINT.
+# Replace every secret and fill in the bucket, its keys and the public APP_URL.
 docker compose --env-file .env.production -f compose.production.yml up -d --build --wait
 curl --fail http://localhost:8080/ready
 ```
 
-`S3_PUBLIC_ENDPOINT` must be reachable by users' browsers. Keep
-`POSTGRES_PASSWORD` URL-safe because it is embedded in `DATABASE_URL`. Database
-migrations run once before the API and worker start. `/health` is the liveness
-endpoint; `/ready` also verifies PostgreSQL.
+The example file is written for Hetzner Object Storage and shows Amazon S3
+beside it; anything S3-compatible works. Browsers upload straight into the
+bucket with a presigned POST, so `S3_PUBLIC_ENDPOINT` must be reachable from
+the public internet and must be the origin the generated URL actually carries —
+with AWS that host is bucket-prefixed, which is what `VITE_UPLOAD_ORIGINS` is
+for. Providers that do not serve virtual-hosted buckets need
+`S3_FORCE_PATH_STYLE=true`.
+
+For a single box with no object store of its own, `--profile minio` starts one
+alongside the app and treats `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` as its
+root credentials:
+
+```sh
+compose="docker compose --env-file .env.production -f compose.production.yml"
+$compose --profile minio up -d --wait minio   # storage first
+$compose --profile minio run --rm minio-init  # create the bucket once
+$compose up -d --build --wait                 # then the app, without the profile
+```
+
+Storage is brought up on its own because `up --wait` aborts as soon as any
+container in the wait set has exited, and the bucket-creating one always has.
+An external bucket needs none of this — it is the single `up` above.
+
+Keep `POSTGRES_PASSWORD` URL-safe because it is embedded in `DATABASE_URL`.
+Database migrations run once before the API and worker start. `/health` is the
+liveness endpoint; `/ready` also verifies PostgreSQL.
 
 Stop the stack without deleting data:
 

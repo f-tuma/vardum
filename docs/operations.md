@@ -13,12 +13,17 @@ set +a
 compose() {
   docker compose --env-file .env.production -f compose.production.yml "$@"
 }
+# Running the bundled object store? Add --profile minio to that command line.
 ```
 
 ## Backup
 
-Stop API writes, then export PostgreSQL and mirror the MinIO bucket. PostgreSQL
-and MinIO remain available to the backup commands.
+Stop API writes, then export PostgreSQL and mirror the bucket. PostgreSQL stays
+available to the backup commands.
+
+The `mc` commands below address the bundled MinIO from `--profile minio`. With
+an external bucket, replace them with your provider's own mirroring — the
+important part is that a database dump without the objects is not a backup.
 
 ```sh
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -26,9 +31,9 @@ mkdir -p "backups/$stamp"
 compose stop api worker
 compose exec -T postgres pg_dump -U varda -d varda -Fc \
   > "backups/$stamp/postgres.dump"
-compose run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
+compose --profile minio run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
   --entrypoint /bin/sh minio-init -ec \
-  'mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
+  'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" &&
   mc mirror "local/$S3_BUCKET" /backup/objects'
 compose up -d --wait
 ```
@@ -43,13 +48,13 @@ current database objects. Keep API and worker stopped until both stores match.
 
 ```sh
 backup=backups/20260822T120000Z
-compose up -d postgres minio minio-init
+compose --profile minio up -d postgres minio minio-init
 compose stop api worker
 compose exec -T postgres pg_restore --clean --if-exists -U varda -d varda \
   < "$backup/postgres.dump"
-compose run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
+compose --profile minio run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
   --entrypoint /bin/sh minio-init -ec \
-  'mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
+  'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" &&
   mc mirror --overwrite /backup/objects "local/$S3_BUCKET"'
 compose up -d --build --wait
 curl --fail "$APP_URL/ready"
