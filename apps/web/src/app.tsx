@@ -4,11 +4,21 @@ import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { AccountSettings } from "./account-settings";
 import { getOrganizationDirectory } from "./asset-api";
 import { AssetDashboard } from "./asset-dashboard";
+import { AuditLog } from "./audit-log";
 import { authClient } from "./auth-client";
 import { OrganizationSettings } from "./organization-settings";
 import { VardEditor, VardsPage } from "./vards";
 import { WorkspaceOverview } from "./workspace-overview";
 import { WorkspaceSettings } from "./workspace-settings";
+
+type View =
+  | "overview"
+  | "assets"
+  | "vards"
+  | "audit"
+  | "settings"
+  | "organization"
+  | "account";
 
 export function App({
   routeWorkspaceId,
@@ -23,13 +33,7 @@ export function App({
   assetId?: string;
   vardId?: string;
   prefix?: string;
-  view?:
-    | "overview"
-    | "assets"
-    | "vards"
-    | "settings"
-    | "organization"
-    | "account";
+  view?: View;
 }) {
   const session = authClient.useSession();
   if (session.isPending) return <div className="loading">Loading…</div>;
@@ -65,13 +69,7 @@ function WorkspaceApp({
   assetId?: string;
   vardId?: string;
   prefix: string;
-  view:
-    | "overview"
-    | "assets"
-    | "vards"
-    | "settings"
-    | "organization"
-    | "account";
+  view: View;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -193,11 +191,13 @@ function WorkspaceApp({
                 : "#vards"
               : view === "settings"
                 ? "#settings"
-                : view === "organization"
-                  ? "#organization-settings"
-                  : view === "account"
-                    ? "#account"
-                    : "#overview"
+                : view === "audit"
+                  ? "#audit"
+                  : view === "organization"
+                    ? "#organization-settings"
+                    : view === "account"
+                      ? "#account"
+                      : "#overview"
         }
       >
         Skip to content
@@ -310,29 +310,28 @@ function WorkspaceApp({
 
       <div className="workspace-view">
         <header className="topbar">
-          {view === "assets" ? (
+          <p className="topbar-context">
+            {view === "account"
+              ? "account :: settings"
+              : view === "organization"
+                ? `${selectedOrganization?.slug ?? "organization"} :: organization`
+                : selected
+                  ? `${selected.slug} :: ${view}`
+                  : `workspace :: ${view}`}
+          </p>
+          {view === "assets" && (
             <label className="command-search">
               <span aria-hidden="true">⌕</span>
               <input
                 ref={searchRef}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search assets by name or key"
+                placeholder="Search the whole workspace"
                 aria-label="Search assets"
                 disabled={!selected}
               />
               <kbd>⌘K</kbd>
             </label>
-          ) : (
-            <p className="topbar-context">
-              {view === "account"
-                ? "account :: settings"
-                : view === "organization"
-                  ? `${selectedOrganization?.slug ?? "organization"} :: settings`
-                  : selected
-                    ? `${selected.slug} :: ${view}`
-                    : `workspace :: ${view}`}
-            </p>
           )}
         </header>
 
@@ -374,6 +373,7 @@ function WorkspaceApp({
             vardId ? (
               <VardEditor
                 workspaceId={selected.id}
+                workspaceName={selected.name}
                 vardId={vardId}
                 canEdit={selected.organizationRole !== "viewer"}
               />
@@ -384,6 +384,8 @@ function WorkspaceApp({
                 canEdit={selected.organizationRole !== "viewer"}
               />
             )
+          ) : view === "audit" ? (
+            <AuditLog workspaceId={selected.id} workspaceName={selected.name} />
           ) : view === "settings" ? (
             <WorkspaceSettings
               workspaceId={selected.id}

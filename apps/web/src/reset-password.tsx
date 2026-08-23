@@ -79,7 +79,7 @@ export function ResetPassword({
           </form>
         )}
         {callbackError && <p role="alert">{error}</p>}
-        <a className="text-button auth-back-link" href="/">
+        <a className="text-button auth-back-link" href="/app">
           Back to sign in
         </a>
       </section>

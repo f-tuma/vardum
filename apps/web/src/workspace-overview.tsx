@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { formatBytes } from "./asset-dashboard";
 import { getWorkspaceOverview, type WorkspaceOverview } from "./asset-api";
 
-const activityLabels: Record<string, string> = {
+export const activityLabels: Record<string, string> = {
   "asset.created": "Asset created",
   "asset.deleted": "Asset deleted",
   "asset.version_created": "Version created",
@@ -30,7 +30,7 @@ const activityLabels: Record<string, string> = {
   "workspace.api_key_created": "API key created",
   "workspace.api_key_deleted": "API key revoked",
 };
-const dateTime = new Intl.DateTimeFormat(undefined, {
+export const dateTime = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 });
@@ -48,7 +48,7 @@ function metadataText(event: ActivityEvent, key: string) {
     : "";
 }
 
-function activityTarget(event: ActivityEvent) {
+export function activityTarget(event: ActivityEvent) {
   const prefix = metadataText(event, "prefix");
   const displayName = metadataText(event, "displayName");
   const key = metadataText(event, "key");
@@ -82,7 +82,7 @@ function activityTarget(event: ActivityEvent) {
   };
 }
 
-function activityActor(event: ActivityEvent) {
+export function activityActor(event: ActivityEvent) {
   if (event.actor.email) return `${event.actor.name} <${event.actor.email}>`;
   if (event.actor.name === "API key" && event.actor.id)
     return `API key ${event.actor.id.slice(0, 8)}`;
@@ -132,7 +132,6 @@ export function WorkspaceOverview({
     <main className="dashboard-main overview" id="overview">
       <header className="overview-heading">
         <div>
-          <p className="overview-kicker">WORKSPACE // OVERVIEW</p>
           <h1>{workspaceName}</h1>
           <p>{workspaceSlug}</p>
         </div>

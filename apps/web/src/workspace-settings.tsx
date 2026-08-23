@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState, type SyntheticEvent } from "react";
 import {
   configureWorkspaceDomain,
@@ -36,7 +37,6 @@ export function WorkspaceSettings({
   return (
     <main className="dashboard-main settings-page" id="settings">
       <header className="settings-heading">
-        <p>WORKSPACE // SETTINGS</p>
         <h1>Settings</h1>
         <span>Workspace identity, delivery and developer credentials.</span>
       </header>
@@ -48,6 +48,25 @@ export function WorkspaceSettings({
           workspaceSlug={workspaceSlug}
         />
         <DomainSettings workspaceId={workspaceId} />
+        <section className="settings-panel" id="audit-log">
+          <header>
+            <h2>┌─ AUDIT LOG</h2>
+            <span>FULL HISTORY</span>
+          </header>
+          <div className="panel-action-row">
+            <p>
+              Who changed what in this workspace, filterable by action and
+              actor. The Overview shows only the newest events.
+            </p>
+            <Link
+              to="/workspaces/$workspaceId/audit"
+              params={{ workspaceId }}
+              className="button-link primary-button"
+            >
+              Open audit log
+            </Link>
+          </div>
+        </section>
         <ApiKeysSettings workspaceId={workspaceId} />
         <DangerZone
           workspaceId={workspaceId}

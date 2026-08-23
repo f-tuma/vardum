@@ -19,6 +19,13 @@ const indexRoute = createRoute({
   path: "/",
   component: App,
 });
+// The client's home when the apex belongs to a marketing site. `/` renders the
+// same thing on a self-host, where nothing else claims it.
+const appRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/app",
+  component: App,
+});
 const resetPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reset-password",
@@ -61,6 +68,11 @@ const vardEditorRoute = createRoute({
   path: "/workspaces/$workspaceId/vards/$vardId",
   component: VardEditorPage,
 });
+const workspaceAuditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/audit",
+  component: WorkspaceAuditPage,
+});
 const workspaceSettingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/settings",
@@ -85,6 +97,7 @@ const assetRoute = createRoute({
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     indexRoute,
+    appRoute,
     resetPasswordRoute,
     acceptInvitationRoute,
     accountRoute,
@@ -92,6 +105,7 @@ const router = createRouter({
     workspaceOverviewRoute,
     workspaceVardsRoute,
     vardEditorRoute,
+    workspaceAuditRoute,
     workspaceSettingsRoute,
     workspaceAssetsRoute,
     assetRoute,
@@ -136,6 +150,11 @@ function WorkspaceVardsPage() {
 function VardEditorPage() {
   const { workspaceId, vardId } = vardEditorRoute.useParams();
   return <App routeWorkspaceId={workspaceId} vardId={vardId} view="vards" />;
+}
+
+function WorkspaceAuditPage() {
+  const { workspaceId } = workspaceAuditRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="audit" />;
 }
 
 function WorkspaceSettingsPage() {
