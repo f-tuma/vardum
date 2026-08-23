@@ -4,7 +4,7 @@ RUN corepack enable
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY apps/api/package.json apps/api/package.json
-COPY apps/web/package.json apps/web/package.json
+COPY apps/gateway/package.json apps/gateway/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/api apps/api
 RUN pnpm --filter @vardum/api build \
