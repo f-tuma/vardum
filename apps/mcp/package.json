@@ -1,0 +1,33 @@
+{
+  "name": "@vardum/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Vardum — let AI agents manage assets, Vards, workspaces, and more.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "vardum-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -46,6 +46,7 @@ export function CliLogin({
       const created = await createCliKey(selected, { label, access });
       const workspaceName =
         workspaces.find((w) => w.id === selected)?.name ?? selected;
+      // pi-lens-ignore: identifier — loopback-callback already validated the URL
       await fetch(target, {
         method: "POST",
         // text/plain keeps this a simple request: no preflight to the CLI's
@@ -116,7 +117,9 @@ export function CliLogin({
               <span>
                 in workspace <strong>{authorized.workspaceName}</strong>
               </span>
-              <code>{authorized.key.slice(0, 12).replace(/.{4}/g, "$& ")}••••</code>
+              <code>
+                {authorized.key.slice(0, 12).replace(/.{4}/g, "$& ")}••••
+              </code>
             </div>
             <p className="muted">You can close this tab.</p>
           </div>
