@@ -13,11 +13,7 @@ import {
 } from "./credentials.js";
 import { planPushFolder } from "./interactive.js";
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
-import {
-  maybeWarnOutdated,
-  updateVardum,
-  VERSION,
-} from "./update.js";
+import { maybeWarnOutdated, updateVardum, VERSION } from "./update.js";
 import {
   assetKey,
   atomicWrite,
@@ -64,7 +60,12 @@ type PushLock = {
 
 const [command = "help", ...rawArgs] = process.argv.slice(2);
 
-if (command !== "update" && command !== "help" && command !== "--help" && command !== "-h")
+if (
+  command !== "update" &&
+  command !== "help" &&
+  command !== "--help" &&
+  command !== "-h"
+)
   maybeWarnOutdated();
 
 try {

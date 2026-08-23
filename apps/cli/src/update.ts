@@ -28,10 +28,9 @@ export async function fetchLatestVersion(): Promise<string | null> {
   const now = Date.now();
   if (latestVersion && now - lastCheck < cacheMs) return latestVersion;
   try {
-    const res = await fetch(
-      "https://registry.npmjs.org/@vardum/cli/latest",
-      { signal: AbortSignal.timeout(5_000) },
-    );
+    const res = await fetch("https://registry.npmjs.org/@vardum/cli/latest", {
+      signal: AbortSignal.timeout(5_000),
+    });
     if (!res.ok) return null;
     const { version } = (await res.json()) as { version: string };
     latestVersion = version;
@@ -107,11 +106,15 @@ function detectGlobalManager(): "npm" | "pnpm" | "yarn" {
     execSync("pnpm --version", { stdio: "ignore" });
     const pnpmDir = `${process.env.HOME ?? ""}/.local/share/pnpm/global`;
     if (fileURLToPath(import.meta.url).startsWith(pnpmDir)) return "pnpm";
-  } catch { /* not pnpm */ }
+  } catch {
+    /* not pnpm */
+  }
   try {
     execSync("yarn --version", { stdio: "ignore" });
     return "yarn";
-  } catch { /* not yarn */ }
+  } catch {
+    /* not yarn */
+  }
   return "npm";
 }
 
@@ -126,7 +129,9 @@ async function detectLocalManager(): Promise<"npm" | "pnpm" | "yarn"> {
       if (entries.includes("pnpm-lock.yaml")) return "pnpm";
       if (entries.includes("yarn.lock")) return "yarn";
       if (entries.includes("package-lock.json")) return "npm";
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const parent = dirname(cwd);
     if (parent === cwd) break;
     cwd = parent;

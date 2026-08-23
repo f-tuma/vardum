@@ -113,11 +113,11 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  web:
-    image: vardum-web:${VARDUM_VERSION:-local}
+  gateway:
+    image: vardum-gateway:${VARDUM_VERSION:-local}
     build:
       context: .
-      dockerfile: docker/web.Dockerfile
+      dockerfile: docker/gateway.Dockerfile
       args:
         # The origin the browser POSTs an upload to. It follows
         # S3_PUBLIC_ENDPOINT unless the provider builds a bucket-prefixed host,

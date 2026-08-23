@@ -5,7 +5,7 @@
 # the app directly from the baked-in docker/nginx.conf — exactly what a
 # self-hoster sees.
 #
-# Expose one Dokploy Domain in the UI: dev.vardum.com on service `web`,
+# Expose one Dokploy Domain in the UI: dev.vardum.com on service `gateway`,
 # container port 80.
 #
 # Required environment:
@@ -147,10 +147,10 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  web:
+  gateway:
     build:
       context: .
-      dockerfile: docker/web.Dockerfile
+      dockerfile: docker/gateway.Dockerfile
       args:
         VITE_UPLOAD_ORIGINS: ${VITE_UPLOAD_ORIGINS:-${S3_PUBLIC_ENDPOINT:-}}
     depends_on:

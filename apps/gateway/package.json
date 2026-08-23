@@ -1,5 +1,5 @@
 {
-  "name": "@vardum/web",
+  "name": "@vardum/gateway",
   "private": true,
   "type": "module",
   "scripts": {

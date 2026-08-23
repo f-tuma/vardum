@@ -1,6 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 import {
   configureWorkspaceDomain,
   createWorkspaceApiKey,
@@ -163,7 +169,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   const domain = useQuery({
     queryKey: ["workspace-domain", workspaceId],
     queryFn: () => getWorkspaceDomain(workspaceId),
-    refetchInterval: queryState =>
+    refetchInterval: (queryState) =>
       queryState.state.data?.status === "pending" ? 12_000 : false,
   });
 
@@ -284,7 +290,10 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
     <section className="settings-panel" id="custom-domain">
       <header>
         <h2>┌─ CUSTOM DOMAIN</h2>
-        <span>{record?.status.toUpperCase() ?? "LOADING"}{record?.status === "pending" ? " · POLLING" : ""}</span>
+        <span>
+          {record?.status.toUpperCase() ?? "LOADING"}
+          {record?.status === "pending" ? " · POLLING" : ""}
+        </span>
       </header>
       {domain.isPending ? (
         <p className="settings-state">Loading custom domain…</p>

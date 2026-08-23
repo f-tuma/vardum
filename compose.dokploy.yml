@@ -3,7 +3,7 @@
 # Traefik already terminates TLS, so nginx serves plain HTTP inside Docker and
 # owns the /api, /w and web-client split from docker/nginx.marketing.conf.template.
 #
-# Expose one Dokploy Domain in the UI: the apex (vardum.com) on service `web`,
+# Expose one Dokploy Domain in the UI: the apex (vardum.com) on service `gateway`,
 # container port 80. Never expose api, worker or postgres. Objects live in a
 # bucket you bring, so there is no storage service to publish.
 #
@@ -161,11 +161,11 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  web:
-    image: vardum-web:${VARDUM_VERSION:-dokploy}
+  gateway:
+    image: vardum-gateway:${VARDUM_VERSION:-dokploy}
     build:
       context: .
-      dockerfile: docker/web.Dockerfile
+      dockerfile: docker/gateway.Dockerfile
       args:
         VITE_UPLOAD_ORIGINS: ${VITE_UPLOAD_ORIGINS:-${S3_PUBLIC_ENDPOINT:-}}
     environment:
