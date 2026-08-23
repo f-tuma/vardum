@@ -42,9 +42,7 @@ export async function verifyDomainRecords(
   const txt =
     (await resolver
       .resolveTxt(`_vardum-challenge.${domain}`)
-      .then((records) =>
-        records.some((parts) => parts.join("") === challenge),
-      )
+      .then((records) => records.some((parts) => parts.join("") === challenge))
       .catch(() => false)) || (await resolveTxtWithFallback(domain, challenge));
 
   const cname =
@@ -90,9 +88,7 @@ async function resolveTxtWithFallback(
     try {
       const fallback = new dns.Resolver();
       fallback.setServers([server]);
-      const records = await fallback.resolveTxt(
-        `_vardum-challenge.${domain}`,
-      );
+      const records = await fallback.resolveTxt(`_vardum-challenge.${domain}`);
       if (records.some((parts) => parts.join("") === challenge)) return true;
     } catch {
       // Try the next public DNS server on failure.
