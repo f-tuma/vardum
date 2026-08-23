@@ -433,6 +433,48 @@ button:hover,
 .auth-url code {
   color: var(--violet);
 }
+.auth-success {
+  display: grid;
+  gap: 1rem;
+  margin: 2rem 0 0;
+  text-align: center;
+}
+.auth-success-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-self: center;
+  place-items: center;
+  border-radius: 50%;
+  background: rgb(34 197 94 / 12%);
+  color: var(--green);
+  font-size: 1.3rem;
+}
+.auth-success > p {
+  margin: 0;
+  font: 0.68rem var(--mono);
+}
+.auth-success-details {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  background: #0a0c10;
+  font: 0.6rem var(--mono);
+}
+.auth-success-details span {
+  color: var(--muted);
+}
+.auth-success-details strong {
+  color: var(--text);
+  font-weight: 400;
+}
+.auth-success-details code {
+  margin-top: 0.15rem;
+  color: var(--violet);
+  font: 0.55rem var(--mono);
+  letter-spacing: 0.1em;
+}
 .invitation-accept-button {
   margin: 2rem 0 1rem;
 }

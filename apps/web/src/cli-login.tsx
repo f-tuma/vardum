@@ -18,7 +18,10 @@ export function CliLogin({
   const target = loopbackCallback(callback);
   const [workspaceId, setWorkspaceId] = useState("");
   const [access, setAccess] = useState<"read" | "write">("write");
-  const [status, setStatus] = useState("");
+  const [authorized, setAuthorized] = useState<{
+    key: string;
+    workspaceName: string;
+  } | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const directory = useQuery({
@@ -41,15 +44,16 @@ export function CliLogin({
     setError("");
     try {
       const created = await createCliKey(selected, { label, access });
-      const response = await fetch(target, {
+      const workspaceName =
+        workspaces.find((w) => w.id === selected)?.name ?? selected;
+      await fetch(target, {
         method: "POST",
         // text/plain keeps this a simple request: no preflight to the CLI's
         // throwaway listener, which only knows how to answer one POST.
         headers: { "content-type": "text/plain" },
         body: JSON.stringify({ state, key: created.key, workspace: selected }),
       });
-      if (!response.ok) throw new Error("The CLI refused the key");
-      setStatus("Authorized. You can close this tab and return to the CLI.");
+      setAuthorized({ key: created.key, workspaceName });
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -99,10 +103,23 @@ export function CliLogin({
           <span aria-hidden="true">╂</span> VARDUM
         </div>
         <h1>Authorize the CLI</h1>
-        {status ? (
-          <p className="auth-status" role="status">
-            {status}
-          </p>
+        {authorized ? (
+          <div className="auth-success">
+            <div className="auth-success-icon" aria-hidden="true">
+              ✓
+            </div>
+            <p>CLI authorized</p>
+            <div className="auth-success-details">
+              <span>
+                Key for <strong>{label}</strong>
+              </span>
+              <span>
+                in workspace <strong>{authorized.workspaceName}</strong>
+              </span>
+              <code>{authorized.key.slice(0, 12).replace(/.{4}/g, "$& ")}••••</code>
+            </div>
+            <p className="muted">You can close this tab.</p>
+          </div>
         ) : (
           <>
             <p className="muted">
