@@ -836,10 +836,16 @@ button:hover,
 .settings-inline-error {
   margin: 1rem;
 }
+/* Record lists are vertical row stacks (one full-width item per line), not
+   the horizontal wrap audit-filters needs. */
 .member-list,
 .invitation-list,
 .api-key-list,
-.organization-workspace-list,
+.organization-workspace-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .audit-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1045,7 +1051,9 @@ button:hover,
   white-space: nowrap;
 }
 .api-key-list li:last-child,
-.member-list li:last-child {
+.invitation-list li:last-child,
+.member-list li:last-child,
+.organization-workspace-list li:last-child {
   border-bottom: 0;
 }
 .page-heading {
