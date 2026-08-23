@@ -36,6 +36,25 @@ export function AssetDashboard({
 }) {
   const navigate = useNavigate();
   const needle = search.trim();
+  const [uploadQueue, setUploadQueue] = useState<
+    Array<{
+      id: string;
+      filename: string;
+      status: string;
+    }>
+  >([]);
+
+  function addUpload(id: string, filename: string) {
+    setUploadQueue((prev) => [...prev, { id, filename, status: "Starting…" }]);
+  }
+  function updateUpload(id: string, status: string) {
+    setUploadQueue((prev) =>
+      prev.map((u) => (u.id === id ? { ...u, status } : u)),
+    );
+  }
+  function removeUpload(id: string) {
+    setUploadQueue((prev) => prev.filter((u) => u.id !== id));
+  }
   const assets = useQuery({
     // ponytail: one request per keystroke; debounce if a workspace ever makes it show.
     queryKey: ["assets", workspaceId, needle ? "" : prefix, needle],
@@ -103,7 +122,13 @@ export function AssetDashboard({
         <div className="page-actions">
           <ImportForm workspaceId={workspaceId} prefix={prefix} />
           <NewFolderForm workspaceId={workspaceId} prefix={prefix} />
-          <NewAssetForm workspaceId={workspaceId} prefix={prefix} />
+          <NewAssetForm
+            workspaceId={workspaceId}
+            prefix={prefix}
+            onAddUpload={addUpload}
+            onUpdateUpload={updateUpload}
+            onRemoveUpload={removeUpload}
+          />
         </div>
       </header>
 
@@ -153,6 +178,16 @@ export function AssetDashboard({
           <p>
             {search ? "Try another name or key." : "Upload your first asset."}
           </p>
+        </div>
+      )}
+      {uploadQueue.length > 0 && (
+        <div className="upload-queue">
+          {uploadQueue.map((entry) => (
+            <span key={entry.id} className="upload-queue-item">
+              {entry.filename}
+              <small>{entry.status}</small>
+            </span>
+          ))}
         </div>
       )}
     </main>
@@ -470,9 +505,15 @@ function NewFolderForm({
 function NewAssetForm({
   workspaceId,
   prefix,
+  onAddUpload,
+  onUpdateUpload,
+  onRemoveUpload,
 }: {
   workspaceId: string;
   prefix: string;
+  onAddUpload: (id: string, filename: string) => void;
+  onUpdateUpload: (id: string, status: string) => void;
+  onRemoveUpload: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
   const detailsRef = useCloseDetailsOnOutsideClick();
@@ -491,14 +532,24 @@ function NewAssetForm({
     try {
       if (!(file instanceof File) || !file.size)
         throw new Error("Choose a file");
+      const onProgress = (s: string) => {
+        setStatus(s);
+        onUpdateUpload(uploadId, s);
+      };
+      const uploadId = crypto.randomUUID();
+      onAddUpload(uploadId, file.name);
+      // Close the drawer immediately — progress moves to the global queue.
+      formElement.closest("details")?.removeAttribute("open");
       const created = await createAsset(workspaceId, {
         key: `${prefix}${String(form.get("key"))}`,
         displayName: String(form.get("displayName")),
       });
-      await uploadVersion(workspaceId, created.id, file);
+      await uploadVersion(workspaceId, created.id, file, onProgress);
       formElement.reset();
       setKeyEdited(false);
-      setStatus("Processing…");
+      setStatus("Done");
+      onUpdateUpload(uploadId, "Done");
+      setTimeout(() => onRemoveUpload(uploadId), 5000);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
       setStatus("");
@@ -563,7 +614,7 @@ function NewAssetForm({
               <input
                 name="file"
                 type="file"
-                accept="image/avif,image/gif,image/jpeg,image/png,image/svg+xml,image/tiff,image/webp"
+                accept=".avif,.gif,.jpeg,.jpg,.png,.svg,.tiff,.tif,.webp,.mp4,.webm,.mov,.avi,.mpeg,.mpg"
                 onChange={inferFields}
                 required
               />
@@ -627,9 +678,7 @@ function AssetCard({
         <h2 title={asset.displayName}>{asset.displayName}</h2>
         <p className="asset-key">{asset.key}</p>
         <div className="asset-meta">
-          <span>
-            {asset.mimeType ? formatMimeType(asset.mimeType) : "—"}
-          </span>
+          <span>{asset.mimeType ? formatMimeType(asset.mimeType) : "—"}</span>
           <span>{formatDimensions(asset)}</span>
           <span>{formatBytes(asset.size ?? 0)}</span>
         </div>
@@ -901,10 +950,7 @@ function AssetDetailPage({
                   style={{ maxWidth: "100%", maxHeight: "100%" }}
                 />
               ) : (
-                <img
-                  src={previewUrl}
-                  alt={`Preview of ${asset.displayName}`}
-                />
+                <img src={previewUrl} alt={`Preview of ${asset.displayName}`} />
               )
             ) : (
               <span>No preview</span>
@@ -992,7 +1038,10 @@ function AssetDetailPage({
 }
 
 type DisplayFormat =
-  NonNullable<TransformationInput["format"]> | "gif" | "svg" | "tiff";
+  | NonNullable<TransformationInput["format"]>
+  | "gif"
+  | "svg"
+  | "tiff";
 
 function formatMimeType(mime: string) {
   return mime.split("/")[1]?.toUpperCase() ?? mime.toUpperCase();

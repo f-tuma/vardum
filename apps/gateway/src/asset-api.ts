@@ -532,11 +532,36 @@ export function createAsset(
   });
 }
 
+const extensionMime: Record<string, string> = {
+  avif: "image/avif",
+  gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+  svg: "image/svg+xml",
+  tiff: "image/tiff",
+  tif: "image/tiff",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  avi: "video/x-msvideo",
+  mpeg: "video/mpeg",
+  mpg: "video/mpeg",
+};
+
+function mimeFromExtension(filename: string): string | null {
+  const ext = filename.split(".").at(-1)?.toLowerCase();
+  return ext ? extensionMime[ext] ?? null : null;
+}
+
 export async function uploadVersion(
   workspaceId: string,
   assetId: string,
   file: File,
+  onProgress?: (status: string) => void,
 ) {
+  onProgress?.("Requesting upload…");
   const version = await request<UploadVersion>(
     `/api/workspaces/${workspaceId}/assets/${assetId}/versions`,
     {
@@ -544,7 +569,7 @@ export async function uploadVersion(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         filename: file.name,
-        mimeType: file.type || "application/octet-stream",
+        mimeType: file.type || mimeFromExtension(file.name) || "application/octet-stream",
         size: file.size,
       }),
     },
@@ -553,7 +578,14 @@ export async function uploadVersion(
   const form = new FormData();
   for (const [key, value] of Object.entries(version.upload.fields))
     form.append(key, value);
-  form.append("file", file);
+  // Wrap the file in a Blob with the declared MIME type so the S3 presigned
+  // POST condition ("Content-Type" must match) is satisfied even when the
+  // browser's File.type is empty (common for .mp4, .mov, etc.).
+  const mimeType =
+    version.upload.fields["Content-Type"] ??
+    (file.type || "application/octet-stream");
+  form.append("file", new Blob([file], { type: mimeType }), file.name);
+  onProgress?.("Uploading…");
   const uploadRequest = new Request(validateUploadUrl(version.upload.url), {
     method: version.upload.method,
     body: form,
@@ -562,10 +594,12 @@ export async function uploadVersion(
   if (!uploaded.ok)
     throw new Error(`Storage upload failed (${uploaded.status})`);
 
+  onProgress?.("Processing…");
   await request(
     `/api/workspaces/${workspaceId}/assets/${assetId}/versions/${version.id}/finalize`,
     { method: "POST" },
   );
+  onProgress?.("Done");
 }
 
 export function createTransformationUrl(
