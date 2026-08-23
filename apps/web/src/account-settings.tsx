@@ -131,7 +131,6 @@ export function AccountSettings() {
     <main className="dashboard-main settings-page" id="account">
       <header className="settings-heading">
         <div>
-          <p>ACCOUNT // SETTINGS</p>
           <h1>Account</h1>
         </div>
         <span>{session.data.user.email}</span>

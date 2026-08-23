@@ -16,6 +16,10 @@
   --red: #ff5c63;
   --mono:
     "Berkeley Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  /* Box-drawing glyphs sit flush against the left of their cell, so a line
+     starting with ┌─ or └─ hangs a hair left of the text under it and breaks
+     the drawn-box illusion. Retune if the mono font changes. */
+  --box-optical-nudge: 2px;
 }
 
 * {
@@ -225,14 +229,18 @@ input:disabled {
   position: sticky;
   top: 0;
   z-index: 20;
+  display: flex;
   height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
   padding: 10px 1.5rem;
   border-bottom: 1px solid var(--line);
   background: #08090c;
 }
 .command-search {
   display: flex;
-  max-width: 560px;
+  width: min(420px, 45vw);
   height: 37px;
   align-items: center;
   gap: 0.65rem;
@@ -302,14 +310,43 @@ input[type="file"]::file-selector-button {
   font: 600 0.62rem var(--mono);
   cursor: pointer;
 }
-form label {
+label {
   display: grid;
   gap: 0.35rem;
   color: var(--muted);
   font: 0.6rem var(--mono);
   text-transform: uppercase;
 }
-button {
+label input,
+label select {
+  width: 100%;
+}
+label small {
+  color: var(--muted);
+  font: 0.55rem / 1.5 var(--mono);
+  text-transform: none;
+}
+input[readonly] {
+  color: var(--muted);
+  background: #090b0e;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  text-transform: none;
+}
+.checkbox-label input {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  margin: 0;
+  accent-color: var(--violet);
+}
+/* A link that acts as a button gets the same box; .primary-button and friends
+   then only recolour it. */
+button,
+.button-link {
   display: inline-flex;
   width: fit-content;
   height: 36px;
@@ -321,8 +358,10 @@ button {
   background: var(--surface-2);
   font: 650 0.64rem / 1 var(--mono);
   text-align: center;
+  text-decoration: none;
 }
-button:hover {
+button:hover,
+.button-link:hover {
   border-color: #666d79;
   color: white;
 }
@@ -405,18 +444,11 @@ button:hover {
 }
 .overview-heading {
   display: flex;
-  min-height: 145px;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding-bottom: 1.5rem;
   border-bottom: 1px solid var(--line);
-}
-.overview-kicker {
-  margin: 0 0 0.65rem;
-  color: var(--violet);
-  font: 0.6rem var(--mono);
-  letter-spacing: 0.08em;
 }
 .overview-heading h1 {
   margin: 0;
@@ -585,23 +617,25 @@ button:hover {
   color: var(--muted);
   font: 0.62rem var(--mono);
 }
+/* No top padding: .dashboard-main already spaces every page off the topbar,
+   and the settings pages must start at the same height as Assets and Overview. */
 .settings-heading {
-  min-height: 145px;
-  padding: 2rem 0 1.5rem;
+  padding: 0 0 1.5rem;
   border-bottom: 1px solid var(--line);
-}
-.settings-heading p {
-  margin: 0 0 0.65rem;
-  color: var(--violet);
-  font: 0.6rem var(--mono);
-  letter-spacing: 0.08em;
 }
 .settings-heading h1 {
   margin: 0;
   font-size: clamp(1.8rem, 4vw, 3rem);
   letter-spacing: -0.04em;
 }
-.settings-heading > span {
+.settings-heading.with-action {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.settings-heading span {
   display: block;
   margin-top: 0.45rem;
   color: var(--muted);
@@ -649,38 +683,7 @@ button:hover {
 .settings-panel > .settings-actions {
   padding: 0 1rem 1rem;
 }
-.settings-panel label input,
-.settings-panel label select {
-  width: 100%;
-}
-.settings-panel .checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-.settings-panel .checkbox-label input {
-  width: 14px;
-  height: 14px;
-  min-height: 14px;
-  margin: 0;
-  accent-color: var(--violet);
-}
-.vard-create-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0 0 1rem;
-}
-.settings-panel label small {
-  color: var(--muted);
-  font: 0.55rem / 1.5 var(--mono);
-  text-transform: none;
-}
-.settings-panel input[readonly] {
-  color: var(--muted);
-  background: #090b0e;
-}
+
 .danger-zone {
   border-color: #632a31;
 }
@@ -756,6 +759,15 @@ button:hover {
   color: var(--muted);
   font: 0.58rem / 1.5 var(--mono);
 }
+.overview-stat > span,
+.delivery-panel h2,
+.activity-panel h2,
+.settings-panel > header h2 {
+  padding-left: var(--box-optical-nudge);
+}
+.settings-state {
+  padding-left: calc(1rem + var(--box-optical-nudge));
+}
 .settings-note {
   border-top: 1px solid var(--line);
 }
@@ -828,6 +840,73 @@ button:hover {
 .invitation-list,
 .api-key-list,
 .organization-workspace-list,
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.audit-filters > label {
+  min-width: 180px;
+  flex: 1;
+}
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border-top: 1px solid var(--line);
+}
+.audit-pagination > span {
+  color: var(--muted);
+  font: 0.58rem var(--mono);
+}
+.audit-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.audit-list li {
+  display: grid;
+  grid-template-columns: 150px 160px minmax(0, 1fr) minmax(0, 220px);
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--line);
+  font: 0.58rem var(--mono);
+}
+.audit-list li:last-child {
+  border-bottom: 0;
+}
+.audit-time,
+.audit-actor {
+  color: var(--muted);
+}
+.audit-action {
+  color: var(--violet);
+}
+.audit-target {
+  min-width: 0;
+}
+.audit-target strong,
+.audit-target small,
+.audit-actor {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audit-target small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+@media (max-width: 900px) {
+  .audit-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+}
 .vard-list {
   margin: 0;
   padding: 0;
@@ -882,23 +961,6 @@ button:hover {
 .member-list select {
   width: 140px;
   flex: none;
-}
-.organization-workspace-list a,
-.vard-list a {
-  display: inline-flex;
-  height: 36px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 0.75rem;
-  border: 1px solid var(--violet);
-  color: white;
-  background: #6e249f;
-  font: 650 0.64rem / 1 var(--mono);
-  text-decoration: none;
-}
-.vard-list a:hover {
-  border-color: #666d79;
-  color: white;
 }
 .domain-form {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1058,7 +1120,9 @@ button:hover {
 .upload-drawer > summary::-webkit-details-marker {
   display: none;
 }
-.folder-drawer > summary {
+/* A drawer that opens a secondary action looks like a plain button, not the
+   page's primary one. */
+.quiet-summary > summary {
   border-color: var(--line);
   color: var(--text);
   background: var(--surface);
@@ -1075,6 +1139,20 @@ button:hover {
 }
 .folder-drawer[open] > form {
   width: min(320px, calc(100vw - 270px));
+}
+.form-drawer[open] > form {
+  display: grid;
+  width: min(520px, calc(100vw - 270px));
+  gap: 0.75rem;
+}
+.drawer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.drawer-row > label {
+  min-width: 0;
+  flex: 1;
 }
 .folder-form-actions {
   display: flex;
@@ -1619,52 +1697,142 @@ button:hover {
   background: #090b0e;
   font: 0.62rem / 1.6 var(--mono);
 }
-.vard-add-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  align-items: end;
-  padding: 1rem;
-  border-bottom: 1px solid var(--line);
+.panel-dialog {
+  width: min(920px, calc(100vw - 2rem));
+  max-width: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--surface);
 }
-.vard-add-item label {
-  min-width: 0;
+.panel-dialog::backdrop {
+  background: rgb(0 0 0 / 76%);
+  backdrop-filter: blur(2px);
 }
-.vard-add-item select {
-  width: 100%;
-}
-.vard-items {
-  display: grid;
-}
-.vard-item {
-  border-bottom: 1px solid var(--line);
-}
-.vard-item > header {
+.panel-dialog-content > header {
   display: flex;
-  min-height: 58px;
+  min-height: 48px;
   align-items: center;
+  justify-content: space-between;
   gap: 1rem;
   padding: 0.75rem 1rem;
-  background: #0c0f13;
+  border-bottom: 1px solid var(--line);
 }
-.vard-item > header > span {
+.panel-dialog-content > header h2 {
+  margin: 0;
+  padding-left: var(--box-optical-nudge);
+  font: 0.62rem var(--mono);
+}
+.panel-dialog-content > header > span {
   min-width: 0;
-  flex: 1;
 }
-.vard-item > header strong,
-.vard-item > header small {
+.panel-dialog-content > header strong,
+.panel-dialog-content > header small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.vard-item > header strong {
+.panel-dialog-content > header strong {
   font: 0.65rem var(--mono);
 }
-.vard-item > header small {
+.panel-dialog-content > header small {
   margin-top: 0.25rem;
   color: var(--muted);
   font: 0.55rem var(--mono);
+}
+.panel-dialog-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0 1rem 1rem;
+}
+.panel-dialog .vard-picker {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  border-bottom: 0;
+}
+.outputs-header > span {
+  margin-left: auto;
+}
+.vard-tree {
+  padding: 1rem;
+}
+.vard-tree .folder-open {
+  gap: 0.6rem;
+}
+.vard-tree .folder-open small {
+  margin-left: auto;
+  color: var(--muted);
+  font: 0.55rem var(--mono);
+}
+.vard-file > span {
+  color: var(--muted);
+}
+.vard-picker {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.vard-picker-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.vard-picker-bar > span {
+  color: var(--muted);
+  font: 0.55rem var(--mono);
+}
+.vard-picker .folder-breadcrumb > button,
+.vard-picker .folder-breadcrumb > span > button {
+  font-size: 0.8rem;
+}
+.vard-picker .folder-open {
+  height: 42px;
+  padding-right: 0.8rem;
+}
+.vard-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.vard-picker-asset {
+  display: grid;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  gap: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  text-align: left;
+}
+.vard-picker-asset:hover:not(:disabled) {
+  border-color: #616772;
+  background: var(--surface-2);
+}
+.vard-picker-asset .asset-preview {
+  height: 110px;
+}
+.vard-picker-name,
+.vard-picker-meta {
+  overflow: hidden;
+  padding: 0 0.6rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vard-picker-name {
+  padding-top: 0.5rem;
+  font: 0.62rem var(--mono);
+}
+.vard-picker-meta {
+  padding-bottom: 0.55rem;
+  color: var(--muted);
+  font: 0.52rem var(--mono);
 }
 .vard-item-fields {
   display: grid;
@@ -1682,17 +1850,15 @@ button:hover {
   gap: 1.5rem;
   padding: 0 1rem 1rem;
 }
-.vard-save-actions {
-  padding: 1rem;
-}
-.vard-delete-row {
+/* A panel row that pairs one sentence with one action. */
+.panel-action-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem;
 }
-.vard-delete-row p {
+.panel-action-row p {
   margin: 0;
   color: var(--muted);
   font: 0.58rem var(--mono);
@@ -1809,14 +1975,13 @@ button:hover {
 }
 
 @media (max-width: 480px) {
-  .vard-add-item,
   .vard-item-fields {
     grid-template-columns: 1fr;
   }
   .vard-item-fields > label:first-child {
     grid-column: auto;
   }
-  .vard-delete-row {
+  .panel-action-row {
     align-items: stretch;
     flex-direction: column;
   }

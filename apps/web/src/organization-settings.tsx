@@ -6,6 +6,7 @@ import {
   getOrganizationDirectory,
 } from "./asset-api";
 import { authClient } from "./auth-client";
+import { useCloseDetailsOnOutsideClick } from "./asset-dashboard";
 import {
   OrganizationInvitations,
   OrganizationMembers,
@@ -25,8 +26,8 @@ export function OrganizationSettings({
   const organization = directory.data?.organizations.find(
     ({ id }) => id === organizationId,
   );
+  const workspaceDrawerRef = useCloseDetailsOnOutsideClick();
   const [creatingOrganization, setCreatingOrganization] = useState(false);
-  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [organizationError, setOrganizationError] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
 
@@ -66,6 +67,7 @@ export function OrganizationSettings({
         slug: String(form.get("slug")),
       });
       formElement.reset();
+      formElement.closest("details")?.removeAttribute("open");
       await queryClient.invalidateQueries({ queryKey: ["organizations"] });
       await navigate({
         to: "/workspaces/$workspaceId",
@@ -94,7 +96,6 @@ export function OrganizationSettings({
   return (
     <main className="dashboard-main settings-page" id="organization-settings">
       <header className="settings-heading">
-        <p>ORGANIZATION // SETTINGS</p>
         <h1>{organization.name}</h1>
         <span>Organization workspaces, members, roles and invitations.</span>
       </header>
@@ -164,7 +165,34 @@ export function OrganizationSettings({
         <section className="settings-panel">
           <header>
             <h2>┌─ WORKSPACES</h2>
-            <span>{organization.workspaces.length} TOTAL</span>
+            {organization.canCreateWorkspace ? (
+              <details
+                ref={workspaceDrawerRef}
+                className="upload-drawer form-drawer quiet-summary"
+              >
+                <summary>New workspace</summary>
+                <form onSubmit={createWorkspace}>
+                  <div className="drawer-row">
+                    <label>
+                      Name
+                      <input name="name" required />
+                    </label>
+                    <label>
+                      Slug
+                      <input name="slug" pattern="[a-z0-9-]+" required />
+                    </label>
+                    <button className="primary-button">Create</button>
+                  </div>
+                  {workspaceError && (
+                    <p className="error-strip" role="alert">
+                      {workspaceError}
+                    </p>
+                  )}
+                </form>
+              </details>
+            ) : (
+              <span>{organization.workspaces.length} TOTAL</span>
+            )}
           </header>
           {organization.workspaces.length ? (
             <ul className="organization-workspace-list">
@@ -177,6 +205,7 @@ export function OrganizationSettings({
                   <Link
                     to="/workspaces/$workspaceId"
                     params={{ workspaceId: workspace.id }}
+                    className="button-link primary-button"
                   >
                     Open
                   </Link>
@@ -185,38 +214,6 @@ export function OrganizationSettings({
             </ul>
           ) : (
             <p className="settings-state">└─ No workspaces</p>
-          )}
-          {organization.canCreateWorkspace && (
-            <div className="settings-actions">
-              <span />
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceError("");
-                  setCreatingWorkspace((value) => !value);
-                }}
-              >
-                {creatingWorkspace ? "Cancel" : "New workspace"}
-              </button>
-            </div>
-          )}
-          {creatingWorkspace && (
-            <form onSubmit={createWorkspace}>
-              <label>
-                Name
-                <input name="name" required />
-              </label>
-              <label>
-                Slug
-                <input name="slug" pattern="[a-z0-9-]+" required />
-              </label>
-              <button className="primary-button">Create workspace</button>
-            </form>
-          )}
-          {workspaceError && (
-            <p className="error-strip settings-inline-error" role="alert">
-              {workspaceError}
-            </p>
           )}
         </section>
 
