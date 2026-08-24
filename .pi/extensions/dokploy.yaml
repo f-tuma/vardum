@@ -1,0 +1,6 @@
+extends:
+  mcpServers:
+    dokploy:
+      url: https://DOKPLOY_URL
+      headers:
+        Authorization: Bearer DOKPLOY_API_KEY
