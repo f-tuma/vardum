@@ -57,7 +57,9 @@ reports locally edited files as conflicts rather than refusing to run.
 the network, which is usually the answer to "why does this not work".
 Every command accepts `--json`, which replaces the human output with a single
 `{ dryRun, changed, actions }` object and reports failures on stderr as
-`{ "error": ... }`, so CI can read the result instead of parsing sentences.
+`{ "error": ..., "actions": [...] }` — a run that dies halfway still says which
+changes landed, each with `applied: true|false`, so CI can read the result
+instead of parsing sentences.
 
 `sync` is an alias for `pull`. Pull and mapped push use `.vardum.lock` to detect
 local/remote conflicts. Commit that lockfile when reproducible asset versions

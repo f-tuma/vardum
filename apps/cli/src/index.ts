@@ -93,7 +93,13 @@ try {
   const cancelled = /Ctrl\+D|Ctrl\+C/.test(message);
   console.error(
     json
-      ? JSON.stringify({ error: cancelled ? "Cancelled" : message })
+      ? // Actions already applied belong in the payload: a push that fails on
+        // file 40 of 50 has really changed 39 things, and CI needs to know.
+        JSON.stringify(
+          { error: cancelled ? "Cancelled" : message, actions },
+          null,
+          2,
+        )
       : cancelled
         ? "vardum: cancelled"
         : `vardum: ${message}`,
@@ -139,7 +145,11 @@ async function init(options: Options) {
       path,
       Buffer.from(`${JSON.stringify(config, null, 2)}\n`),
     );
-    report("create", relative(process.cwd(), path) || "vardum.json", options);
+    report(
+      "create",
+      relative(process.cwd(), path) || "vardum.json",
+      options,
+    ).applied = true;
     summary(options, 1);
   } finally {
     prompts.close();
@@ -166,7 +176,7 @@ async function login(options: Options) {
 
     const grant = await listener.grant;
     await writeCredential(server, grant.workspace, grant.key);
-    report("create", `${server} // ${grant.workspace}`, options);
+    report("create", `${server} // ${grant.workspace}`, options).applied = true;
     if (!options.json)
       console.log(`Key stored in ${credentialsPath()} as cli@${label}`);
     summary(options, 1);
@@ -198,7 +208,8 @@ async function logout(options: Options) {
     }
   }
   const removed = await removeCredential(server, workspace);
-  if (removed) report("delete", `${server} // ${workspace}`, options);
+  if (removed)
+    report("delete", `${server} // ${workspace}`, options).applied = true;
   summary(options, removed ? 1 : 0);
 }
 
@@ -313,7 +324,7 @@ async function pull(options: Options) {
   for (const plan of planned) {
     let localChecksum = plan.localChecksum;
     if (plan.decision !== "skip") {
-      report(
+      const entry = report(
         "pull",
         plan.item.outputPath,
         options,
@@ -323,6 +334,7 @@ async function pull(options: Options) {
         const bytes = await context.client.download(plan.item.downloadUrl!);
         await atomicWrite(plan.target, bytes);
         localChecksum = checksum(bytes);
+        entry.applied = true;
       }
     }
     if (!localChecksum && options.dryRun) continue;
@@ -336,12 +348,14 @@ async function pull(options: Options) {
 
   if (options.delete)
     for (const [, locked] of stale) {
-      report("delete", locked.path, options);
-      if (!options.dryRun)
+      const entry = report("delete", locked.path, options);
+      if (!options.dryRun) {
         await removeTracked(
           await safeTarget(context.directory, locked.path),
           context.directory,
         );
+        entry.applied = true;
+      }
     }
   if (!options.dryRun) await writeLock(lockPath, next);
   summary(
@@ -380,7 +394,7 @@ async function push(options: Options) {
       throw new Error(
         `Remote and local state diverged for ${item.outputPath}; pull first or use --force`,
       );
-    report("push", item.outputPath, options);
+    const entry = report("push", item.outputPath, options);
     changed += 1;
     if (options.dryRun) continue;
     const bytes = await readFile(path);
@@ -413,6 +427,7 @@ async function push(options: Options) {
       checksum: localChecksum,
     };
     await writeLock(lockPath, lock);
+    entry.applied = true;
   }
   summary(options, changed);
 }
@@ -475,7 +490,12 @@ async function pushFolder(options: Options) {
   // waiting per file turned a 50-image folder into 50 sequential waits.
   const processing = new Map<string, string>();
   for (const [index, file] of outdated.entries()) {
-    report("push", file.key, options, `(${index + 1}/${outdated.length})`);
+    const entry = report(
+      "push",
+      file.key,
+      options,
+      `(${index + 1}/${outdated.length})`,
+    );
     changed += 1;
     if (options.dryRun) continue;
     const target =
@@ -496,6 +516,7 @@ async function pushFolder(options: Options) {
       ),
     );
     currentAssets[file.key] = target.id;
+    entry.applied = true;
   }
   if (processing.size) {
     if (!options.json)
@@ -525,10 +546,12 @@ async function pushFolder(options: Options) {
         currentAssets[key] = assetId; // stay tracked for the next run
         continue;
       }
-      report("delete", key, options);
+      const entry = report("delete", key, options);
       changed += 1;
-      if (!options.dryRun)
+      if (!options.dryRun) {
         await context.client.deleteAsset(context.config.workspace, assetId);
+        entry.applied = true;
+      }
     }
   }
   if (!options.dryRun) {
@@ -597,12 +620,13 @@ async function pullAsset(options: Options) {
   if (localChecksum && localChecksum !== asset.checksum && !options.force)
     throw new Error(`${output} already exists; use --force to replace it`);
   if (localChecksum === asset.checksum) return summary(options, 0);
-  report("pull", `${key} -> ${output}`, options);
+  const entry = report("pull", `${key} -> ${output}`, options);
   if (!options.dryRun) {
     const bytes = await context.client.download(
       immutableAssetUrl(remote.workspaceSlug, asset.versionId, asset.key),
     );
     await atomicWrite(target, bytes);
+    entry.applied = true;
   }
   summary(options, 1);
 }
@@ -777,17 +801,24 @@ function requireApiKey(client: VardumClient) {
     );
 }
 
+/**
+ * Logs one intended change and returns its record. Callers mark the record
+ * applied once the work lands, so a --json run that dies halfway reports what
+ * actually happened instead of claiming the whole plan.
+ */
 function report(
   action: Action["action"],
   path: string,
   options: Options,
   note?: string,
 ) {
-  actions.push({ action, path, applied: !options.dryRun });
+  const entry: Action = { action, path, applied: false };
+  actions.push(entry);
   if (!options.json)
     console.log(
       `${options.dryRun ? `would ${action}` : action} ${path}${note ? `  ${note}` : ""}`,
     );
+  return entry;
 }
 
 function summary(options: Options, changed: number) {
