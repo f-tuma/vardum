@@ -150,6 +150,29 @@ proxy must preserve the original `Host` header, and it needs a certificate for
 each custom domain — behind Cloudflare that means either proxy mode with
 Flexible SSL or an origin certificate the proxy serves for that hostname.
 
+## Releasing the packages
+
+Three workspace packages are published to npm: `@vardum/shared` (wire types and
+the accepted-format tables), `@vardum/cli` and `@vardum/mcp`. The API and the
+gateway are private and stay in the repository.
+
+Bump the versions that changed, note them in `CHANGELOG.md`, then tag:
+
+```sh
+git tag v0.5.0 && git push --tags
+```
+
+The `Release` workflow runs the test suite, the build and the publish smoke
+test, then `pnpm -r publish`, which walks the workspace in dependency order and
+skips any version already on the registry — so one tag releases whatever
+changed. It needs an `NPM_TOKEN` secret (an npm automation token) on the `npm`
+environment; add required reviewers there if a release should be approved by
+hand. Publishing from a laptop works the same way: `pnpm -r publish`.
+
+Packages are published to npmjs, not GitHub Packages: installing from GitHub's
+npm registry requires a token even for public packages, which would break
+`npx @vardum/cli` and every MCP client config.
+
 ## Versions
 
 Every upload is a permanent version and the stable URL redirects to whichever
