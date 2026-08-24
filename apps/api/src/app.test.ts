@@ -38,6 +38,27 @@ test("SMTP credentials and sender must be complete", () => {
     }).SMTP_PORT,
     587,
   );
+  // Port 465 without implicit TLS connects and then hangs until the timeout.
+  assert.throws(
+    () =>
+      parseConfig({
+        NODE_ENV: "test",
+        SMTP_HOST: "smtp.example.com",
+        SMTP_FROM: "Vardum <noreply@example.com>",
+        SMTP_PORT: "465",
+      }),
+    /SMTP_SECURE/,
+  );
+  assert.equal(
+    parseConfig({
+      NODE_ENV: "test",
+      SMTP_HOST: "smtp.example.com",
+      SMTP_FROM: "Vardum <noreply@example.com>",
+      SMTP_PORT: "465",
+      SMTP_SECURE: "true",
+    }).SMTP_SECURE,
+    true,
+  );
 });
 
 test("S3 credentials must be provided together", () => {

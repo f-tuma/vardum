@@ -78,6 +78,11 @@ const schema = z
     message: "SMTP_FROM is required when SMTP_HOST is set",
     path: ["SMTP_FROM"],
   })
+  .refine(({ SMTP_PORT, SMTP_SECURE }) => SMTP_PORT !== 465 || SMTP_SECURE, {
+    message:
+      "Port 465 speaks TLS from the first byte — set SMTP_SECURE=true (or use 587)",
+    path: ["SMTP_SECURE"],
+  })
   .refine(
     ({ S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY }) =>
       Boolean(S3_ACCESS_KEY_ID) === Boolean(S3_SECRET_ACCESS_KEY),
