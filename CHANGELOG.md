@@ -16,6 +16,8 @@ All notable changes to Vardum are documented here.
 - `vardum whoami` and `vardum version`; `push-folder` shows a per-file plan,
   an upload counter and asks before deleting remote assets.
 - Upload progress in the dashboard queue.
+- `@vardum/mcp`: 25 tools for assets, Vards, workspaces, members, keys and
+  domains, with a README and `--version` / `--help`.
 
 ### Fixed
 
@@ -29,6 +31,8 @@ All notable changes to Vardum are documented here.
   hanging on every send.
 - `vardum status` reports locally edited files instead of refusing to run, and
   a bad flag prints an error instead of a stack trace.
+- The MCP server defaulted to a host that is not Vardum, so a setup with only
+  `VARDUM_API_KEY` reached nothing.
 
 ### Changed
 
@@ -36,8 +40,9 @@ All notable changes to Vardum are documented here.
   published because the CLI and the MCP server import it at runtime.
 
 `vardum login` needs this server release; against an older instance the browser
-opens a page that does not exist. Published as `@vardum/cli` 0.5.0, with
-`@vardum/shared` 0.1.0 alongside it — release both with `pnpm -r publish`.
+opens a page that does not exist. Published as `@vardum/cli` 0.5.0 and
+`@vardum/mcp` 0.1.0, with `@vardum/shared` 0.1.0 alongside them — release all
+three with `pnpm -r publish`.
 
 ## [0.1.0] - 2026-08-22
 

@@ -9,8 +9,8 @@ repo="$PWD"
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 
-pnpm --filter "@vardum/cli..." build
-for package in packages/shared apps/cli; do
+pnpm --filter "@vardum/cli..." --filter "@vardum/mcp..." build
+for package in packages/shared apps/cli apps/mcp; do
   (cd "$package" && pnpm pack --pack-destination "$staging" >/dev/null)
 done
 
@@ -46,6 +46,18 @@ done
 cd "$staging"
 npm init -y >/dev/null
 npm install --no-audit --no-fund --no-package-lock ./*.tgz >/dev/null
-version="$(./node_modules/.bin/vardum version)"
-[ "$version" = "$(node -p "require('$repo/apps/cli/package.json').version")" ]
-echo "Publish smoke test passed (@vardum/cli $version installs and runs)"
+# Each binary must answer with its own version: that proves the bin entry, the
+# built dist and the shared package all resolve from a plain npm install.
+check() {
+  local binary="$1" flag="$2" expected="$3" actual
+  actual="$("./node_modules/.bin/$binary" "$flag")"
+  [ "$actual" = "$expected" ] || {
+    echo "$binary reported '$actual', expected '$expected'" >&2
+    exit 1
+  }
+}
+cli="$(node -p "require('$repo/apps/cli/package.json').version")"
+mcp="$(node -p "require('$repo/apps/mcp/package.json').version")"
+check vardum version "$cli"
+check vardum-mcp --version "$mcp"
+echo "Publish smoke test passed (@vardum/cli $cli, @vardum/mcp $mcp install and run)"

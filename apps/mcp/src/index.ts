@@ -1,10 +1,25 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { supportedMimeTypes } from "@vardum/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 // ── CLI / env helpers ──────────────────────────────────────────────────────
+
+let VERSION = "0.0.0";
+try {
+  VERSION = JSON.parse(
+    readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+      "utf8",
+    ),
+  ).version;
+} catch {
+  // The version is cosmetic; a missing package.json must not stop the server.
+}
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -18,14 +33,36 @@ function parseArgs() {
   return result;
 }
 
+// Answered before anything else needs configuring: a client that cannot even
+// start the binary has no way to see an error that only appears after auth.
+if (process.argv.slice(2).some((arg) => arg === "--version" || arg === "-v")) {
+  console.log(VERSION);
+  process.exit(0);
+}
+if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h")) {
+  console.log(`Vardum MCP server v${VERSION}
+
+Usage:
+  vardum-mcp [--server URL] [--api-key KEY]
+
+Environment:
+  VARDUM_SERVER   Vardum instance to talk to (default https://vardum.com)
+  VARDUM_API_KEY  workspace API key; create one in Settings // API keys
+
+The server speaks MCP over stdio, so it is started by the client, not by hand.`);
+  process.exit(0);
+}
+
 // ── HTTP client ────────────────────────────────────────────────────────────
 
 const cli = parseArgs();
 const SERVER =
-  cli.server ?? process.env.VARDUM_SERVER ?? "https://app.vardum.dev";
+  cli.server ?? process.env.VARDUM_SERVER ?? "https://vardum.com";
 const API_KEY = cli["api-key"] ?? process.env.VARDUM_API_KEY ?? "";
 
-const headers: Record<string, string> = { "user-agent": "vardum-mcp/0.1.0" };
+const headers: Record<string, string> = {
+  "user-agent": `vardum-mcp/${VERSION}`,
+};
 if (API_KEY) headers["x-api-key"] = API_KEY;
 
 async function api<T = unknown>(
