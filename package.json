@@ -13,8 +13,8 @@
     "build": "pnpm -r build",
     "dev": "docker compose --profile storage up -d --wait && pnpm --filter @vardum/shared build && pnpm --filter @vardum/api db:migrate && pnpm -r --parallel dev",
     "dev:apps": "pnpm -r --parallel dev",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @vardum/shared build && pnpm -r test",
+    "typecheck": "pnpm --filter @vardum/shared build && pnpm -r typecheck",
     "vardum": "tsx apps/cli/src/index.ts"
   },
   "devDependencies": {

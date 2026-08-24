@@ -40,7 +40,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Build CLI before starting Docker compose
-pnpm --filter @vardum/cli build
+pnpm --filter "@vardum/cli..." build
 
 # The bundled object store comes up first: `up --wait` treats a one-shot
 # container finishing mid-start as an early exit, so the bucket is created
