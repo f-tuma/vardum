@@ -12,9 +12,32 @@ All notable changes to Vardum are documented here.
 - Per-asset delivery figures and a transform cache ratio.
 - `vardum status` and `--json` output for CI.
 - `vardum login`: browser authorization that stores a scoped workspace key.
+- Video assets: MP4, WebM, MOV, AVI and MPEG are stored and delivered as-is.
+- `vardum whoami` and `vardum version`; `push-folder` shows a per-file plan,
+  an upload counter and asks before deleting remote assets.
+- Upload progress in the dashboard queue.
+
+### Fixed
+
+- Videos opened directly now play: the delivery CSP allowed no media source.
+- Custom domains verify on the TXT record alone — a domain proxied through
+  Cloudflare answers with flattened A records, so its CNAME is never visible.
+- Signed transformations of a video answer 415 instead of failing with 502.
+- An invitation whose email cannot be sent no longer answers 500 and leaves a
+  pending invitation that blocks re-inviting.
+- `SMTP_PORT=465` without `SMTP_SECURE=true` is rejected at startup instead of
+  hanging on every send.
+- `vardum status` reports locally edited files instead of refusing to run, and
+  a bad flag prints an error instead of a stack trace.
+
+### Changed
+
+- Wire types and the accepted-format tables moved to `@vardum/shared`, which is
+  published because the CLI and the MCP server import it at runtime.
 
 `vardum login` needs this server release; against an older instance the browser
-opens a page that does not exist. Published as `@vardum/cli` 0.2.0.
+opens a page that does not exist. Published as `@vardum/cli` 0.5.0, with
+`@vardum/shared` 0.1.0 alongside it — release both with `pnpm -r publish`.
 
 ## [0.1.0] - 2026-08-22
 

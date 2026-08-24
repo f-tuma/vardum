@@ -1,6 +1,6 @@
 {
   "name": "@vardum/cli",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Developer-first CLI for syncing Vardum Vards into a project",
   "license": "MIT",
   "type": "module",
@@ -29,6 +29,6 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
-    "@vardum/shared": "workspace:*"
+    "@vardum/shared": "workspace:^"
   }
 }
