@@ -14,17 +14,19 @@ const asset = (key: string): SyncAsset =>
     size: 0,
   }) as SyncAsset;
 
-test("collectFolders counts top-level folders and skips root files", () => {
+test("collectFolders counts every folder, nested ones included", () => {
   assert.deepEqual(collectFolders([]), []);
   assert.deepEqual(
     collectFolders([
       asset("beach/sunset.avif"),
       asset("beach/waves.avif"),
+      asset("beach/wide/panorama.avif"),
       asset("mountains/peak.avif"),
       asset("root.avif"),
     ]),
     [
-      ["beach", 2],
+      ["beach", 3],
+      ["beach/wide", 1],
       ["mountains", 1],
     ],
   );

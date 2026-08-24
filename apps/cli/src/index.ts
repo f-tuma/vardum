@@ -59,35 +59,44 @@ type PushLock = {
 };
 
 const [command = "help", ...rawArgs] = process.argv.slice(2);
+const helpCommands = ["help", "--help", "-h"];
+const versionCommands = ["version", "--version", "-v"];
+// Parsed before the try so the error handler can read --json without parsing
+// again — a second parse of a bad flag used to throw inside the catch.
+const json = rawArgs.includes("--json");
 
-if (
-  command !== "update" &&
-  command !== "help" &&
-  command !== "--help" &&
-  command !== "-h"
-)
+if (![...helpCommands, ...versionCommands, "update"].includes(command))
   maybeWarnOutdated();
 
 try {
-  const options = parseOptions(rawArgs);
-  if (command === "init") await init(options);
-  else if (command === "login") await login(options);
-  else if (command === "logout") await logout(options);
-  else if (command === "status") await pull({ ...options, dryRun: true });
-  else if (command === "pull" || command === "sync") await pull(options);
-  else if (command === "push") await push(options);
-  else if (command === "push-folder") await pushFolder(options);
-  else if (command === "pull-asset") await pullAsset(options);
-  else if (command === "update") await update(options);
-  else if (command === "help" || command === "--help" || command === "-h")
-    help();
-  else throw new Error(`Unknown command: ${command}`);
+  if (helpCommands.includes(command)) help();
+  else if (versionCommands.includes(command)) console.log(VERSION);
+  else {
+    const options = parseOptions(rawArgs);
+    if (command === "init") await init(options);
+    else if (command === "login") await login(options);
+    else if (command === "logout") await logout(options);
+    else if (command === "whoami") await whoami(options);
+    else if (command === "status") await pull({ ...options, dryRun: true });
+    else if (command === "pull" || command === "sync") await pull(options);
+    else if (command === "push") await push(options);
+    else if (command === "push-folder") await pushFolder(options);
+    else if (command === "pull-asset") await pullAsset(options);
+    else if (command === "update") await update(options);
+    else
+      throw new Error(`Unknown command: ${command}. Run vardum help for the list.`);
+  }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
+  // Node's readline reports a closed stdin as "Aborted with Ctrl+D", which
+  // reads like a crash when someone simply changed their mind at a prompt.
+  const cancelled = /Ctrl\+D|Ctrl\+C/.test(message);
   console.error(
-    parseOptions(rawArgs).json
-      ? JSON.stringify({ error: message })
-      : `vardum: ${message}`,
+    json
+      ? JSON.stringify({ error: cancelled ? "Cancelled" : message })
+      : cancelled
+        ? "vardum: cancelled"
+        : `vardum: ${message}`,
   );
   process.exitCode = 1;
 }
@@ -193,6 +202,45 @@ async function logout(options: Options) {
   summary(options, removed ? 1 : 0);
 }
 
+/**
+ * Where this project points and which key it would use. No network call: the
+ * question "am I logged in and against what" should be answerable offline.
+ */
+async function whoami(options: Options) {
+  const context = await loadContext();
+  const stored = await readCredential(
+    context.config.server,
+    context.config.workspace,
+  );
+  const keySource = process.env.VARDUM_API_KEY
+    ? "VARDUM_API_KEY"
+    : stored
+      ? credentialsPath()
+      : "none — run vardum login";
+  if (options.json) {
+    console.log(
+      JSON.stringify(
+        {
+          config: context.path,
+          server: context.config.server,
+          workspace: context.config.workspace,
+          vard: context.config.vard,
+          keySource,
+          authenticated: context.client.authenticated,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(`  config:    ${relative(process.cwd(), context.path) || context.path}`);
+  console.log(`  server:    ${context.config.server}`);
+  console.log(`  workspace: ${context.config.workspace}`);
+  console.log(`  vard:      ${context.config.vard}`);
+  console.log(`  key:       ${keySource}`);
+}
+
 /** The project context, or nothing when the command runs outside a project. */
 async function optionalContext() {
   try {
@@ -241,10 +289,13 @@ async function pull(options: Options) {
       ),
   );
   const conflicts = planned.filter(({ decision }) => decision === "conflict");
-  if (conflicts.length && !options.force)
+  // A dry run is a report: vardum status used to fail outright the moment a
+  // tracked file had local edits, which is exactly when it is worth running.
+  if (conflicts.length && !options.force && !options.dryRun)
     throw new Error(
       `Local changes would be overwritten: ${conflicts.map(({ item }) => item.outputPath).join(", ")}. Use --force to pull anyway.`,
     );
+
   if (options.delete && !options.force) {
     const modifiedStale = [] as string[];
     for (const [, locked] of stale) {
@@ -262,7 +313,12 @@ async function pull(options: Options) {
   for (const plan of planned) {
     let localChecksum = plan.localChecksum;
     if (plan.decision !== "skip") {
-      report("pull", plan.item.outputPath, options);
+      report(
+        "pull",
+        plan.item.outputPath,
+        options,
+        plan.decision === "conflict" ? "(local edits — needs --force)" : undefined,
+      );
       if (!options.dryRun) {
         const bytes = await context.client.download(plan.item.downloadUrl!);
         await atomicWrite(plan.target, bytes);
@@ -407,47 +463,74 @@ async function pushFolder(options: Options) {
   const lockKey = `${relative(context.directory, directory) || "."}:${prefix}`;
   const previous = pushLock.entries[lockKey]?.assets ?? {};
   const currentAssets: Record<string, string> = {};
-  let changed = 0;
-  for (const file of local) {
+  const outdated = local.filter((file) => {
     const existing = byKey.get(file.key);
-    if (existing?.checksum === file.checksum) {
-      currentAssets[file.key] = existing.id;
-      continue;
-    }
-    report("push", file.key, options);
+    if (existing?.checksum !== file.checksum) return true;
+    currentAssets[file.key] = existing.id;
+    return false;
+  });
+
+  let changed = 0;
+  // Uploads finalize as they go and processing is awaited once at the end:
+  // waiting per file turned a 50-image folder into 50 sequential waits.
+  const processing = new Map<string, string>();
+  for (const [index, file] of outdated.entries()) {
+    report("push", file.key, options, `(${index + 1}/${outdated.length})`);
     changed += 1;
     if (options.dryRun) continue;
     const target =
-      existing ??
+      byKey.get(file.key) ??
       (await context.client.createAsset(
         context.config.workspace,
         file.key,
         basename(file.relative),
       ));
-    const versionId = await context.client.uploadVersion(
-      context.config.workspace,
-      target.id,
-      basename(file.relative),
-      file.mimeType,
-      await readFile(file.absolute),
-    );
-    await waitForAssetVersion(
-      context.client,
-      context.config.workspace,
+    processing.set(
       file.key,
-      versionId,
+      await context.client.uploadVersion(
+        context.config.workspace,
+        target.id,
+        basename(file.relative),
+        file.mimeType,
+        await readFile(file.absolute),
+      ),
     );
     currentAssets[file.key] = target.id;
   }
+  if (processing.size) {
+    if (!options.json)
+      console.log(`waiting for ${processing.size} upload(s) to process…`);
+    await waitForAssetVersions(
+      context.client,
+      context.config.workspace,
+      prefix,
+      processing,
+    );
+  }
 
-  if (options.delete)
-    for (const [key, assetId] of Object.entries(previous)) {
-      if (local.some((file) => file.key === key)) continue;
+  if (options.delete) {
+    const removable = Object.entries(previous).filter(
+      ([key]) => !local.some((file) => file.key === key),
+    );
+    // Deleting an asset drops every stored version of it, so name them and ask
+    // before doing it. CI (no TTY) keeps the old unattended behaviour.
+    const confirmed =
+      !removable.length ||
+      options.force ||
+      options.json ||
+      !stdin.isTTY ||
+      (await confirmDeletion(removable.map(([key]) => key)));
+    for (const [key, assetId] of removable) {
+      if (!confirmed) {
+        currentAssets[key] = assetId; // stay tracked for the next run
+        continue;
+      }
       report("delete", key, options);
       changed += 1;
       if (!options.dryRun)
         await context.client.deleteAsset(context.config.workspace, assetId);
     }
+  }
   if (!options.dryRun) {
     pushLock.entries[lockKey] = {
       directory: relative(context.directory, directory) || ".",
@@ -463,14 +546,7 @@ async function pushFolder(options: Options) {
 }
 
 async function update(options: Options) {
-  const result = await updateVardum({
-    json: options.json,
-  });
-  if (options.json) {
-    console.log(result);
-  } else {
-    console.log(result);
-  }
+  console.log(await updateVardum({ json: options.json }));
 }
 
 /**
@@ -484,7 +560,7 @@ async function resolveFolderPrefix(
   positionalPrefix: string | undefined,
   context: { client: VardumClient; config: VardConfig },
   directory: string,
-  files: Array<{ absolute: string; relative: string; mimeType: string }>,
+  files: Awaited<ReturnType<typeof imageFiles>>,
 ): Promise<string | null> {
   if (positionalPrefix !== undefined) return positionalPrefix;
   if (!options.json && stdin.isTTY) {
@@ -594,24 +670,41 @@ function assertManifest(manifest: Manifest, config: VardConfig) {
     throw new Error("Vard does not belong to the configured workspace");
 }
 
-async function waitForAssetVersion(
+/** Waits for every uploaded version to turn ready, one listing per round. */
+async function waitForAssetVersions(
   client: VardumClient,
   workspaceId: string,
-  key: string,
-  versionId: string,
+  prefix: string,
+  pending: Map<string, string>,
 ) {
-  const prefix = key.includes("/") ? `${dirname(key)}/` : "";
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  const waiting = new Map(pending);
+  for (let attempt = 0; attempt < 120 && waiting.size; attempt += 1) {
     const listing = await client.syncAssets(workspaceId, prefix);
-    if (
-      listing.assets.some(
-        (asset) => asset.key === key && asset.versionId === versionId,
-      )
-    )
-      return;
+    for (const asset of listing.assets)
+      if (waiting.get(asset.key) === asset.versionId) waiting.delete(asset.key);
+    if (!waiting.size) return;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
   }
-  throw new Error(`Timed out waiting for asset processing: ${key}`);
+  throw new Error(
+    `Timed out waiting for asset processing: ${[...waiting.keys()].join(", ")}`,
+  );
+}
+
+async function confirmDeletion(keys: string[]) {
+  console.log(`\nThese ${keys.length} asset(s) are no longer in the folder:`);
+  for (const key of keys.slice(0, 10)) console.log(`  ${key}`);
+  if (keys.length > 10) console.log(`  … and ${keys.length - 10} more`);
+  const prompts = createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = (await prompts.question("Delete them from Vardum? [y/N] "))
+      .trim()
+      .toLowerCase();
+    if (["y", "yes"].includes(answer)) return true;
+    console.log("Keeping them.");
+    return false;
+  } finally {
+    prompts.close();
+  }
 }
 
 async function waitForManifestVersion(
@@ -684,10 +777,17 @@ function requireApiKey(client: VardumClient) {
     );
 }
 
-function report(action: Action["action"], path: string, options: Options) {
+function report(
+  action: Action["action"],
+  path: string,
+  options: Options,
+  note?: string,
+) {
   actions.push({ action, path, applied: !options.dryRun });
   if (!options.json)
-    console.log(`${options.dryRun ? `would ${action}` : action} ${path}`);
+    console.log(
+      `${options.dryRun ? `would ${action}` : action} ${path}${note ? `  ${note}` : ""}`,
+    );
 }
 
 function summary(options: Options, changed: number) {
@@ -709,6 +809,8 @@ Usage:
   vardum init [--server URL --workspace ID --vard ID] [--force]
   vardum login [--server URL]
   vardum logout [--server URL --workspace ID]
+  vardum whoami
+  vardum version
   vardum update [--json]
   vardum status [--delete]
   vardum sync [--dry-run] [--delete] [--force]
@@ -726,9 +828,11 @@ Authentication:
   VARDUM_API_KEY overrides that stored key, so CI stays explicit.
 
 Safety:
-  status is pull without writing anything.
+  status is pull without writing anything, and reports local conflicts
+  instead of refusing to run.
   Pull and push use .vardum.lock for conflict detection.
-  --delete removes only files/assets tracked by a previous CLI run.
+  --delete removes only files/assets tracked by a previous CLI run, and
+  asks first when it would delete remote assets in a terminal.
 
 Updates:
   vardum update detects whether the CLI is installed globally or locally

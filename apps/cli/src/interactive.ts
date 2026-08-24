@@ -3,9 +3,14 @@ import { relative, resolve } from "node:path";
 import type { SyncAsset, VardumClient } from "./client.js";
 import { assetKey, assetPrefix } from "./sync.js";
 
-type ScannedFile = { absolute: string; relative: string; mimeType: string };
+type ScannedFile = {
+  absolute: string;
+  relative: string;
+  mimeType: string;
+  size: number;
+};
 
-const maxPlanRows = 25;
+const maxPlanRows = 15;
 
 /**
  * The interactive half of `vardum push-folder`: pick the workspace folder these
@@ -22,8 +27,9 @@ export async function planPushFolder(
   files: ScannedFile[],
 ): Promise<string | null> {
   const display = relative(process.cwd(), resolve(directory)) || ".";
+  const bytes = files.reduce((total, file) => total + file.size, 0);
   console.log(
-    `\nScanning ${display} …  ${files.length} image${files.length === 1 ? "" : "s"} found.`,
+    `\nScanning ${display} …  ${files.length} file${files.length === 1 ? "" : "s"}, ${formatBytes(bytes)}.`,
   );
 
   const existing = await client.syncAssets(workspaceId, "");
@@ -34,7 +40,7 @@ export async function planPushFolder(
     const prefix = await chooseFolder(prompts, folders);
     if (prefix === null) return null;
     const plan = await buildPlan(client, workspaceId, prefix, files);
-    showPlan(prefix, plan, files.length);
+    showPlan(prefix, plan);
     const action = await confirm(prompts);
     if (action === "quit") return null;
     if (action === "edit") continue;
@@ -42,14 +48,21 @@ export async function planPushFolder(
   }
 }
 
-/** Top-level folders present in the workspace, each with its asset count. */
+/**
+ * Every folder in the workspace with the number of assets below it. Nested
+ * folders are listed too: offering only the top level hid half a workspace
+ * from the picker, even though typing the nested name always worked.
+ */
 export function collectFolders(assets: SyncAsset[]) {
   const counts = new Map<string, number>();
   for (const asset of assets) {
-    const slash = asset.key.indexOf("/");
-    if (slash <= 0) continue; // root files have no folder
-    const folder = asset.key.slice(0, slash);
-    counts.set(folder, (counts.get(folder) ?? 0) + 1);
+    const segments = asset.key.split("/");
+    segments.pop(); // the filename
+    let folder = "";
+    for (const segment of segments) {
+      folder = folder ? `${folder}/${segment}` : segment;
+      counts.set(folder, (counts.get(folder) ?? 0) + 1);
+    }
   }
   return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
@@ -93,7 +106,7 @@ async function chooseFolder(
   }
 }
 
-type Plan = { fresh: number; present: number };
+type Plan = { rows: Array<{ key: string; replaces: boolean }>; bytes: number };
 
 async function buildPlan(
   client: VardumClient,
@@ -103,18 +116,36 @@ async function buildPlan(
 ): Promise<Plan> {
   const under = await client.syncAssets(workspaceId, prefix);
   const keys = new Set(under.assets.map((asset) => asset.key));
-  let fresh = 0;
-  let present = 0;
-  for (const file of files)
-    if (keys.has(assetKey(prefix, file.relative))) present += 1;
-    else fresh += 1;
-  return { fresh, present };
+  return {
+    rows: files.map((file) => {
+      const key = assetKey(prefix, file.relative);
+      return { key, replaces: keys.has(key) };
+    }),
+    bytes: files.reduce((total, file) => total + file.size, 0),
+  };
 }
 
-function showPlan(prefix: string, plan: Plan, total: number) {
-  const target = prefix ? `→ ${prefix}` : "→ workspace root";
-  console.log(`\nPlan  ${target}  ${total} image${total === 1 ? "" : "s"}`);
-  console.log(`  ${plan.fresh} new  ·  ${plan.present} replace existing`);
+function showPlan(prefix: string, plan: Plan) {
+  const fresh = plan.rows.filter((row) => !row.replaces).length;
+  console.log(
+    `\nPlan  → ${prefix || "workspace root"}  ${plan.rows.length} file(s), ${formatBytes(plan.bytes)}`,
+  );
+  console.log(`  ${fresh} new  ·  ${plan.rows.length - fresh} replace existing`);
+  for (const row of plan.rows.slice(0, maxPlanRows))
+    console.log(`  ${row.replaces ? "replace" : "new    "}  ${row.key}`);
+  if (plan.rows.length > maxPlanRows)
+    console.log(`  … and ${plan.rows.length - maxPlanRows} more`);
+}
+
+function formatBytes(bytes: number) {
+  const units = ["B", "kB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
 async function confirm(prompts: Interface): Promise<"push" | "edit" | "quit"> {

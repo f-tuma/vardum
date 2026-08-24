@@ -59,7 +59,10 @@ export async function findConfig(start = process.cwd()) {
       if (!isMissing(error)) throw error;
     }
     const parent = dirname(directory);
-    if (parent === directory) throw new Error("vardum.json not found");
+    if (parent === directory)
+      throw new Error(
+        "vardum.json not found in this directory or any parent — run vardum init",
+      );
     directory = parent;
   }
 }
@@ -125,10 +128,15 @@ export async function removeTracked(path: string, root: string) {
   }
 }
 
+/** Every uploadable file below root, with the size the plan shows before pushing. */
 export async function imageFiles(root: string) {
   const base = await realpath(root);
-  const files: Array<{ absolute: string; relative: string; mimeType: string }> =
-    [];
+  const files: Array<{
+    absolute: string;
+    relative: string;
+    mimeType: string;
+    size: number;
+  }> = [];
   async function walk(directory: string) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (entry.name.startsWith(".")) continue;
@@ -141,6 +149,7 @@ export async function imageFiles(root: string) {
             absolute,
             relative: relative(base, absolute).split(sep).join("/"),
             mimeType,
+            size: (await lstat(absolute)).size,
           });
       }
     }

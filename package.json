@@ -15,7 +15,7 @@
     "dev:apps": "pnpm -r --parallel dev",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "vardum": "pnpm --filter @vardum/cli dev --"
+    "vardum": "tsx apps/cli/src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
