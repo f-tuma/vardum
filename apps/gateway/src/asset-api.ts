@@ -348,7 +348,7 @@ export function createWorkspaceInvitation(
   workspaceId: string,
   input: Pick<WorkspaceInvitation, "email" | "role">,
 ) {
-  return request<WorkspaceInvitation>(
+  return request<WorkspaceInvitation & { emailSent: boolean }>(
     `/api/workspaces/${workspaceId}/invitations`,
     {
       method: "POST",

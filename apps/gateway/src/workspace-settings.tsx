@@ -487,12 +487,16 @@ export function OrganizationInvitations({
     setError("");
     setMessage("");
     try {
-      await createWorkspaceInvitation(workspaceId, {
+      const created = await createWorkspaceInvitation(workspaceId, {
         email: String(form.get("email")),
         role: String(form.get("role")) as WorkspaceInvitation["role"],
       });
       formElement.reset();
-      setMessage("Invitation sent");
+      setMessage(
+        created.emailSent
+          ? "Invitation sent"
+          : "Invitation created, but the email could not be sent — use Resend",
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Invitation failed");
     } finally {

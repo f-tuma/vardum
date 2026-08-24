@@ -197,13 +197,24 @@ export function registerInvitationRoutes(app: FastifyInstance) {
       if (result.status === "pending")
         return reply.code(409).send({ error: "Invitation is already pending" });
 
-      await sendInvitation({
+      // The row is already committed, so a failing mail server must not turn
+      // into a 500: the invitation exists, is listed, and can be resent.
+      const emailSent = await sendInvitation({
         ...result.invitation,
         role: result.invitation.role ?? "viewer",
         organizationName: result.organizationName,
         inviterName: result.inviterName,
-      });
-      return reply.code(201).send(result.invitation);
+      }).then(
+        () => true,
+        (error) => {
+          request.log.error(
+            { error, invitationId: result.invitation.id },
+            "Invitation email failed",
+          );
+          return false;
+        },
+      );
+      return reply.code(201).send({ ...result.invitation, emailSent });
     },
   );
 
@@ -272,13 +283,20 @@ export function registerInvitationRoutes(app: FastifyInstance) {
 
       if (!result)
         return reply.code(404).send({ error: "Pending invitation not found" });
-      await sendInvitation({
-        id: result.id,
-        email: result.email,
-        role: result.role ?? "viewer",
-        organizationName: result.organizationName,
-        inviterName: result.inviterName,
-      });
+      try {
+        await sendInvitation({
+          id: result.id,
+          email: result.email,
+          role: result.role ?? "viewer",
+          organizationName: result.organizationName,
+          inviterName: result.inviterName,
+        });
+      } catch (error) {
+        request.log.error({ error, invitationId }, "Invitation email failed");
+        return reply
+          .code(502)
+          .send({ error: "The invitation email could not be sent" });
+      }
       return { expiresAt: result.expiresAt };
     },
   );
