@@ -129,7 +129,7 @@ Every asset has a unique key scoped to a workspace. Rules:
 - Image types: AVIF, GIF, JPEG, PNG, SVG, TIFF, WebP
 - Video types: MP4, WebM, MOV, AVI, MPEG
 - Max 100 megapixels per image; videos are stored as-is (no transcode)
-- Storage backend caps at 100 MiB per upload
+- Per-upload size ceiling is set by the server, and differs for images and videos (the API rejects anything over it)
 - Video assets cannot be resized or transformed into variants (images only)
 
 ## Writable outputs

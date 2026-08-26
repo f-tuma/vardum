@@ -9,7 +9,9 @@ import {
   deleteAsset,
   deleteFolder,
   getAsset,
+  formatUploadLimit,
   getAssetDelivery,
+  getUploadLimits,
   importAssets,
   listAssets,
   listAssetVersions,
@@ -627,6 +629,7 @@ function NewAssetForm({
                 onChange={inferFields}
                 required
               />
+              <UploadLimitHint />
             </label>
             <span className="muted" role="status">
               {status}
@@ -1302,6 +1305,7 @@ function VersionForm({
             accept={uploadAccept}
             required
           />
+          <UploadLimitHint />
         </label>
         <button disabled={pending}>Upload</button>
         <span className="muted" role="status">
@@ -1309,6 +1313,21 @@ function VersionForm({
         </span>
       </form>
     </section>
+  );
+}
+
+function UploadLimitHint() {
+  const limits = useQuery({
+    queryKey: ["upload-limits"],
+    queryFn: getUploadLimits,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  if (!limits.data) return null;
+  return (
+    <span className="muted">
+      Images up to {formatUploadLimit(limits.data.image)}, videos up to{" "}
+      {formatUploadLimit(limits.data.video)}
+    </span>
   );
 }
 

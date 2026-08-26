@@ -1,4 +1,10 @@
-import type { SyncAsset, VardItem, VardManifest } from "@vardum/shared";
+import { uploadLimitFor } from "@vardum/shared";
+import type {
+  SyncAsset,
+  UploadLimits,
+  VardItem,
+  VardManifest,
+} from "@vardum/shared";
 
 export type Manifest = VardManifest;
 export type ManifestItem = VardItem;
@@ -28,6 +34,13 @@ export class VardumClient {
 
   get authenticated() {
     return Boolean(this.apiKey);
+  }
+
+  /** Server-configured ceilings; fetched once and reused for every upload. */
+  private limits?: Promise<UploadLimits>;
+  uploadLimits() {
+    this.limits ??= this.request<UploadLimits>("/api/upload-limits");
+    return this.limits;
   }
 
   /** Revokes the key this client is holding. */
@@ -92,6 +105,13 @@ export class VardumClient {
     mimeType: string,
     bytes: Uint8Array,
   ) {
+    // ponytail: checked here, after the file is read — every caller passes
+    // through this method, and a rejected file is the rare case.
+    const limit = uploadLimitFor(await this.uploadLimits(), mimeType);
+    if (bytes.byteLength > limit)
+      throw new Error(
+        `${filename} is ${megabytes(bytes.byteLength)} — the limit for this file type is ${megabytes(limit)}`,
+      );
     const upload = await this.request<Upload>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(assetId)}/versions`,
       {
@@ -177,4 +197,8 @@ function safeHttpUrl(value: string) {
   )
     throw new Error("Upload URL must be HTTP(S) without embedded credentials");
   return url;
+}
+
+function megabytes(bytes: number) {
+  return `${Math.round(bytes / 1024 / 1024)} MB`;
 }

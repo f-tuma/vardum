@@ -63,3 +63,15 @@ export function mimeForFilename(filename: string): SupportedMimeType | null {
 export const uploadAccept = Object.keys(extensionMimeTypes)
   .map((extension) => `.${extension}`)
   .join(",");
+
+/** Per-kind upload ceilings in bytes, as the API reports them. */
+export type UploadLimits = { image: number; video: number; file: number };
+
+/** Files are the future generic kind: whatever is neither image nor video. */
+export function uploadLimitFor(limits: UploadLimits, mimeType: string) {
+  return videoMimeSet.has(mimeType)
+    ? limits.video
+    : mimeType.startsWith("image/")
+      ? limits.image
+      : limits.file;
+}

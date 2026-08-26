@@ -39,6 +39,11 @@ const schema = z
         message: "SMTP_FROM cannot contain line breaks",
       },
     ),
+    // Per-kind upload ceilings, in MiB. Files are the future generic kind:
+    // anything that is neither an image nor a video falls under it.
+    UPLOAD_MAX_IMAGE_MB: z.coerce.number().int().min(1).default(25),
+    UPLOAD_MAX_VIDEO_MB: z.coerce.number().int().min(1).default(200),
+    UPLOAD_MAX_FILE_MB: z.coerce.number().int().min(1).default(100),
     S3_REGION: z.string().default("us-east-1"),
     S3_BUCKET: z.string().min(3).default("varda"),
     S3_ENDPOINT: z.url().optional(),

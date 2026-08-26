@@ -38,9 +38,8 @@ import {
   transformedAssetUrl,
   type Transformation,
 } from "./transformation.js";
+import { maximumUploadSize, uploadLimits } from "./upload-limits.js";
 
-// ponytail: single-request uploads are capped at 100 MiB; add multipart above this ceiling.
-const maximumUploadSize = 100 * 1024 * 1024;
 const thumbnailTransformation = {
   w: 640,
   h: 400,
@@ -93,15 +92,20 @@ export const assetKey = z
   .string()
   .max(255)
   .regex(/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/);
-const uploadBody = z.object({
-  filename: z
-    .string()
-    .min(1)
-    .max(255)
-    .regex(/^[^/\\\u0000-\u001f]+$/),
-  mimeType: z.enum(supportedMimeTypes),
-  size: z.number().int().min(1).max(maximumUploadSize),
-});
+const uploadBody = z
+  .object({
+    filename: z
+      .string()
+      .min(1)
+      .max(255)
+      .regex(/^[^/\\\u0000-\u001f]+$/),
+    mimeType: z.enum(supportedMimeTypes),
+    size: z.number().int().min(1),
+  })
+  .refine(({ mimeType, size }) => size <= maximumUploadSize(mimeType), {
+    message: "File is larger than the upload limit for its type",
+    path: ["size"],
+  });
 
 const auditColumns = {
   id: auditEvent.id,
@@ -191,6 +195,24 @@ function thumbnailUrl(
 
 export function registerAssetRoutes(app: FastifyInstance) {
   const api = app.withTypeProvider<ZodTypeProvider>();
+
+  // Public: the clients need the ceilings to reject a file before uploading it,
+  // and they are configuration, not data.
+  api.get(
+    "/api/upload-limits",
+    {
+      schema: {
+        response: {
+          200: z.object({
+            image: z.number(),
+            video: z.number(),
+            file: z.number(),
+          }),
+        },
+      },
+    },
+    async () => uploadLimits,
+  );
 
   api.get(
     "/api/workspaces/:workspaceId/overview",
@@ -374,10 +396,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       for (const object of page.objects) {
         if (
-          reservedPrefixes.some((reserved) =>
-            object.key.startsWith(reserved),
-          ) ||
-          object.size > maximumUploadSize
+          reservedPrefixes.some((reserved) => object.key.startsWith(reserved))
         ) {
           skipped += 1;
           continue;
@@ -391,7 +410,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           const head = await headObject(object.key).catch(() => null);
           mimeType = importedMimeType(object.key, head?.ContentType);
         }
-        if (!key || !mimeType) {
+        if (!key || !mimeType || object.size > maximumUploadSize(mimeType)) {
           skipped += 1;
           continue;
         }

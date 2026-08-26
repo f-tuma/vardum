@@ -1,12 +1,19 @@
-import { mimeForFilename } from "@vardum/shared";
+import { mimeForFilename, uploadLimitFor } from "@vardum/shared";
 import type {
   SyncAsset,
   Transformation as TransformationInput,
+  UploadLimits,
   VardItem,
   VardManifest,
 } from "@vardum/shared";
 
-export type { SyncAsset, TransformationInput, VardItem, VardManifest };
+export type {
+  SyncAsset,
+  TransformationInput,
+  UploadLimits,
+  VardItem,
+  VardManifest,
+};
 
 export type VardSummary = {
   id: string;
@@ -488,6 +495,17 @@ export function deleteAsset(workspaceId: string, assetId: string) {
   });
 }
 
+// Configuration, not data: fetched once and reused for every upload.
+let uploadLimits: Promise<UploadLimits> | undefined;
+export function getUploadLimits() {
+  uploadLimits ??= request<UploadLimits>("/api/upload-limits");
+  return uploadLimits;
+}
+
+export function formatUploadLimit(bytes: number) {
+  return `${Math.round(bytes / 1024 / 1024)} MB`;
+}
+
 export function createAsset(
   workspaceId: string,
   input: { key: string; displayName: string },
@@ -505,6 +523,14 @@ export async function uploadVersion(
   file: File,
   onProgress?: (status: string, fraction?: number) => void,
 ) {
+  const declaredType =
+    mimeForFilename(file.name) || file.type || "application/octet-stream";
+  const limit = uploadLimitFor(await getUploadLimits(), declaredType);
+  if (file.size > limit)
+    throw new Error(
+      `${file.name} is ${formatUploadLimit(file.size)} — the limit for this file type is ${formatUploadLimit(limit)}`,
+    );
+
   onProgress?.("Requesting upload…");
   const version = await request<UploadVersion>(
     `/api/workspaces/${workspaceId}/assets/${assetId}/versions`,
@@ -513,10 +539,7 @@ export async function uploadVersion(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         filename: file.name,
-        mimeType:
-          mimeForFilename(file.name) ||
-          file.type ||
-          "application/octet-stream",
+        mimeType: declaredType,
         size: file.size,
       }),
     },
