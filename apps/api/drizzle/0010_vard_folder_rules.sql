@@ -1,0 +1,1 @@
+ALTER TABLE "vard" ADD COLUMN "folder_rules" jsonb DEFAULT '[]'::jsonb NOT NULL;

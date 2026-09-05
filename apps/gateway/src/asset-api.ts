@@ -5,6 +5,8 @@ import type {
   UploadLimits,
   VardItem,
   VardManifest,
+  VardDefinition,
+  VardFolderRule,
 } from "@vardum/shared";
 
 export type {
@@ -14,6 +16,11 @@ export type {
   VardItem,
   VardManifest,
 };
+
+export type VardMetadata = Pick<
+  VardDefinition,
+  "id" | "name" | "isPublic" | "updatedAt" | "folderRules"
+>;
 
 export type VardSummary = {
   id: string;
@@ -70,6 +77,7 @@ export type DeliverySummary = {
 };
 
 export type AssetSummary = {
+  isPublic: boolean;
   id: string;
   key: string;
   displayName: string;
@@ -85,6 +93,17 @@ export type AssetSummary = {
   customDomain?: string | null;
   updatedAt: string;
 };
+
+// Private browser links must share the app cookie, never a custom-domain origin.
+export function assetDeliveryPath(
+  workspaceSlug: string,
+  asset: Pick<AssetSummary, "key" | "isPublic" | "customDomain">,
+) {
+  const encodedKey = asset.key.split("/").map(encodeURIComponent).join("/");
+  return asset.isPublic && asset.customDomain
+    ? `https://${asset.customDomain}/w/${encodedKey}`
+    : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
+}
 
 type CreatedAsset = Pick<AssetSummary, "id" | "key" | "displayName">;
 type UploadVersion = {
@@ -173,9 +192,9 @@ export function listVards(workspaceId: string) {
 
 export function createVard(
   workspaceId: string,
-  input: { name: string; isPublic: boolean },
+  input: { name: string; isPublic: boolean; folderRules?: VardFolderRule[] },
 ) {
-  return request<VardSummary>(`/api/workspaces/${workspaceId}/vards`, {
+  return request<VardMetadata>(`/api/workspaces/${workspaceId}/vards`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -183,17 +202,23 @@ export function createVard(
 }
 
 export function getVard(workspaceId: string, vardId: string) {
-  return request<VardManifest>(
+  return request<VardDefinition>(
     `/api/workspaces/${workspaceId}/vards/${vardId}`,
+  );
+}
+
+export function getVardManifest(workspaceId: string, vardId: string) {
+  return request<VardManifest>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}/manifest`,
   );
 }
 
 export function updateVard(
   workspaceId: string,
   vardId: string,
-  input: { name?: string; isPublic?: boolean },
+  input: { name?: string; isPublic?: boolean; folderRules?: VardFolderRule[] },
 ) {
-  return request<VardSummary>(
+  return request<VardMetadata>(
     `/api/workspaces/${workspaceId}/vards/${vardId}`,
     {
       method: "PATCH",
@@ -214,7 +239,7 @@ export function replaceVardItems(
     writable: boolean;
   }>,
 ) {
-  return request<VardManifest>(
+  return request<VardDefinition>(
     `/api/workspaces/${workspaceId}/vards/${vardId}/items`,
     {
       method: "PUT",
@@ -489,6 +514,21 @@ export function getAsset(workspaceId: string, assetId: string) {
   );
 }
 
+export function setAssetVisibility(
+  workspaceId: string,
+  assetId: string,
+  isPublic: boolean,
+) {
+  return request<{ isPublic: boolean }>(
+    `/api/workspaces/${workspaceId}/assets/${assetId}/visibility`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isPublic }),
+    },
+  );
+}
+
 export function deleteAsset(workspaceId: string, assetId: string) {
   return request<void>(`/api/workspaces/${workspaceId}/assets/${assetId}`, {
     method: "DELETE",
@@ -636,8 +676,11 @@ async function request<T = unknown>(url: string, options?: RequestInit) {
   const response = await fetch(url, options);
   const body = (await response.json().catch(() => null)) as {
     error?: string;
+    message?: string;
   } | null;
   if (!response.ok)
-    throw new Error(body?.error ?? `Request failed (${response.status})`);
+    throw new Error(
+      body?.message ?? body?.error ?? `Request failed (${response.status})`,
+    );
   return body as T;
 }

@@ -76,3 +76,125 @@ curl --fail "$APP_URL/ready"
 
 Database migrations are forward-only. To roll back across a migration, check
 out the previous release and restore the backup made before upgrading.
+
+## Asset visibility upgrade
+
+**Do not run old unauthenticated delivery code while accepting private assets.**
+Do not use a rolling mixed-version deployment for this migration.
+
+1. Back up the database, objects and secrets. Stop API and worker instances and
+   block delivery at every gateway/custom-domain origin during the upgrade.
+2. Verify that the bucket, originals, derived objects, imported source objects
+   and any separate object-storage CDN are not anonymously readable. Network
+   reachability for signed uploads is not permission to read objects publicly.
+   Application visibility cannot secure a public bucket or an alternate origin.
+3. Review `0009_asset_visibility.sql` before applying migrations. Existing asset
+   rows become public to preserve their previous behavior; future inserts default
+   private. No file is published by a Vard setting. The migration is tracked by
+   the existing Drizzle migrator and its transaction; rerunning the migrator is
+   safe. Replaying the raw SQL directly is not supported (the column exists).
+4. The migration also changes only enabled workspace keys whose rate limiter is
+   enabled and exactly matches the historical 10 requests / 86,400,000 ms default
+   to 10,000 requests / 60,000 ms. Both key issuance paths and the plugin use that
+   finite new allowance. Private delivery now verifies keys and consumes requests;
+   ten/day would break a normal 12-file pull. This is not a throughput guarantee.
+   Keys with custom limits, disabled keys and disabled rate limiting are untouched;
+   permissions, references, expiry/revocation state, counters and last-request
+   timestamps are preserved. **An intentionally configured exact 10/day limit is
+   indistinguishable from the old default. Operators must review this UPDATE and
+   preserve intentional policy before deployment.** No auth schema regeneration
+   is required.
+5. Apply the migration with the existing migration service, then start only the
+   visibility-aware API/worker and updated gateway. Verify anonymous denial and
+   authenticated original/variant/video-range access before reopening traffic.
+   This repository change does not migrate a running environment.
+
+Private originals, transformed variants, redirects and errors use
+`Cache-Control: private, no-store`; manifests are also no-store, even when public.
+Configure reverse proxies/CDNs to honor this, avoid caching authenticated
+responses, and forward cookies / `x-api-key` to the API. Private browser URLs
+must route through the canonical app origin; a custom domain does not receive
+the app's cookie. API clients may use a verified custom domain with a scoped key,
+but frozen CLI downloads deliberately stay on canonical immutable URLs and refuse
+redirects. Signatures do not grant read permission.
+
+A visibility update affects subsequent origin requests for every ready version;
+it does not delete versions or change their URLs/checksums. Old public responses
+had up to one-year immutable cache lifetimes. Purge caches you control where
+possible, but do not promise immediate revocation from browsers, shared caches,
+already downloaded files or offline build outputs. Public Vards containing even
+one private mapped asset become entirely unavailable anonymously; authenticated
+workspace readers retain complete manifests. Vard public settings never grant
+asset permissions.
+
+### Safe rollback constraints
+
+Prefer a forward fix. Old delivery code ignores `asset.is_public` and would
+re-expose **all** private rows, even if the new column remains in place. Do not
+restart it against the upgraded database. Keep delivery blocked until either a
+visibility-aware fix is running, or a reviewed pre-upgrade database/object backup
+has been restored with all post-upgrade private writes removed and the former
+public exposure explicitly accepted. A schema downgrade alone is not a safe
+rollback. The finite key allowance change also needs operator review if restoring
+old policy; never reset keys/counters or re-enable revoked keys casually.
+
+### Isolated delivery regression
+
+Run `pnpm --filter @vardum/api test:private-delivery` as an unprivileged user with
+native `/usr/bin/initdb`, `pg_ctl`, `postgres` and `psql` installed. The explicit
+suite creates a disposable PostgreSQL cluster on a private UNIX socket with no
+TCP listener and an unprivileged RLS-bound application role. It replaces ambient
+app configuration, uses only local fake object HTTP and disposable credentials,
+exercises real routes/auth and normal/frozen CLI downloads, then stops and removes
+only its own cluster and fixtures. It never reads `.env` or mutates existing
+services. The stress matrix disables fixture key throttling; separate migrated
+and newly API/CLI-issued keys prove bulk and frozen access with finite rate
+limiting still enabled. Ordinary `pnpm test` needs no database.
+
+## Folder-rule upgrade
+
+This is an unreleased source slice, not a new npm release or a live migration.
+Back up database, objects and secrets, stop API writes, and review
+`0010_vard_folder_rules.sql`. Apply it with the existing migration service after
+0009, then deploy the folder-aware API with the matching gateway/MCP source build.
+The non-null JSONB `vard.folder_rules` defaults to `[]`; old Vards and manual rows
+keep their identities and behavior. Do not skip the asset-visibility precautions
+above. Check authenticated configuration GET separately from resolved manifest GET,
+and test that collision/limit errors still allow configuration repair.
+
+Do not serve mixed old/new APIs for Vards using rules. An older API may ignore
+`folder_rules`, return only manual items and silently omit generated membership.
+An older client may ignore or fail to display rules; normal pulls against an older
+API can refresh the snapshot to the wrong membership. Keep rule editing and normal
+updates paused until the matching API and clients are available. Prefer a forward
+fix. Before a rollback, inventory/export Vard definitions and freeze consumer
+updates. Either keep a folder-aware API, or explicitly remove rules using the new
+API and review/commit the intended consumer membership change before switching.
+A migration rollback requires a reviewed pre-upgrade backup restore and acceptance
+of lost post-backup changes. Never roll back to visibility-unaware delivery code
+against private data. Keeping the extra database column alone does not preserve
+rule behavior in an old API.
+
+Rules are literal recursive prefixes, for example `brand/` → `assets/brand/`.
+Empty source/output prefixes mean workspace/project root; nonexistent and empty
+folders are valid. Only ready current originals are included, not pending files;
+new private members block the whole anonymous public manifest. Limits are 64 rules,
+255 characters per prefix, 500 per output path, and 1,000 combined manual/generated
+outputs. Explicit + rule, rule + rule, case/Unicode and file/directory collisions
+fail resolution without precedence or truncation. Configuration remains editable.
+
+No background project sync is introduced. Normal pull adopts current rules and
+membership; frozen pull consumes committed snapshot membership. Removing rules
+leaves manual mappings and source assets intact. **Use `--delete` on the
+membership-updating normal pull** to remove stale tracked project files. A no-delete
+pull drops stale tracking but leaves disk files; a later `--delete` cannot discover
+those leftovers, which require deliberate manual cleanup.
+
+Frozen reproduction still requires retained versions, valid signatures and working
+delivery URLs. Server/workspace-slug changes, signing-key rotation, expired
+signatures or changed transformation rendering can break snapshots. **Source-key
+rename can invalidate historical URLs despite retained bytes.** Rule/membership
+removal with retained valid source URLs supports frozen restore; normal move tests
+do not prove frozen rename support. There is no new retention guarantee or cleanup
+ledger. The isolated `test:private-delivery` suite above also exercises folder-rule
+migration, authorization/privacy, resolution and real normal/frozen CLI lifecycle.

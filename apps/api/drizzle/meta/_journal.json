@@ -64,6 +64,20 @@
       "when": 1787420434213,
       "tag": "0008_marvelous_centennial",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787420434214,
+      "tag": "0009_asset_visibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788616880713,
+      "tag": "0010_vard_folder_rules",
+      "breakpoints": true
     }
   ]
 }

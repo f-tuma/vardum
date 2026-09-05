@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import {
+  assetDeliveryPath,
   createAsset,
   createFolder,
   createTransformationUrl,
@@ -16,6 +17,7 @@ import {
   listAssets,
   listAssetVersions,
   restoreAssetVersion,
+  setAssetVisibility,
   uploadVersion,
   type AssetSummary,
   type TransformationInput,
@@ -23,6 +25,7 @@ import {
 import { ConfirmDialog } from "./confirm-dialog";
 
 export function AssetDashboard({
+  canPublish,
   workspaceId,
   workspaceSlug,
   workspaceName,
@@ -33,6 +36,7 @@ export function AssetDashboard({
   workspaceId: string;
   workspaceSlug: string;
   workspaceName: string;
+  canPublish: boolean;
   search: string;
   assetId?: string;
   prefix: string;
@@ -96,6 +100,8 @@ export function AssetDashboard({
       );
     return detail.data ? (
       <AssetDetailPage
+        key={`${detail.data.id}:${detail.data.isPublic}`}
+        canPublish={canPublish}
         asset={detail.data}
         workspaceId={workspaceId}
         workspaceSlug={workspaceSlug}
@@ -664,7 +670,7 @@ function AssetCard({
   prefix: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const path = assetPath(workspaceSlug, asset.key, asset.customDomain);
+  const path = assetDeliveryPath(workspaceSlug, asset);
   const status = asset.status ?? "empty";
 
   async function copyUrl() {
@@ -697,7 +703,9 @@ function AssetCard({
       </div>
       <div className="asset-info">
         <h2 title={asset.displayName}>{asset.displayName}</h2>
-        <p className="asset-key">{asset.key}</p>
+        <p className="asset-key">
+          {asset.key} · {asset.isPublic ? "Public" : "Private"}
+        </p>
         <div className="asset-meta">
           <span>{asset.mimeType ? formatMimeType(asset.mimeType) : "—"}</span>
           <span>{formatDimensions(asset)}</span>
@@ -735,6 +743,7 @@ function AssetCard({
 }
 
 function VersionHistory({
+  canPublish,
   workspaceId,
   assetId,
   currentVersionId,
@@ -742,6 +751,7 @@ function VersionHistory({
   workspaceId: string;
   assetId: string;
   currentVersionId: string | null;
+  canPublish: boolean;
 }) {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState("");
@@ -798,6 +808,7 @@ function VersionHistory({
               <button
                 type="button"
                 disabled={
+                  !canPublish ||
                   version.current ||
                   version.status !== "ready" ||
                   Boolean(pendingId)
@@ -879,6 +890,7 @@ function AssetDelivery({
 }
 
 function AssetDetailPage({
+  canPublish,
   asset,
   workspaceId,
   workspaceSlug,
@@ -888,6 +900,7 @@ function AssetDetailPage({
   workspaceId: string;
   workspaceSlug: string;
   fromPrefix: string;
+  canPublish: boolean;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -895,8 +908,37 @@ function AssetDetailPage({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [visibilityPending, setVisibilityPending] = useState(false);
+  const [visibilityError, setVisibilityError] = useState("");
+  const [confirmVisibility, setConfirmVisibility] = useState(false);
+
+  async function changeVisibility() {
+    setVisibilityPending(true);
+    setVisibilityError("");
+    try {
+      await setAssetVisibility(workspaceId, asset.id, !asset.isPublic);
+      const previews = {
+        queryKey: ["transformation-preview", workspaceId, asset.id],
+      };
+      await queryClient.cancelQueries(previews);
+      queryClient.removeQueries(previews);
+      await Promise.all(
+        ["asset", "assets", "vard", "vards", "audit", "workspace-overview"].map(
+          (key) =>
+            queryClient.invalidateQueries({ queryKey: [key, workspaceId] }),
+        ),
+      );
+    } catch (cause) {
+      setVisibilityError(
+        cause instanceof Error ? cause.message : "Visibility change failed",
+      );
+    } finally {
+      setVisibilityPending(false);
+      setConfirmVisibility(false);
+    }
+  }
   const [previewUrl, setPreviewUrl] = useState(asset.thumbnailUrl ?? "");
-  const path = assetPath(workspaceSlug, asset.key, asset.customDomain);
+  const path = assetDeliveryPath(workspaceSlug, asset);
   const status = asset.status ?? "empty";
 
   async function removeAsset() {
@@ -1004,9 +1046,30 @@ function AssetDetailPage({
           )}
         </section>
         <section className="detail-settings">
+          <section>
+            <h3>Visibility: {asset.isPublic ? "Public" : "Private"}</h3>
+            <p>
+              Private files require workspace read access, including signed
+              variants. New assets are private.
+            </p>
+            <p>
+              Making a public file private cannot revoke downloaded, offline, or
+              shared cached copies.
+            </p>
+            {canPublish && (
+              <button
+                type="button"
+                disabled={visibilityPending}
+                onClick={() => setConfirmVisibility(true)}
+              >
+                Make {asset.isPublic ? "private" : "public"}
+              </button>
+            )}
+            {visibilityError && <p role="alert">{visibilityError}</p>}
+          </section>
           {asset.currentVersionId && !isVideoMimeType(asset.mimeType) && (
             <TransformationForm
-              key={asset.currentVersionId}
+              key={`${asset.currentVersionId}:${asset.isPublic}`}
               workspaceId={workspaceId}
               assetId={asset.id}
               sourceWidth={asset.width}
@@ -1016,8 +1079,11 @@ function AssetDetailPage({
               onPreviewChange={setPreviewUrl}
             />
           )}
-          <VersionForm workspaceId={workspaceId} assetId={asset.id} />
+          {canPublish && (
+            <VersionForm workspaceId={workspaceId} assetId={asset.id} />
+          )}
           <VersionHistory
+            canPublish={canPublish}
             workspaceId={workspaceId}
             assetId={asset.id}
             currentVersionId={asset.currentVersionId}
@@ -1042,6 +1108,18 @@ function AssetDetailPage({
           </section>
         </section>
       </div>
+      <ConfirmDialog
+        open={confirmVisibility}
+        title={`Make asset ${asset.isPublic ? "private" : "public"}?`}
+        description={
+          asset.isPublic
+            ? "New requests will require workspace read access. Previously downloaded, offline, and cached copies cannot be revoked. Public Vards containing this asset will no longer be available anonymously."
+            : "Anyone with a delivery link will be able to read every ready version and its variants."
+        }
+        confirmLabel={asset.isPublic ? "Make private" : "Make public"}
+        onCancel={() => setConfirmVisibility(false)}
+        onConfirm={changeVisibility}
+      />
       <ConfirmDialog
         open={confirmDelete}
         title={`Delete asset “${asset.displayName}”?`}
@@ -1123,6 +1201,7 @@ function TransformationForm({
       "transformation-preview",
       workspaceId,
       assetId,
+      originalUrl,
       settledTransformation,
     ],
     queryFn: () => {
@@ -1299,12 +1378,7 @@ function VersionForm({
       <form className="compact-form version-upload-form" onSubmit={submit}>
         <label>
           File
-          <input
-            name="file"
-            type="file"
-            accept={uploadAccept}
-            required
-          />
+          <input name="file" type="file" accept={uploadAccept} required />
           <UploadLimitHint />
         </label>
         <button disabled={pending}>Upload</button>
@@ -1329,17 +1403,6 @@ function UploadLimitHint() {
       {formatUploadLimit(limits.data.video)}
     </span>
   );
-}
-
-function assetPath(
-  workspaceSlug: string,
-  key: string,
-  customDomain?: string | null,
-) {
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  return customDomain
-    ? `https://${customDomain}/w/${encodedKey}`
-    : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
 }
 
 export function formatBytes(bytes: number) {

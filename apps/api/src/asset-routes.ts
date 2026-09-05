@@ -180,16 +180,25 @@ function toAuditEvent({
  */
 function thumbnailUrl(
   workspace: { slug: string; customDomain: string | null } | undefined,
-  item: { key: string; mimeType: string | null; currentVersionId: string | null },
+  item: {
+    isPublic: boolean;
+    key: string;
+    mimeType: string | null;
+    currentVersionId: string | null;
+  },
 ) {
   if (!workspace || !item.currentVersionId) return null;
   return videoMimeSet.has(item.mimeType ?? "")
-    ? originalAssetUrl(workspace.slug, item.key, workspace.customDomain)
+    ? originalAssetUrl(
+        workspace.slug,
+        item.key,
+        item.isPublic ? workspace.customDomain : null,
+      )
     : transformedAssetUrl(
         workspace.slug,
         item.key,
         thumbnailTransformation,
-        workspace.customDomain,
+        item.isPublic ? workspace.customDomain : null,
       );
 }
 
@@ -428,6 +437,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
               workspaceId,
               key,
               displayName: filename,
+              isPublic: false,
               createdBy: authorization.principal.reference,
               updatedBy: authorization.principal.reference,
             })
@@ -708,6 +718,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             id: asset.id,
             key: asset.key,
             displayName: asset.displayName,
+            isPublic: asset.isPublic,
             currentVersionId: asset.currentVersionId,
             mimeType: assetVersion.mimeType,
             size: assetVersion.size,
@@ -828,6 +839,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             id: asset.id,
             key: asset.key,
             displayName: asset.displayName,
+            isPublic: asset.isPublic,
             currentVersionId: asset.currentVersionId,
             mimeType: assetVersion.mimeType,
             size: assetVersion.size,
@@ -866,6 +878,61 @@ export function registerAssetRoutes(app: FastifyInstance) {
         };
       });
 
+      return result ?? reply.code(404).send({ error: "Asset not found" });
+    },
+  );
+
+  api.patch(
+    "/api/workspaces/:workspaceId/assets/:assetId/visibility",
+    {
+      schema: {
+        params: assetParams,
+        body: z.object({ isPublic: z.boolean() }).strict(),
+      },
+    },
+    async (request, reply) => {
+      reply.header("cache-control", "private, no-store");
+      const { workspaceId, assetId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "publish",
+      ]);
+      if (!("principal" in authorization))
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      const result = await inWorkspace(workspaceId, async (transaction) => {
+        const [target] = await transaction
+          .select({ isPublic: asset.isPublic })
+          .from(asset)
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
+          .for("update");
+        if (!target) return null;
+        if (target.isPublic !== request.body.isPublic) {
+          await transaction
+            .update(asset)
+            .set({
+              isPublic: request.body.isPublic,
+              updatedBy: authorization.principal.reference,
+            })
+            .where(
+              and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)),
+            );
+          await transaction.insert(auditEvent).values({
+            workspaceId,
+            actorType: authorization.principal.actorType,
+            actorId: authorization.principal.actorId,
+            action: "asset.visibility_updated",
+            targetType: "asset",
+            targetId: assetId,
+            metadata: {
+              previousIsPublic: target.isPublic,
+              isPublic: request.body.isPublic,
+            },
+            requestId: request.id,
+          });
+        }
+        return { isPublic: request.body.isPublic };
+      });
       return result ?? reply.code(404).send({ error: "Asset not found" });
     },
   );
@@ -963,6 +1030,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
               workspaceId,
               key: request.body.key,
               displayName: request.body.displayName,
+              isPublic: false,
               createdBy: authorization.principal.reference,
               updatedBy: authorization.principal.reference,
             })
@@ -970,6 +1038,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
               id: asset.id,
               key: asset.key,
               displayName: asset.displayName,
+              isPublic: asset.isPublic,
             });
 
           if (!row) throw new Error("Asset insert returned no row");

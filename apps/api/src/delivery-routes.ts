@@ -3,6 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { authorizeAsset } from "./authorization.js";
 import { assetKey } from "./asset-routes.js";
 import {
   asset,
@@ -75,6 +76,7 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
         request.params.assetKey,
         signedTransformation(request.query),
         true,
+        request,
         reply,
       );
     },
@@ -118,13 +120,57 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
         key,
         signedTransformation(request.query),
         Boolean(customWorkspace),
+        request,
         reply,
       );
     },
   );
 
-  delivery.get("/assets/:workspaceSlug/*", async (request, reply) =>
-    reply.redirect(request.url.replace(/^\/assets\//, "/w/"), 308),
+  delivery.get(
+    "/assets/:workspaceSlug/__v/:versionId/*",
+    { schema: { params: immutableParams, querystring: deliveryQuerySchema } },
+    async (request, reply) => {
+      const workspace = await findWorkspace(request.params.workspaceSlug);
+      if (!workspace) return reply.code(404).send({ error: "Asset not found" });
+      const transformation = signedTransformation(request.query);
+      if (!validTransformation(workspace, request.params["*"], transformation))
+        return reply
+          .code(403)
+          .send({ error: "Invalid transformation signature" });
+      return deliverVersion(
+        workspace,
+        request.params["*"],
+        request.params.versionId,
+        transformation,
+        request,
+        reply,
+        true,
+      );
+    },
+  );
+
+  delivery.get(
+    "/assets/:workspaceSlug/*",
+    { schema: { params: stableParams, querystring: deliveryQuerySchema } },
+    async (request, reply) => {
+      const workspace = await findWorkspace(request.params.workspaceSlug);
+      if (!workspace) return reply.code(404).send({ error: "Asset not found" });
+      const [target] = await inWorkspace(workspace.id, (transaction) =>
+        transaction
+          .select({ isPublic: asset.isPublic })
+          .from(asset)
+          .where(
+            and(
+              eq(asset.workspaceId, workspace.id),
+              eq(asset.key, request.params["*"]),
+            ),
+          ),
+      );
+      if (!target) return reply.code(404).send({ error: "Asset not found" });
+      if (!(await canDeliver(target.isPublic, workspace.id, request, reply)))
+        return reply;
+      return reply.redirect(request.url.replace(/^\/assets\//, "/w/"), 308);
+    },
   );
 }
 
@@ -133,16 +179,22 @@ async function redirectCurrent(
   key: string,
   transformation: SignedTransformation | null,
   customDomain: boolean,
+  request: FastifyRequest,
   reply: FastifyReply,
 ) {
   if (!validTransformation(workspace, key, transformation))
     return reply.code(403).send({ error: "Invalid transformation signature" });
   const [current] = await inWorkspace(workspace.id, (transaction) =>
     transaction
-      .select({ versionId: asset.currentVersionId })
+      .select({ versionId: asset.currentVersionId, isPublic: asset.isPublic })
       .from(asset)
       .where(and(eq(asset.workspaceId, workspace.id), eq(asset.key, key))),
   );
+  if (
+    current &&
+    !(await canDeliver(current.isPublic, workspace.id, request, reply))
+  )
+    return reply;
   if (!current?.versionId)
     return reply.code(404).send({ error: "Asset not found" });
 
@@ -155,7 +207,9 @@ async function redirectCurrent(
     : `/w/${encodeURIComponent(workspace.slug)}/__v/${current.versionId}/${encodedKey}`;
   reply.header(
     "cache-control",
-    "public, max-age=60, stale-while-revalidate=300",
+    current.isPublic
+      ? "public, max-age=60, stale-while-revalidate=300"
+      : "private, no-store",
   );
   return reply.redirect(`${path}${query}`, 302);
 }
@@ -167,12 +221,14 @@ async function deliverVersion(
   transformation: SignedTransformation | null,
   request: FastifyRequest,
   reply: FastifyReply,
+  legacyRedirect = false,
 ) {
   const [version] = await inWorkspace(workspace.id, (transaction) =>
     transaction
       .select({
         id: assetVersion.id,
         assetId: asset.id,
+        isPublic: asset.isPublic,
         storageKey: assetVersion.storageKey,
         filename: assetVersion.filename,
         mimeType: assetVersion.mimeType,
@@ -190,6 +246,10 @@ async function deliverVersion(
       ),
   );
   if (!version) return reply.code(404).send({ error: "Asset not found" });
+  if (!(await canDeliver(version.isPublic, workspace.id, request, reply)))
+    return reply;
+  if (legacyRedirect)
+    return reply.redirect(request.url.replace(/^\/assets\//, "/w/"), 308);
   if (transformation && videoMimeSet.has(version.mimeType)) {
     return reply
       .code(415)
@@ -235,9 +295,11 @@ async function deliverVersion(
     }
 
     reply.headers({
-      "access-control-allow-origin": "*",
+      ...(version.isPublic ? { "access-control-allow-origin": "*" } : {}),
       "accept-ranges": "bytes",
-      "cache-control": "public, max-age=31536000, immutable",
+      "cache-control": version.isPublic
+        ? "public, max-age=31536000, immutable"
+        : "private, no-store",
       "content-disposition": `inline; filename*=UTF-8''${encodeFilename(
         deliveryFilename(
           version.filename,
@@ -248,11 +310,16 @@ async function deliverVersion(
         ),
       )}`,
       "content-length": bytes,
-      // media-src: a video opened directly becomes a media document, and the
-      // browser loads it through a <video> element that default-src blocks.
+      // A directly opened private video needs its real origin for the media
+      // document's cookie-bearing range requests and same-origin CORP check.
+      // Scripts remain forbidden; SVG/image documents keep the opaque sandbox.
       "content-security-policy":
-        "default-src 'none'; media-src *; style-src 'unsafe-inline'; sandbox",
-      "cross-origin-resource-policy": "cross-origin",
+        !version.isPublic && videoMimeSet.has(version.mimeType)
+          ? "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox allow-same-origin"
+          : "default-src 'none'; media-src *; style-src 'unsafe-inline'; sandbox",
+      "cross-origin-resource-policy": version.isPublic
+        ? "cross-origin"
+        : "same-origin",
       "x-content-type-options": "nosniff",
     });
     if (object.ContentRange) reply.header("content-range", object.ContentRange);
@@ -327,4 +394,17 @@ function encodeFilename(filename: string) {
     /[!'()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
+}
+
+async function canDeliver(
+  isPublic: boolean,
+  workspaceId: string,
+  request: FastifyRequest,
+  reply: FastifyReply,
+) {
+  if (isPublic) return true;
+  const authorization = await authorizeAsset(request, workspaceId, ["read"]);
+  if ("principal" in authorization) return true;
+  reply.code(authorization.statusCode).send({ error: authorization.error });
+  return false;
 }

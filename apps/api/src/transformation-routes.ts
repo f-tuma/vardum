@@ -30,6 +30,7 @@ export function registerTransformationRoutes(app: FastifyInstance) {
                 transaction
                     .select({
                         key: asset.key,
+                        isPublic: asset.isPublic,
                         currentVersionId: asset.currentVersionId,
                         workspaceSlug: workspace.slug,
                         customDomain: workspaceSettings.customDomain,
@@ -66,7 +67,7 @@ export function registerTransformationRoutes(app: FastifyInstance) {
                     source.workspaceSlug,
                     source.key,
                     request.body,
-                    source.customDomain,
+                    source.isPublic ? source.customDomain : null,
                 ),
             };
         },

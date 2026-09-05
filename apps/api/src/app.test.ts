@@ -68,7 +68,7 @@ test("S3 credentials must be provided together", () => {
   );
 });
 
-test("legacy asset URLs redirect to the short delivery path", async (context) => {
+test("legacy asset URLs validate transformation queries before lookup", async (context) => {
   const app = await buildApp();
   context.after(() => app.close());
 
@@ -76,8 +76,8 @@ test("legacy asset URLs redirect to the short delivery path", async (context) =>
     method: "GET",
     url: "/assets/workspace/brand/logo?w=300",
   });
-  assert.equal(response.statusCode, 308);
-  assert.equal(response.headers.location, "/w/workspace/brand/logo?w=300");
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.headers["cache-control"], "private, no-store");
 });
 
 test("GET /health reports liveness", async (context) => {

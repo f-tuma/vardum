@@ -395,6 +395,7 @@ function WorkspaceApp({
             />
           ) : (
             <AssetDashboard
+              canPublish={selected.organizationRole !== "viewer"}
               workspaceId={selected.id}
               workspaceSlug={selected.slug}
               workspaceName={selected.name}

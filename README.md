@@ -2,6 +2,10 @@
 
 Developer-first digital asset manager for S3-compatible storage.
 
+See the [product direction](docs/product-direction.md) for the target users,
+core workflow, first milestone, and planned templates and usage monitoring.
+That document describes intended behavior, not a list of shipped features.
+
 ## Development
 
 Requires Node.js 22+, pnpm, and Docker.
@@ -126,14 +130,81 @@ trusted instance or allowlist the bootstrap administrator.
 A Vard is a project manifest assembled in the workspace UI. Each item maps an
 asset to a repository-relative output path and may follow latest, pin a version,
 or request a delivery transformation. Commit the generated `vardum.json`, then
-use the Node.js CLI to pull the exact asset package in local development or CI.
+use `vardum pull` to explicitly refresh assets and the `.vardum.lock` snapshot.
+Commit both files; CI uses `vardum pull --frozen` with a schema-2-capable CLI
+source build to consume the locked file set without fetching the current Vard.
+The feature is unreleased; older CLI builds cannot safely maintain snapshots.
+Locked delivery still depends on version retention, valid signing and server
+availability. `vardum update` updates the CLI, not assets.
 
-Private Vards and push operations need a workspace key. `vardum login`
+Private files, private Vards and push operations need a workspace key. `vardum login`
 authorizes the machine in the browser and stores one scoped to your own
 permissions; `VARDUM_API_KEY` overrides it, so CI stays explicit.
 
 See [`apps/cli/README.md`](apps/cli/README.md) for setup, conflict handling,
 lockfiles, safe deletion and bulk folder push.
+
+## Recursive folder inclusion
+
+In the Vard editor, add a **Folder rule** from `brand/` to `assets/brand/`.
+A ready source `brand/icons/logo.svg` becomes `assets/brand/icons/logo.svg`.
+Rules include current ready originals recursively, preserve the relative suffix,
+and generate read-only outputs separately from manual pins, transformations and
+writable mappings. Pending files are excluded until ready. Empty source or output
+prefixes mean workspace or project root respectively; empty and nonexistent
+folders are valid. Prefixes are literal safe relative directories ending in `/`,
+not globs or excludes.
+
+Up to 64 rules, 255 characters per prefix, and **1,000 combined manual + generated
+outputs** are supported (output paths at most 500 characters). Explicit + rule,
+rule + rule, case/Unicode-equivalent and file/directory collisions fail the entire
+resolution; there is no precedence or truncation. The editor keeps configuration
+editable when its separate live resolved preview fails, so you can repair paths
+or reduce rules. A new private member makes an otherwise public Vard's entire
+anonymous manifest unavailable; workspace readers can still access it.
+
+The live preview is not your committed snapshot. There is no background project
+sync: normal `vardum pull` intentionally resolves changed membership and versions;
+`vardum pull --frozen` consumes only the committed snapshot. Removing a rule leaves
+manual mappings and source assets intact. Choose **`--delete` on the
+membership-updating pull** to remove stale tracked local files. A normal pull
+without deletion drops stale tracking but leaves those files on disk; a later
+`--delete` cannot discover them, so deliberate manual cleanup is required.
+
+This requires the folder-aware API, gateway and MCP source build, not a new npm
+release. See [MCP rule operations](apps/mcp/README.md#folder-rules) and
+[migration/rollback guidance](docs/operations.md#folder-rule-upgrade).
+
+## Asset visibility
+
+New assets are **private**, including uploads through the UI, CLI or MCP and
+bucket imports. The upgrade preserves existing files as public. Asset visibility
+is independent of a Vard's public manifest setting. Owners and editors can change
+it in asset settings; automation can PATCH
+`/api/workspaces/:workspaceId/assets/:assetId/visibility` with
+`{"isPublic": true}` or `{"isPublic": false}` using a key with `publish` permission.
+MCP exposes the same operation as `set_asset_visibility`; `list_assets` reports
+`isPublic`. Changes are workspace-scoped and audited; versions, checksums and
+locked URLs do not change.
+
+Private originals and signed variants require workspace read access on every new
+delivery request, including immutable URLs, redirects, HEAD and ranges. A
+transformation signature is not authorization. Browser previews and Open links
+use the canonical app origin for private files so the session cookie works;
+credentials never go in URLs. Public files remain anonymously readable.
+
+A public Vard does not publish its files. If **any** mapped asset is private, the
+entire anonymous manifest is unavailable, not a filtered partial package.
+Authenticated workspace readers can still use the complete manifest. Manifests
+and private/error delivery responses are non-cacheable.
+
+Storage must be private: public bucket/object permissions or a separate storage
+CDN can bypass the application. Previously public responses may remain in
+browsers or shared caches for their original lifetime (up to a year). Making a
+file private cannot revoke those copies, downloaded files, or existing offline
+build outputs. See [operations](docs/operations.md#asset-visibility-upgrade) for
+upgrade order, the workspace-key allowance change and safe rollback constraints.
+This is a bounded delivery slice, not completion of the product milestone.
 
 ## Custom domains
 
