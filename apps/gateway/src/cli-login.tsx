@@ -9,10 +9,12 @@ export function CliLogin({
   callback,
   state,
   label,
+  requestedWorkspace = "",
 }: {
   callback: string;
   state: string;
   label: string;
+  requestedWorkspace?: string;
 }) {
   const session = authClient.useSession();
   const target = loopbackCallback(callback);
@@ -36,10 +38,11 @@ export function CliLogin({
         organizationName: organization.name,
       })),
     ) ?? [];
-  const selected = workspaceId || workspaces[0]?.id || "";
+  const selected = workspaceId || requestedWorkspace || workspaces[0]?.id || "";
+  const selectedAvailable = workspaces.some(({ id }) => id === selected);
 
   async function authorize() {
-    if (!target || !selected) return;
+    if (!target || !selectedAvailable) return;
     setPending(true);
     setError("");
     try {
@@ -137,6 +140,9 @@ export function CliLogin({
                   value={selected}
                   onChange={(event) => setWorkspaceId(event.target.value)}
                 >
+                  {!selectedAvailable && (
+                    <option value={selected}>Select a workspace</option>
+                  )}
                   {workspaces.map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>
                       {workspace.organizationName} / {workspace.name}
@@ -167,7 +173,7 @@ export function CliLogin({
               <button
                 className="primary-button"
                 type="button"
-                disabled={pending || !selected}
+                disabled={pending || !selectedAvailable}
                 onClick={() => void authorize()}
               >
                 {pending ? "Authorizing…" : "Authorize"}

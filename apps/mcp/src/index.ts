@@ -2,7 +2,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { supportedMimeTypes } from "@vardum/shared";
+import {
+  supportedMimeTypes,
+  type SyncAsset,
+  type VardDefinition,
+  type VardFolderRule,
+  type VardManifest,
+} from "@vardum/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -56,8 +62,7 @@ The server speaks MCP over stdio, so it is started by the client, not by hand.`)
 // ── HTTP client ────────────────────────────────────────────────────────────
 
 const cli = parseArgs();
-const SERVER =
-  cli.server ?? process.env.VARDUM_SERVER ?? "https://vardum.com";
+const SERVER = cli.server ?? process.env.VARDUM_SERVER ?? "https://vardum.com";
 const API_KEY = cli["api-key"] ?? process.env.VARDUM_API_KEY ?? "";
 
 const headers: Record<string, string> = {
@@ -103,7 +108,7 @@ async function api<T = unknown>(
 
 const server = new McpServer({
   name: "Vardum",
-  version: "0.1.0",
+  version: VERSION,
 });
 
 // ── Resources ──────────────────────────────────────────────────────────────
@@ -115,7 +120,7 @@ server.resource("constraints", "vardum://constraints", () => ({
       text: `# Vardum Constraints
 
 ## Slug immutability
-Organization, workspace and Vard slugs are set at creation time and **cannot be changed**.
+Organization and workspace slugs are set at creation time and **cannot be changed**.
 Each slug must match \`[a-z0-9][a-z0-9._-]*\`.
 
 ## Asset key rules
@@ -131,6 +136,26 @@ Every asset has a unique key scoped to a workspace. Rules:
 - Max 100 megapixels per image; videos are stored as-is (no transcode)
 - Per-upload size ceiling is set by the server, and differs for images and videos (the API rejects anything over it)
 - Video assets cannot be resized or transformed into variants (images only)
+
+## Asset visibility
+New assets are private. Use set_asset_visibility with publish permission to change visibility.
+Public assets expose every ready version and its variants without authentication.
+A public Vard does not publish its assets: anonymous manifests require all mapped assets to be public.
+Making an asset private cannot revoke previously downloaded or cached copies.
+
+## Folder inclusion
+Vards support up to 64 literal recursive sourcePrefix → outputPrefix rules (255 characters each).
+Example: brand/ → assets/brand/. Empty prefixes mean root; empty/nonexistent folders are valid.
+Only ready current originals are included; pending files wait until ready. Generated outputs are
+read-only, unpinned, and untransformed. No globs or excludes. Manual + generated outputs must
+not collide (including case/Unicode or file/directory overlaps) and total at most 1000.
+get_vard returns editable manual items and folderRules, even if resolution fails. Use
+get_vard with resolved=true for a separate live preview; never persist expanded items.
+update_vard replaces only supplied fields; folderRules: [] removes rules without changing manual items.
+A new private folder member makes the whole anonymous public manifest unavailable.
+Normal vardum pull intentionally updates membership; --frozen consumes the committed snapshot.
+There is no background sync. Choose --delete on the membership-updating pull: without it,
+stale files remain but lose tracking, requiring deliberate manual cleanup later.
 
 ## Writable outputs
 Only Vard items explicitly marked "Writable" in the UI can be pushed to.
@@ -175,7 +200,7 @@ Folders exist only as key prefixes — no need to "create" them.
 - **editor**: full CRUD on assets, Vards, and presets
 - **owner**: workspace administration (members, API keys, domain, deletion)
 
-A workspace API key carries the permissions of whoever created it, nothing more.
+MCP uses a workspace-scoped asset key. Members, invitations, keys, domains and workspace administration require a browser session and are managed in the web app.
 
 ## Video assets
 MP4, WebM, MOV, AVI and MPEG are accepted. They are stored and delivered as-is —
@@ -216,308 +241,57 @@ Everything an editor can do, plus:
 - Full audit log access
 
 ## API key scoping
-A workspace API key inherits the permissions of the person who created it.
-A key can never grant more access than its creator has. Self-revocation
+MCP exposes asset and Vard tools only. A read key can list/read; a write key adds
+create, update, delete and publish. Keys are restricted to one workspace and do
+not grant browser-session administration, even when created by an owner. Self-revocation
 (\`vardum logout\`) is available to CLI keys without workspace admin access.`,
     },
   ],
 }));
 
-// ── Tools: Workspace ────────────────────────────────────────────────────────
-
-server.tool(
-  "list_organizations",
-  "List all organizations the authenticated user belongs to.",
-  {},
-  async () => {
-    const data = await api<{
-      organizations: Array<{
-        id: string;
-        name: string;
-        slug: string;
-        role: string;
-      }>;
-    }>("/api/organizations");
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(data.organizations, null, 2) },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "create_workspace",
-  "Create a new workspace inside an organization.",
-  {
-    organizationId: z.string().describe("Organization ID"),
-    name: z.string().min(1).max(64).describe("Display name for the workspace"),
-    slug: z
-      .string()
-      .regex(/^[a-z0-9][a-z0-9._-]*$/)
-      .describe("URL-safe slug (cannot be changed later)"),
-  },
-  async ({ organizationId, name, slug }) => {
-    const data = await api<{ id: string; name: string; slug: string }>(
-      `/api/organizations/${encodeURIComponent(organizationId)}/workspaces`,
-      { method: "POST", body: JSON.stringify({ name, slug }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "get_workspace",
-  "Retrieve workspace details including name, slug, and member count.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const [members, overview] = await Promise.all([
-      api<{
-        members: Array<{
-          id: string;
-          name: string | null;
-          email: string;
-          role: string;
-        }>;
-      }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/members`),
-      api<{
-        name: string;
-        slug: string;
-        storageUsed: number;
-        assetCount: number;
-      }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/overview`),
-    ]);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            { ...overview, members: members.members },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "update_workspace",
-  "Update the display name of a workspace. The slug cannot be changed.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    name: z.string().min(1).max(64).describe("New display name"),
-  },
-  async ({ workspaceId, name }) => {
-    const data = await api<{ id: string; name: string; slug: string }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}`,
-      { method: "PATCH", body: JSON.stringify({ name }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// ── Tools: Members & Invitations ────────────────────────────────────────────
-
-server.tool(
-  "list_members",
-  "List all members of a workspace with their roles.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{
-      members: Array<{
-        id: string;
-        name: string | null;
-        email: string;
-        role: string;
-      }>;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/members`);
-    return {
-      content: [{ type: "text", text: JSON.stringify(data.members, null, 2) }],
-    };
-  },
-);
-
-server.tool(
-  "change_member_role",
-  "Change a member's role in the workspace.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    memberId: z.string().describe("Member ID"),
-    role: z.enum(["owner", "editor", "viewer"]).describe("New role"),
-  },
-  async ({ workspaceId, memberId, role }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberId)}`,
-      { method: "PATCH", body: JSON.stringify({ role }) },
-    );
-    return { content: [{ type: "text", text: `Role changed to ${role}.` }] };
-  },
-);
-
-server.tool(
-  "list_invitations",
-  "List pending invitations for a workspace.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{
-      invitations: Array<{
-        id: string;
-        email: string;
-        role: string;
-        expiresAt: string;
-      }>;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`);
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(data.invitations, null, 2) },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "create_invitation",
-  "Invite someone by email to join a workspace with a specific role.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    email: z.string().email().describe("Recipient email address"),
-    role: z
-      .enum(["editor", "viewer"])
-      .describe("Role to assign (owner cannot be invited directly)"),
-  },
-  async ({ workspaceId, email, role }) => {
-    await api<{ id: string }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
-      { method: "POST", body: JSON.stringify({ email, role }) },
-    );
-    return {
-      content: [
-        { type: "text", text: `Invitation sent to ${email} (${role}).` },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "revoke_invitation",
-  "Revoke a pending invitation before it expires.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    invitationId: z.string().describe("Invitation ID"),
-  },
-  async ({ workspaceId, invitationId }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}`,
-      { method: "DELETE" },
-    );
-    return { content: [{ type: "text", text: "Invitation revoked." }] };
-  },
-);
-
-// ── Tools: API Keys ─────────────────────────────────────────────────────────
-
-server.tool(
-  "list_api_keys",
-  "List all API keys for a workspace.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{
-      keys: Array<{
-        id: string;
-        name: string | null;
-        start: string;
-        access: string;
-        createdAt: string;
-      }>;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/api-keys`);
-    return {
-      content: [{ type: "text", text: JSON.stringify(data.keys, null, 2) }],
-    };
-  },
-);
-
-server.tool(
-  "create_api_key",
-  "Create a new API key for a workspace. The full key is shown only once.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    name: z
-      .string()
-      .min(1)
-      .max(32)
-      .describe("Human-readable label for the key"),
-    access: z
-      .enum(["read", "write"])
-      .describe("Access level: read-only or read-write"),
-  },
-  async ({ workspaceId, name, access }) => {
-    const data = await api<{
-      id: string;
-      name: string;
-      key: string;
-      access: string;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/api-keys`, {
-      method: "POST",
-      body: JSON.stringify({ name, access }),
-    });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "revoke_api_key",
-  "Revoke (delete) an API key by ID.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    keyId: z.string().describe("API key ID to revoke"),
-  },
-  async ({ workspaceId, keyId }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/api-keys/${encodeURIComponent(keyId)}`,
-      { method: "DELETE" },
-    );
-    return { content: [{ type: "text", text: "API key revoked." }] };
-  },
-);
-
 // ── Tools: Assets ───────────────────────────────────────────────────────────
 
 server.tool(
   "list_assets",
-  "List assets in a workspace, optionally filtered by prefix (virtual folder).",
+  "List one page of ready assets and visibility, optionally filtered by prefix. Pass nextCursor as cursor to continue; null means the end.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     prefix: z
       .string()
       .optional()
       .describe("Prefix filter (e.g. 'icons/' to list only that folder)"),
+    cursor: z
+      .string()
+      .max(255)
+      .optional()
+      .describe("nextCursor from the previous page"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe("Page size, default 100"),
   },
-  async ({ workspaceId, prefix = "" }) => {
+  async ({ workspaceId, prefix = "", cursor, limit = 100 }) => {
+    const query = new URLSearchParams({ prefix, limit: String(limit) });
+    if (cursor !== undefined) query.set("cursor", cursor);
     const data = await api<{
       workspaceSlug: string;
-      assets: Array<{
-        id: string;
-        key: string;
-        displayName: string;
-        versionId: string;
-        checksum: string | null;
-        mimeType: string;
-        size: number;
-      }>;
+      assets: SyncAsset[];
+      nextCursor: string | null;
     }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/sync/assets?prefix=${encodeURIComponent(prefix)}&limit=500`,
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/sync/assets?${query}`,
     );
     return {
-      content: [{ type: "text", text: JSON.stringify(data.assets, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     };
   },
 );
 
 server.tool(
   "create_asset",
-  "Create a new asset record with a key. Use upload_version to attach image data.",
+  "Create a private asset record with a key. Use upload_asset_version to attach media, then set_asset_visibility to publish explicitly.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     key: z
@@ -528,9 +302,33 @@ server.tool(
     displayName: z.string().min(1).describe("Human-readable filename"),
   },
   async ({ workspaceId, key, displayName }) => {
-    const data = await api<{ id: string; key: string; displayName: string }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets`,
-      { method: "POST", body: JSON.stringify({ key, displayName }) },
+    const data = await api<{
+      id: string;
+      key: string;
+      displayName: string;
+      isPublic: boolean;
+    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/assets`, {
+      method: "POST",
+      body: JSON.stringify({ key, displayName }),
+    });
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  "set_asset_visibility",
+  "Set asset visibility with publish permission. Public exposes every ready version and variant. Private requires workspace read access but cannot revoke downloaded or cached copies. Vard visibility is independent.",
+  {
+    workspaceId: z.string().min(1).describe("Workspace ID"),
+    assetId: z.string().uuid().describe("Asset ID"),
+    isPublic: z
+      .boolean()
+      .describe("True to publish; false to require workspace read access"),
+  },
+  async ({ workspaceId, assetId, isPublic }) => {
+    const data = await api<{ isPublic: boolean }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(assetId)}/visibility`,
+      { method: "PATCH", body: JSON.stringify({ isPublic }) },
     );
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   },
@@ -637,60 +435,83 @@ server.tool(
   },
 );
 
+const folderRulesInput = z
+  .array(
+    z
+      .object({
+        sourcePrefix: z
+          .string()
+          .max(255)
+          .describe(
+            "Literal recursive source directory, slash-terminated; empty means workspace root",
+          ),
+        outputPrefix: z
+          .string()
+          .max(255)
+          .describe(
+            "Relative destination directory, slash-terminated; empty means project root",
+          ),
+      })
+      .strict(),
+  )
+  .max(64)
+  .describe(
+    "Complete folder rule list; [] removes all rules. API validates safe prefixes. Ready current originals only, no globs; 1000 combined outputs maximum.",
+  );
+type VardMetadata = Pick<
+  VardDefinition,
+  "id" | "name" | "isPublic" | "updatedAt" | "folderRules"
+>;
+
 server.tool(
   "create_vard",
-  "Create a new Vard in a workspace. The slug cannot be changed later.",
+  "Create a Vard with optional recursive folder rules, private by default. Rules generate read-only originals separately from manual items.",
   {
     workspaceId: z.string().describe("Workspace ID"),
-    name: z.string().min(1).max(128).describe("Display name"),
-    slug: z
-      .string()
-      .regex(/^[a-z0-9][a-z0-9._-]*$/)
-      .describe("URL-safe slug (immutable)"),
+    name: z.string().min(1).max(80).describe("Display name"),
     isPublic: z
       .boolean()
       .optional()
-      .describe("Whether the Vard is publicly accessible"),
+      .describe(
+        "Public manifest; every resolved asset must also be public for anonymous access",
+      ),
+    folderRules: folderRulesInput.optional(),
   },
-  async ({ workspaceId, name, slug, isPublic }) => {
-    const data = await api<{
-      id: string;
+  async ({ workspaceId, name, isPublic, folderRules }) => {
+    const body: {
       name: string;
-      slug: string;
-      isPublic: boolean;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/vards`, {
-      method: "POST",
-      body: JSON.stringify({ name, slug, isPublic }),
-    });
+      isPublic?: boolean;
+      folderRules?: VardFolderRule[];
+    } = { name };
+    if (isPublic !== undefined) body.isPublic = isPublic;
+    if (folderRules !== undefined) body.folderRules = folderRules;
+    const data = await api<VardMetadata>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   },
 );
 
 server.tool(
   "get_vard",
-  "Retrieve a Vard and its full manifest (items, outputs, their versions and download URLs).",
+  "Retrieve editable Vard configuration (manual items and folderRules), even when expansion fails. Set resolved=true for a separate live manifest preview, not a committed frozen snapshot. Never write resolved items back as manual items.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
+    resolved: z
+      .boolean()
+      .optional()
+      .describe(
+        "True: resolve current outputs, which may fail on collisions/limits. Omitted/false: editable configuration only.",
+      ),
   },
-  async ({ workspaceId, vardId }) => {
-    const data = await api<{
-      id: string;
-      name: string;
-      isPublic: boolean;
-      items: Array<{
-        id: string;
-        assetId: string;
-        key: string;
-        outputPath: string;
-        writable: boolean;
-        pinned: boolean;
-        versionId: string | null;
-        fingerprint: string | null;
-        downloadUrl: string | null;
-      }>;
-    }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}`,
+  async ({ workspaceId, vardId, resolved }) => {
+    const data = await api<VardDefinition | VardManifest>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}${resolved ? "/manifest" : ""}`,
     );
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   },
@@ -698,18 +519,27 @@ server.tool(
 
 server.tool(
   "update_vard",
-  "Update a Vard's metadata (name, public flag). The slug is immutable.",
+  "Update only supplied metadata or folderRules; omitted fields and manual item IDs are preserved. folderRules: [] removes rules. Saving valid configuration may still leave a collision/limit error in the live preview; repair rules or manual paths. Requires API update permission.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
-    name: z.string().min(1).max(128).optional().describe("New display name"),
-    isPublic: z.boolean().optional().describe("Public accessibility"),
+    name: z.string().min(1).max(80).optional().describe("New display name"),
+    isPublic: z
+      .boolean()
+      .optional()
+      .describe("Public manifest only; does not publish resolved assets"),
+    folderRules: folderRulesInput.optional(),
   },
-  async ({ workspaceId, vardId, name, isPublic }) => {
-    const body: Record<string, unknown> = {};
+  async ({ workspaceId, vardId, name, isPublic, folderRules }) => {
+    const body: {
+      name?: string;
+      isPublic?: boolean;
+      folderRules?: VardFolderRule[];
+    } = {};
     if (name !== undefined) body.name = name;
     if (isPublic !== undefined) body.isPublic = isPublic;
-    const data = await api<{ id: string; name: string; isPublic: boolean }>(
+    if (folderRules !== undefined) body.folderRules = folderRules;
+    const data = await api<VardMetadata>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}`,
       { method: "PATCH", body: JSON.stringify(body) },
     );
@@ -735,32 +565,41 @@ server.tool(
 
 server.tool(
   "replace_vard_items",
-  "Replace every item in a Vard with a new set of item definitions. Each item maps an asset to an output path and optional transformation settings.",
+  "Replace only manual items in a Vard; folderRules are unchanged. Never pass expanded folder outputs here. Each manual item maps an asset to an output path and optional transformation settings.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
     items: z
       .array(
-        z.object({
-          assetId: z.string().describe("The asset ID to include"),
-          outputPath: z
-            .string()
-            .describe("Relative output path in the project"),
-          writable: z
-            .boolean()
-            .describe("Whether this output can be pushed back"),
-          pinned: z
-            .boolean()
-            .describe("Whether the version is pinned (read-only)"),
-          transformation: z
-            .record(z.unknown())
-            .nullable()
-            .describe(
-              "Optional transformation parameters (w, h, fit, format, q) or null",
-            ),
-        }),
+        z
+          .object({
+            assetId: z.string().describe("The asset ID to include"),
+            outputPath: z
+              .string()
+              .describe("Relative output path in the project"),
+            writable: z
+              .boolean()
+              .describe("Whether this output can be pushed back"),
+            versionId: z
+              .string()
+              .uuid()
+              .nullable()
+              .optional()
+              .describe(
+                "Exact ready version ID to pin; null/omitted follows latest. Pinned outputs must not be writable.",
+              ),
+            transformation: z
+              .record(z.unknown())
+              .nullable()
+              .describe(
+                "Optional transformation parameters (w, h, fit, format, q) or null",
+              ),
+          })
+          .strict(),
       )
-      .describe("Complete list of items to set (replaces all current items)"),
+      .describe(
+        "Complete list of manual items to set (replaces manual items only)",
+      ),
   },
   async ({ workspaceId, vardId, items }) => {
     const data = await api<{
@@ -769,54 +608,6 @@ server.tool(
     }>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}/items`,
       { method: "PUT", body: JSON.stringify({ items }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// ── Domain ─────────────────────────────────────────────────────────────────
-
-server.tool(
-  "get_domain",
-  "Get the current custom domain configuration for a workspace.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{ domain: string | null; verified: boolean }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/domain`,
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "configure_domain",
-  "Configure a custom domain for a workspace. Requires DNS verification (TXT + CNAME).",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    domain: z.string().describe("Domain name (e.g. assets.example.com)"),
-  },
-  async ({ workspaceId, domain }) => {
-    const data = await api<{
-      domain: string;
-      verified: boolean;
-      txtRecord: string;
-      cnameTarget: string;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/domain`, {
-      method: "PUT",
-      body: JSON.stringify({ domain }),
-    });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "verify_domain",
-  "Trigger domain verification. The agent should first read the current domain config to show the required DNS records, then call this once they are in place.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{ domain: string; verified: boolean }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/domain/verify`,
-      { method: "POST" },
     );
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   },

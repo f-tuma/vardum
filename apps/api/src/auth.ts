@@ -2,6 +2,7 @@ import { apiKey } from "@better-auth/api-key";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth";
 import { organization } from "better-auth/plugins";
+import { workspaceKeyRateLimit } from "./api-key-policy.js";
 import { config } from "./config.js";
 import { db, schema } from "./db/index.js";
 import { sendActionEmail, smtpEnabled } from "./mail.js";
@@ -65,8 +66,7 @@ export const auth = betterAuth({
       roles,
       creatorRole: "owner",
       disableOrganizationDeletion: true,
-      allowUserToCreateOrganization: ({ email }) =>
-        canCreateOrganization(email),
+      allowUserToCreateOrganization: (user) => canCreateOrganization(user),
       sendInvitationEmail: smtpEnabled
         ? async ({ id, email, organization, inviter, role }) => {
             const url = new URL("/accept-invitation", config.WEB_URL);
@@ -86,6 +86,7 @@ export const auth = betterAuth({
         configId: "workspace",
         defaultPrefix: "varda_",
         references: "organization",
+        rateLimit: workspaceKeyRateLimit,
       },
     ]),
   ],

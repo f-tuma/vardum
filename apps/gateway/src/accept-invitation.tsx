@@ -35,7 +35,16 @@ export function AcceptInvitation({ invitationId }: { invitationId: string }) {
           <span aria-hidden="true">╂</span> VARDUM
         </div>
         <h1>Workspace invitation</h1>
-        {session.isPending ? (
+        {!invitationId ? (
+          <>
+            <p role="alert">
+              This invitation link is incomplete. Ask the sender for a new link.
+            </p>
+            <a className="text-button auth-back-link" href="/app">
+              Back to workspace
+            </a>
+          </>
+        ) : session.isPending ? (
           <p className="muted">Checking your account…</p>
         ) : session.data ? (
           <>

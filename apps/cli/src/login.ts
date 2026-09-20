@@ -89,11 +89,13 @@ export function loginUrl(
   port: number,
   state: string,
   label: string,
+  workspace?: string,
 ) {
   const url = new URL("/cli-login", server);
   url.searchParams.set("callback", `http://127.0.0.1:${port}/`);
   url.searchParams.set("state", state);
   url.searchParams.set("label", label);
+  if (workspace) url.searchParams.set("workspace", workspace);
   return url.toString();
 }
 

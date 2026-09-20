@@ -5,6 +5,7 @@ import { getWorkspaceOverview, type WorkspaceOverview } from "./asset-api";
 
 export const activityLabels: Record<string, string> = {
   "asset.created": "Asset created",
+  "asset.visibility_changed": "Visibility changed",
   "asset.deleted": "Asset deleted",
   "asset.version_created": "Version created",
   "asset.version_queued": "Version queued",
@@ -125,7 +126,7 @@ export function WorkspaceOverview({
     [
       "REQUESTS",
       delivery.requests30d.toLocaleString(),
-      "successful delivery responses // 30 days",
+      "delivery responses // 30 days",
     ],
   ] as const;
 
@@ -137,15 +138,31 @@ export function WorkspaceOverview({
           <p>{workspaceSlug}</p>
         </div>
         <Link
-          className="overview-action"
+          className="button-link"
           to="/workspaces/$workspaceId/assets"
           params={{ workspaceId }}
           search={{ prefix: "" }}
         >
-          Browse assets →
+          Browse assets
         </Link>
       </header>
 
+      {overview.data.assets === 0 && (
+        <div className="getting-started">
+          <div>
+            <strong>Your workspace is ready</strong>
+            <p>Upload a file, then add it to a Vard.</p>
+          </div>
+          <Link
+            className="button-link primary-button"
+            to="/workspaces/$workspaceId/assets"
+            params={{ workspaceId }}
+            search={{ prefix: "" }}
+          >
+            Add your first asset →
+          </Link>
+        </div>
+      )}
       <section className="overview-stats" aria-label="Workspace statistics">
         {stats.map(([label, value, note]) => (
           <article className="overview-stat" key={label}>
@@ -195,7 +212,14 @@ export function WorkspaceOverview({
       <section className="activity-panel">
         <header>
           <h2>┌─ RECENT ACTIVITY</h2>
-          <span>{overview.data.activity.length} events</span>
+          <Link
+            className="button-link"
+            to="/workspaces/$workspaceId/settings"
+            params={{ workspaceId }}
+            search={{ tab: "activity" }}
+          >
+            View all activity
+          </Link>
         </header>
         {overview.data.activity.length ? (
           <ol>

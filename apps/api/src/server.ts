@@ -1,6 +1,7 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
-import { closeDatabase } from "./db/index.js";
+import { closeDatabase, pool } from "./db/index.js";
+import { assertRuntimeDatabaseRole } from "./db/runtime-role.js";
 import { ensureBucketCors } from "./storage.js";
 import { startQueue, stopQueue } from "./queue.js";
 
@@ -16,6 +17,7 @@ process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
 try {
+  if (config.NODE_ENV === "production") await assertRuntimeDatabaseRole(pool);
   await startQueue();
   await app.listen({ host: config.HOST, port: config.PORT });
   // Configure S3 bucket CORS after the server is listening so a slow or

@@ -13,17 +13,51 @@ set +a
 compose() {
   docker compose --env-file .env.production -f compose.production.yml "$@"
 }
-# Running the bundled object store? Add --profile minio to that command line.
+# Running the bundled object store? Add --profile rustfs to that command line.
 ```
+
+## Organization bootstrap and email verification
+
+For an instance using `ORGANIZATION_CREATION=allowlist`:
+
+1. Set `ORGANIZATION_CREATOR_EMAILS` to the administrator's email and configure
+   `SMTP_HOST` and `SMTP_FROM` plus the provider's port and credentials.
+2. Sign up with that address. Sign-in alone does not grant organization creation.
+3. Open the verification link in the inbox, then create the organization and
+   its first workspace. The app can resend the link or recheck verification.
+
+Without SMTP, unverified accounts cannot bootstrap an allowlisted instance.
+Configure outgoing mail and restart the API to complete verification; there is
+no automatic verification fallback. Previously verified allowlisted accounts
+remain eligible if SMTP is later disabled. `open` is a different trust policy:
+it permits **every signed-in account**, including unverified ones, to create
+organizations. Do not temporarily expose an internet-facing instance in that
+mode as a substitute for verifying its administrator.
+
+After upgrading, previously unverified allowlisted users must verify before
+creating additional organizations. Existing organizations, memberships and
+sign-ins remain available; the upgrade does not mark old accounts as verified.
+Review organizations created before this restriction if the instance was public.
+
+Regression check (requires PostgreSQL binaries, run as a non-root user):
+
+```sh
+PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:organization-verification
+```
+
+The check creates and removes its own temporary database, ignores `.env`, and
+uses real auth endpoints with captured outbound email. It covers both SMTP
+configurations without contacting a mail provider or the deployed database.
 
 ## Backup
 
 Stop API writes, then export PostgreSQL and mirror the bucket. PostgreSQL stays
 available to the backup commands.
 
-The `mc` commands below address the bundled MinIO from `--profile minio`. With
-an external bucket, replace them with your provider's own mirroring — the
-important part is that a database dump without the objects is not a backup.
+The `aws s3 sync` commands below address the bundled RustFS from
+`--profile rustfs`. With an external bucket, replace them with your provider's
+own mirroring — the important part is that a database dump without the objects
+is not a backup.
 
 ```sh
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -31,10 +65,9 @@ mkdir -p "backups/$stamp"
 compose stop api worker
 compose exec -T postgres pg_dump -U varda -d varda -Fc \
   > "backups/$stamp/postgres.dump"
-compose --profile minio run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
-  --entrypoint /bin/sh minio-init -ec \
-  'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" &&
-  mc mirror "local/$S3_BUCKET" /backup/objects'
+compose --profile rustfs run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
+  --entrypoint /bin/sh rustfs-init -ec \
+  'aws --endpoint-url http://rustfs:9000 s3 sync "s3://$S3_BUCKET" /backup/objects'
 compose up -d --wait
 ```
 
@@ -48,14 +81,18 @@ current database objects. Keep API and worker stopped until both stores match.
 
 ```sh
 backup=backups/20260822T120000Z
-compose --profile minio up -d postgres minio minio-init
+compose --profile rustfs up -d postgres rustfs rustfs-init
 compose stop api worker
+compose build
+# Prepare the runtime role so ACLs in newer backups have a valid grantee.
+compose run --rm migrate
 compose exec -T postgres pg_restore --clean --if-exists -U varda -d varda \
   < "$backup/postgres.dump"
-compose --profile minio run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
-  --entrypoint /bin/sh minio-init -ec \
-  'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" &&
-  mc mirror --overwrite /backup/objects "local/$S3_BUCKET"'
+compose --profile rustfs run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
+  --entrypoint /bin/sh rustfs-init -ec \
+  'aws --endpoint-url http://rustfs:9000 s3 sync /backup/objects "s3://$S3_BUCKET"'
+# Reapply pending migrations and runtime grants after restoring the dump.
+compose run --rm migrate
 compose up -d --build --wait
 curl --fail "$APP_URL/ready"
 ```
@@ -76,3 +113,199 @@ curl --fail "$APP_URL/ready"
 
 Database migrations are forward-only. To roll back across a migration, check
 out the previous release and restore the backup made before upgrading.
+
+## Runtime database role upgrade
+
+The production and both Dokploy templates keep the existing `varda` database
+administrator for PostgreSQL initialization, backups and the one-shot migration
+service. API and worker now connect as `varda_app`, with a separate password.
+They do not receive the administrator's connection string. The runtime owns no
+application or queue objects and has no superuser, BYPASSRLS, role membership,
+schema-creation or table-truncation privileges. Both entrypoints refuse to start
+in production when these restrictions are violated.
+
+For an existing installation:
+
+1. Back up the database, objects and environment. Keep `POSTGRES_PASSWORD`
+   unchanged; changing the environment alone does not change an existing
+   PostgreSQL administrator password.
+2. Add a **different** `POSTGRES_APP_PASSWORD` to the deployment environment.
+   Use at least 24 URL-safe letters, digits, underscores or hyphens; generate
+   one with `openssl rand -hex 32`. Store both secrets securely.
+3. Stop API and worker, deploy the matching images and run the migration service
+   before restarting them. Avoid running the old privileged workers alongside
+   the new services while queue grants are being changed.
+
+```sh
+compose stop api worker
+compose build
+compose run --rm migrate
+compose up -d --force-recreate api worker gateway
+curl --fail "$APP_URL/ready"
+```
+
+Dokploy uses the same environment variable and service dependency ordering.
+Stop the old API/worker before redeploying; verify the migration service succeeded
+and both new services started. No database reset or ownership transfer of existing
+tables is required. A pre-existing `varda_app` role with elevated attributes,
+memberships or owned objects is rejected for manual review rather than silently
+repurposed. Provisioning grants only data operations and checks the resulting role
+before committing its changes. A password rotation uses the same stop/migrate/
+restart sequence, which also prevents old connection pools surviving the change.
+
+pg-boss schema changes now run through its migration CLI before runtime startup.
+Runtime processes can enqueue, claim, schedule, retry and maintain jobs, but
+cannot rewrite the schema version or access executable BAM migration commands.
+Queue statistics persistence is disabled to avoid runtime partition DDL;
+Vardum's delivery analytics remain enabled. Delivery retention visits workspaces
+in batches with a transaction-local RLS context. Existing queue data is preserved
+when the migrator reruns.
+
+The PostgreSQL instance/database is dedicated to Vardum. For a manually managed
+deployment, give the migrator credentials able to apply DDL and provision the
+runtime role; set `POSTGRES_APP_PASSWORD` only on that one-shot process. Set API
+and worker `DATABASE_URL` to the matching `varda_app` connection and
+`NODE_ENV=production`. The local `pnpm dev` workflow still uses its development
+schema owner and automatic queue initialization; it is not a production template.
+
+RLS is defense against missing tenant filters, not a replacement for route
+authorization: the server selects `app.workspace_id`, auth/workspace-directory
+tables remain global, and verified custom-domain lookup has its existing read
+policy. A runtime connection must not be exposed to application end users.
+PostgreSQL explains the superuser/owner exceptions in its
+[row-security documentation](https://www.postgresql.org/docs/17/ddl-rowsecurity.html).
+
+Regression checks (native PostgreSQL binaries; unprivileged OS user):
+
+```sh
+PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:runtime-database
+PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:private-delivery
+bash scripts/smoke-production.sh
+```
+
+The first two create disposable PostgreSQL clusters and ignore `.env`. The last
+builds the production Compose stack in its own project, checks a real RustFS
+upload/ingest, private delivery and the deployed database role, then deletes only
+that project's data. Never substitute the deployed database for these fixtures.
+
+## Asset visibility upgrade
+
+**Do not run old unauthenticated delivery code while accepting private assets.**
+Do not use a rolling mixed-version deployment for this migration.
+
+1. Back up the database, objects and secrets. Stop API and worker instances and
+   block delivery at every gateway/custom-domain origin during the upgrade.
+2. Verify that the bucket, originals, derived objects, imported source objects
+   and any separate object-storage CDN are not anonymously readable. Network
+   reachability for signed uploads is not permission to read objects publicly.
+   Application visibility cannot secure a public bucket or an alternate origin.
+3. Review `0009_asset_visibility.sql` before applying migrations. Existing asset
+   rows become public to preserve their previous behavior; future inserts default
+   private. No file is published by a Vard setting. The migration is tracked by
+   the existing Drizzle migrator and its transaction; rerunning the migrator is
+   safe. Replaying the raw SQL directly is not supported (the column exists).
+4. The migration also changes only enabled workspace keys whose rate limiter is
+   enabled and exactly matches the historical 10 requests / 86,400,000 ms default
+   to 10,000 requests / 60,000 ms. Both key issuance paths and the plugin use that
+   finite new allowance. Private delivery now verifies keys and consumes requests;
+   ten/day would break a normal 12-file pull. This is not a throughput guarantee.
+   Keys with custom limits, disabled keys and disabled rate limiting are untouched;
+   permissions, references, expiry/revocation state, counters and last-request
+   timestamps are preserved. **An intentionally configured exact 10/day limit is
+   indistinguishable from the old default. Operators must review this UPDATE and
+   preserve intentional policy before deployment.** No auth schema regeneration
+   is required.
+5. Apply the migration with the existing migration service, then start only the
+   visibility-aware API/worker and updated gateway. Verify anonymous denial and
+   authenticated original/variant/video-range access before reopening traffic.
+   This repository change does not migrate a running environment.
+
+Private originals, transformed variants, redirects and errors use
+`Cache-Control: private, no-store`; manifests are also no-store, even when public.
+Configure reverse proxies/CDNs to honor this, avoid caching authenticated
+responses, and forward cookies / `x-api-key` to the API. Private browser URLs
+must route through the canonical app origin; a custom domain does not receive
+the app's cookie. API clients may use a verified custom domain with a scoped key,
+but frozen CLI downloads deliberately stay on canonical immutable URLs and refuse
+redirects. Signatures do not grant read permission.
+
+A visibility update affects subsequent origin requests for every ready version;
+it does not delete versions or change their URLs/checksums. Old public responses
+had up to one-year immutable cache lifetimes. Purge caches you control where
+possible, but do not promise immediate revocation from browsers, shared caches,
+already downloaded files or offline build outputs. Public Vards containing even
+one private mapped asset become entirely unavailable anonymously; authenticated
+workspace readers retain complete manifests. Vard public settings never grant
+asset permissions.
+
+### Safe rollback constraints
+
+Prefer a forward fix. Old delivery code ignores `asset.is_public` and would
+re-expose **all** private rows, even if the new column remains in place. Do not
+restart it against the upgraded database. Keep delivery blocked until either a
+visibility-aware fix is running, or a reviewed pre-upgrade database/object backup
+has been restored with all post-upgrade private writes removed and the former
+public exposure explicitly accepted. A schema downgrade alone is not a safe
+rollback. The finite key allowance change also needs operator review if restoring
+old policy; never reset keys/counters or re-enable revoked keys casually.
+
+### Isolated delivery regression
+
+Run `pnpm --filter @vardum/api test:private-delivery` as an unprivileged user with
+native `/usr/bin/initdb`, `pg_ctl`, `postgres` and `psql` installed. The explicit
+suite creates a disposable PostgreSQL cluster on a private UNIX socket with no
+TCP listener and an unprivileged RLS-bound application role. It replaces ambient
+app configuration, uses only local fake object HTTP and disposable credentials,
+exercises real routes/auth and normal/frozen CLI downloads, then stops and removes
+only its own cluster and fixtures. It never reads `.env` or mutates existing
+services. The stress matrix disables fixture key throttling; separate migrated
+and newly API/CLI-issued keys prove bulk and frozen access with finite rate
+limiting still enabled. Ordinary `pnpm test` needs no database.
+
+## Folder-rule upgrade
+
+This is an unreleased source slice, not a new npm release or a live migration.
+Back up database, objects and secrets, stop API writes, and review
+`0010_vard_folder_rules.sql`. Apply it with the existing migration service after
+0009, then deploy the folder-aware API with the matching gateway/MCP source build.
+The non-null JSONB `vard.folder_rules` defaults to `[]`; old Vards and manual rows
+keep their identities and behavior. Do not skip the asset-visibility precautions
+above. Check authenticated configuration GET separately from resolved manifest GET,
+and test that collision/limit errors still allow configuration repair.
+
+Do not serve mixed old/new APIs for Vards using rules. An older API may ignore
+`folder_rules`, return only manual items and silently omit generated membership.
+An older client may ignore or fail to display rules; normal pulls against an older
+API can refresh the snapshot to the wrong membership. Keep rule editing and normal
+updates paused until the matching API and clients are available. Prefer a forward
+fix. Before a rollback, inventory/export Vard definitions and freeze consumer
+updates. Either keep a folder-aware API, or explicitly remove rules using the new
+API and review/commit the intended consumer membership change before switching.
+A migration rollback requires a reviewed pre-upgrade backup restore and acceptance
+of lost post-backup changes. Never roll back to visibility-unaware delivery code
+against private data. Keeping the extra database column alone does not preserve
+rule behavior in an old API.
+
+Rules are literal recursive prefixes, for example `brand/` → `assets/brand/`.
+Empty source/output prefixes mean workspace/project root; nonexistent and empty
+folders are valid. Only ready current originals are included, not pending files;
+new private members block the whole anonymous public manifest. Limits are 64 rules,
+255 characters per prefix, 500 per output path, and 1,000 combined manual/generated
+outputs. Explicit + rule, rule + rule, case/Unicode and file/directory collisions
+fail resolution without precedence or truncation. Configuration remains editable.
+
+No background project sync is introduced. Normal pull adopts current rules and
+membership; frozen pull consumes committed snapshot membership. Removing rules
+leaves manual mappings and source assets intact. **Use `--delete` on the
+membership-updating normal pull** to remove stale tracked project files. A no-delete
+pull drops stale tracking but leaves disk files; a later `--delete` cannot discover
+those leftovers, which require deliberate manual cleanup.
+
+Frozen reproduction still requires retained versions, valid signatures and working
+delivery URLs. Server/workspace-slug changes, signing-key rotation, expired
+signatures or changed transformation rendering can break snapshots. **Source-key
+rename can invalidate historical URLs despite retained bytes.** Rule/membership
+removal with retained valid source URLs supports frozen restore; normal move tests
+do not prove frozen rename support. There is no new retention guarantee or cleanup
+ledger. The isolated `test:private-delivery` suite above also exercises folder-rule
+migration, authorization/privacy, resolution and real normal/frozen CLI lifecycle.

@@ -37,6 +37,39 @@ export async function buildApp() {
     ],
     credentials: true,
   });
+  // Default sensitive routes to non-cacheable, including validation and storage errors.
+  // Only successful public file delivery explicitly opts into caching.
+  app.addHook("onSend", async (request, reply, payload) => {
+    const path = request.url.split("?")[0]!;
+    const delivery = path.startsWith("/w/") || path.startsWith("/assets/");
+    const sensitive =
+      delivery || path.startsWith("/v/") || path.startsWith("/api/workspaces/");
+    if (sensitive) {
+      if (
+        !delivery ||
+        reply.statusCode >= 400 ||
+        !reply.getHeader("cache-control")
+      )
+        reply.header("cache-control", "private, no-store");
+      const vary = new Set(
+        String(reply.getHeader("vary") ?? "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      );
+      for (const header of ["Origin", "Cookie", "X-API-Key"]) vary.add(header);
+      reply.header("vary", [...vary].join(", "));
+      if (delivery) reply.removeHeader("access-control-allow-credentials");
+      if (
+        delivery &&
+        String(reply.getHeader("cache-control")).includes("no-store")
+      ) {
+        reply.removeHeader("access-control-allow-origin");
+        reply.header("cross-origin-resource-policy", "same-origin");
+      }
+    }
+    return payload;
+  });
   // The route schemas are already Zod; this turns them into the API reference
   // instead of maintaining a second description of the same thing by hand.
   await app.register(swagger, {

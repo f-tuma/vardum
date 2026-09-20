@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { fromDrizzle } from "pg-boss";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { workspaceKeyRateLimit } from "./api-key-policy.js";
 import { authorizeAsset, authorizeWorkspaceAdmin } from "./authorization.js";
 import {
   assetVersion,
@@ -244,6 +245,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           .values({
             id,
             configId: "workspace",
+            rateLimitEnabled: workspaceKeyRateLimit.enabled,
+            rateLimitMax: workspaceKeyRateLimit.maxRequests,
+            rateLimitTimeWindow: workspaceKeyRateLimit.timeWindow,
             name: request.body.name,
             start: key.slice(0, 6),
             prefix: "varda_",
@@ -289,11 +293,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { workspaceId } = request.params;
       const { label, access } = request.body;
-      const authorization = await authorizeAsset(
-        request,
-        workspaceId,
-        [...assetPermissions[access].asset],
-      );
+      const authorization = await authorizeAsset(request, workspaceId, [
+        ...assetPermissions[access].asset,
+      ]);
       if (!("principal" in authorization)) {
         return reply
           .code(authorization.statusCode)
@@ -313,6 +315,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
           .values({
             id,
             configId: "workspace",
+            rateLimitEnabled: workspaceKeyRateLimit.enabled,
+            rateLimitMax: workspaceKeyRateLimit.maxRequests,
+            rateLimitTimeWindow: workspaceKeyRateLimit.timeWindow,
             name,
             start: key.slice(0, 6),
             prefix: "varda_",

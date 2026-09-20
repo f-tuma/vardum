@@ -9,6 +9,8 @@ COPY packages/shared/package.json packages/shared/package.json
 RUN pnpm install --frozen-lockfile
 COPY packages/shared packages/shared
 COPY apps/gateway apps/gateway
+# The copied setup command pins the CLI version shipped with this server.
+COPY apps/cli/package.json apps/cli/package.json
 ARG VITE_UPLOAD_ORIGINS
 ENV VITE_UPLOAD_ORIGINS=$VITE_UPLOAD_ORIGINS
 RUN pnpm --filter "@vardum/gateway..." build

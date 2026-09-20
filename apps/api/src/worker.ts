@@ -3,7 +3,9 @@ import {
   type AssetDeletePayload,
 } from "./asset-cleanup.js";
 import { processAsset, type AssetIngestPayload } from "./asset-processor.js";
-import { closeDatabase } from "./db/index.js";
+import { closeDatabase, pool } from "./db/index.js";
+import { config } from "./config.js";
+import { assertRuntimeDatabaseRole } from "./db/runtime-role.js";
 import { deleteExpiredDeliveryEvents } from "./delivery-analytics.js";
 import {
   assetDeleteQueue,
@@ -22,6 +24,7 @@ process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
 try {
+  if (config.NODE_ENV === "production") await assertRuntimeDatabaseRole(pool);
   const queue = await startQueue();
   await queue.schedule(deliveryRetentionQueue, "0 3 * * *", null, {
     tz: "UTC",

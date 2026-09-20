@@ -8,6 +8,7 @@ export function ConfirmDialog({
   confirmLabel,
   onCancel,
   onConfirm,
+  tone = "danger",
 }: {
   open: boolean;
   title: string;
@@ -15,6 +16,7 @@ export function ConfirmDialog({
   confirmLabel: string;
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
+  tone?: "danger" | "neutral";
 }) {
   const [pending, setPending] = useState(false);
 
@@ -32,14 +34,16 @@ export function ConfirmDialog({
     <Modal
       open={open}
       label={title}
-      className="confirm-dialog"
+      className={`confirm-dialog ${tone === "neutral" ? "confirm-neutral" : ""}`}
       onClose={() => {
         if (!pending) onCancel();
       }}
     >
       <div className="confirm-dialog-content">
         <header>
-          <span>!! DESTRUCTIVE ACTION</span>
+          <span>
+            {tone === "danger" ? "!! DESTRUCTIVE ACTION" : "CONFIRM CHANGE"}
+          </span>
           <h2>{title}</h2>
         </header>
         <p>{description}</p>
@@ -48,7 +52,7 @@ export function ConfirmDialog({
             Cancel
           </button>
           <button
-            className="danger-button"
+            className={tone === "danger" ? "danger-button" : "primary-button"}
             type="button"
             disabled={pending}
             onClick={() => void confirm()}

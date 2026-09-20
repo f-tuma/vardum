@@ -1,3 +1,4 @@
+import type { VardFolderRule } from "@vardum/shared";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -99,6 +100,10 @@ export const vard = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     isPublic: boolean("is_public").default(false).notNull(),
+    folderRules: jsonb("folder_rules")
+      .$type<VardFolderRule[]>()
+      .default([])
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -161,6 +166,7 @@ export const asset = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     displayName: text("display_name").notNull(),
+    isPublic: boolean("is_public").default(false).notNull(),
     currentVersionId: uuid("current_version_id").references(
       (): AnyPgColumn => assetVersion.id,
       { onDelete: "set null" },

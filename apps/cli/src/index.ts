@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { mimeForFilename } from "@vardum/shared";
 import { stdin, stdout } from "node:process";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { VardumClient, type Manifest, type VardConfig } from "./client.js";
 import {
   credentialsPath,
@@ -28,11 +28,15 @@ import {
   readLock,
   removeTracked,
   safeTarget,
+  safeLockPath,
   writeLock,
+  validateOutputPaths,
+  validateSnapshotUrl,
   type Lockfile,
 } from "./sync.js";
 
 type Options = {
+  frozen: boolean;
   dryRun: boolean;
   delete: boolean;
   force: boolean;
@@ -44,6 +48,7 @@ type Action = {
   action: "pull" | "push" | "delete" | "create";
   path: string;
   applied: boolean;
+  conflict?: boolean;
 };
 
 // Every command reports through here, so --json is one branch rather than a
@@ -73,6 +78,15 @@ try {
   else if (versionCommands.includes(command)) console.log(VERSION);
   else {
     const options = parseOptions(rawArgs);
+    if (options.frozen && !["pull", "sync", "status"].includes(command))
+      throw new Error("--frozen is only supported by pull, sync and status");
+    if (
+      options.frozen &&
+      (options.delete || options.values.size || options.positionals.length)
+    )
+      throw new Error(
+        "--frozen cannot be combined with --delete, context overrides or positional arguments",
+      );
     if (command === "init") await init(options);
     else if (command === "login") await login(options);
     else if (command === "logout") await logout(options);
@@ -84,7 +98,9 @@ try {
     else if (command === "pull-asset") await pullAsset(options);
     else if (command === "update") await update(options);
     else
-      throw new Error(`Unknown command: ${command}. Run vardum help for the list.`);
+      throw new Error(
+        `Unknown command: ${command}. Run vardum help for the list.`,
+      );
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -108,31 +124,66 @@ try {
 }
 
 async function init(options: Options) {
-  const prompts = createInterface({ input: stdin, output: stdout });
+  if (options.delete || options.positionals.length)
+    throw new Error(
+      "init accepts --server, --workspace, --vard, --force, --dry-run and --json",
+    );
+  const fields = ["server", "workspace", "vard"] as const;
+  const missing = fields.filter((field) => !options.values.has(field));
+  if (missing.length && (!stdin.isTTY || options.json))
+    throw new Error(
+      `Non-interactive init requires ${missing.map((field) => `--${field}`).join(", ")}. Copy the setup command from your Vard's CLI config tab.`,
+    );
+
+  const prompts = missing.length
+    ? createInterface({ input: stdin, output: stdout })
+    : null;
   try {
-    const givenServer = options.values.get("server");
-    const givenWorkspace = options.values.get("workspace");
-    const givenVard = options.values.get("vard");
-    // A pasted value usually carries a trailing newline, so the last prompt
-    // can resolve the instant it lands. Confirming the write separately means
-    // a stray paste never silently creates vardum.json.
-    const prompted =
-      givenServer === undefined ||
-      givenWorkspace === undefined ||
-      givenVard === undefined;
-    const server = givenServer ?? (await prompts.question("Vardum URL: "));
+    const server =
+      options.values.get("server") ?? (await prompts!.question("Vardum URL: "));
     const workspace =
-      givenWorkspace ?? (await prompts.question("Workspace ID: "));
-    const vard = givenVard ?? (await prompts.question("Vard ID: "));
+      options.values.get("workspace") ??
+      (await prompts!.question("Workspace ID: "));
+    const vard =
+      options.values.get("vard") ?? (await prompts!.question("Vard ID: "));
     const config = validateConfig({ schema: 1, server, workspace, vard });
     const path = resolve("vardum.json");
-    if ((await checksumFile(path)) && !options.force)
-      throw new Error("vardum.json already exists; use --force to replace it");
-    if (prompted && !options.json && !options.force) {
-      console.log("");
-      console.log(`  server:    ${config.server}`);
-      console.log(`  workspace: ${config.workspace}`);
-      console.log(`  vard:      ${config.vard}`);
+    let existing: string | null = null;
+    try {
+      existing = await readFile(path, "utf8");
+    } catch (error) {
+      if (!(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        throw error;
+    }
+    if (existing !== null) {
+      let same = false;
+      try {
+        same =
+          JSON.stringify(validateConfig(JSON.parse(existing))) ===
+          JSON.stringify(config);
+      } catch {
+        /* Invalid existing config still requires explicit replacement. */
+      }
+      if (same) {
+        if (!options.json)
+          console.log("vardum.json already connects this Vard.");
+        summary(options, 0);
+        return;
+      }
+      if (!options.force)
+        throw new Error(
+          "vardum.json already exists with a different or invalid configuration; use --force to replace it",
+        );
+    }
+    if (prompts && !options.force && !options.dryRun) {
+      console.log(
+        `\n  server:    ${config.server}\n  workspace: ${config.workspace}\n  vard:      ${config.vard}`,
+      );
       const answer = (await prompts.question("Write vardum.json? [Y/n] "))
         .trim()
         .toLowerCase();
@@ -141,24 +192,29 @@ async function init(options: Options) {
         return;
       }
     }
-    await atomicWrite(
-      path,
-      Buffer.from(`${JSON.stringify(config, null, 2)}\n`),
-    );
-    report(
-      "create",
-      relative(process.cwd(), path) || "vardum.json",
-      options,
-    ).applied = true;
+    const entry = report("create", "vardum.json", options);
+    if (!options.dryRun) {
+      const bytes = Buffer.from(`${JSON.stringify(config, null, 2)}\n`);
+      if (options.force) await atomicWrite(path, bytes);
+      else await writeFile(path, bytes, { flag: "wx" });
+      entry.applied = true;
+    }
     summary(options, 1);
+    if (!options.json && !options.dryRun)
+      console.log("Next: vardum login, then vardum pull.");
   } finally {
-    prompts.close();
+    prompts?.close();
   }
 }
 
 async function login(options: Options) {
-  const server =
-    options.values.get("server") ?? (await optionalContext())?.config.server;
+  const context = await optionalContext();
+  const server = options.values.get("server") ?? context?.config.server;
+  const workspace =
+    options.values.get("workspace") ??
+    (context && server === context.config.server
+      ? context.config.workspace
+      : undefined);
   if (!server)
     throw new Error("Run vardum login inside a project, or pass --server URL");
 
@@ -167,7 +223,7 @@ async function login(options: Options) {
   const listener = awaitGrant(state);
   try {
     const port = await listener.listening;
-    const url = loginUrl(server, port, state, label);
+    const url = loginUrl(server, port, state, label, workspace);
     if (!options.json) {
       console.log(`Opening ${url}`);
       console.log("Waiting for the browser to authorize this machine…");
@@ -245,7 +301,9 @@ async function whoami(options: Options) {
     );
     return;
   }
-  console.log(`  config:    ${relative(process.cwd(), context.path) || context.path}`);
+  console.log(
+    `  config:    ${relative(process.cwd(), context.path) || context.path}`,
+  );
   console.log(`  server:    ${context.config.server}`);
   console.log(`  workspace: ${context.config.workspace}`);
   console.log(`  vard:      ${context.config.vard}`);
@@ -263,41 +321,72 @@ async function optionalContext() {
 
 async function pull(options: Options) {
   const context = await loadContext();
-  const manifest = await context.client.manifest(context.config);
-  assertManifest(manifest, context.config);
-  const lockPath = join(context.directory, ".vardum.lock");
-  const previous = await readLock(lockPath);
-  if (previous && previous.vard !== manifest.id)
-    throw new Error(".vardum.lock belongs to a different Vard");
+  const lockPath = await safeLockPath(context.directory);
+  const previous = await readLock(lockPath, context.config);
+  const snapshot = previous?.schema === 2 ? previous : null;
+  if (options.frozen && !snapshot)
+    throw new Error(
+      "Frozen pull requires a complete schema 2 .vardum.lock; run vardum pull to refresh, then commit the snapshot",
+    );
+  let items: Array<
+    Pick<
+      Manifest["items"][number],
+      "id" | "outputPath" | "versionId" | "fingerprint" | "downloadUrl"
+    >
+  >;
+  if (options.frozen) {
+    items = Object.entries(snapshot!.items).map(([id, item]) => ({
+      id,
+      outputPath: item.path,
+      versionId: item.versionId,
+      fingerprint: item.fingerprint,
+      downloadUrl: item.downloadUrl,
+    }));
+  } else {
+    const manifest = await context.client.manifest(context.config);
+    assertManifest(manifest, context.config);
+    items = manifest.items;
+  }
+  validateOutputPaths(items.map((item) => item.outputPath));
+  const ids = items.map((item) => item.id);
+  if (
+    new Set(ids).size !== ids.length ||
+    ids.some(
+      (id) => !id || ["__proto__", "constructor", "prototype"].includes(id),
+    )
+  )
+    throw new Error("Invalid or duplicate Vard output IDs");
 
   const planned = [] as Array<{
-    item: Manifest["items"][number];
-    target: string;
+    item: (typeof items)[number];
     localChecksum: string | null;
     decision: ReturnType<typeof pullDecision>;
   }>;
-  for (const item of manifest.items) {
+  for (const item of items) {
     if (!item.versionId || !item.fingerprint || !item.downloadUrl)
       throw new Error(`Vard output is unavailable: ${item.outputPath}`);
+    validateSnapshotUrl(
+      item.downloadUrl,
+      item.versionId,
+      context.config.server,
+    );
     const target = await safeTarget(context.directory, item.outputPath);
     const localChecksum = await checksumFile(target);
     planned.push({
       item,
-      target,
       localChecksum,
       decision: pullDecision(
         item.fingerprint,
         localChecksum,
-        previous?.items[item.id],
+        previous?.items[item.id]?.path === item.outputPath
+          ? previous.items[item.id]
+          : undefined,
       ),
     });
   }
 
   const stale = Object.entries(previous?.items ?? {}).filter(
-    ([id, locked]) =>
-      !manifest.items.some(
-        (item) => item.id === id && item.outputPath === locked.path,
-      ),
+    ([, locked]) => !items.some((item) => item.outputPath === locked.path),
   );
   const conflicts = planned.filter(({ decision }) => decision === "conflict");
   // A dry run is a report: vardum status used to fail outright the moment a
@@ -320,7 +409,13 @@ async function pull(options: Options) {
       );
   }
 
-  const next: Lockfile = { schema: 1, vard: manifest.id, items: {} };
+  const next: Lockfile = {
+    schema: 2,
+    server: context.config.server,
+    workspace: context.config.workspace,
+    vard: context.config.vard,
+    items: Object.create(null),
+  };
   for (const plan of planned) {
     let localChecksum = plan.localChecksum;
     if (plan.decision !== "skip") {
@@ -328,12 +423,25 @@ async function pull(options: Options) {
         "pull",
         plan.item.outputPath,
         options,
-        plan.decision === "conflict" ? "(local edits — needs --force)" : undefined,
+        plan.decision === "conflict"
+          ? "(local edits — needs --force)"
+          : undefined,
       );
+      if (plan.decision === "conflict") entry.conflict = true;
       if (!options.dryRun) {
         const bytes = await context.client.download(plan.item.downloadUrl!);
-        await atomicWrite(plan.target, bytes);
         localChecksum = checksum(bytes);
+        if (
+          options.frozen &&
+          localChecksum !== previous!.items[plan.item.id]!.checksum
+        )
+          throw new Error(
+            `Locked checksum mismatch: ${plan.item.outputPath}; refusing to replace file`,
+          );
+        await atomicWrite(
+          await safeTarget(context.directory, plan.item.outputPath),
+          bytes,
+        );
         entry.applied = true;
       }
     }
@@ -342,6 +450,11 @@ async function pull(options: Options) {
       path: plan.item.outputPath,
       versionId: plan.item.versionId!,
       fingerprint: plan.item.fingerprint!,
+      downloadUrl: validateSnapshotUrl(
+        plan.item.downloadUrl!,
+        plan.item.versionId!,
+        context.config.server,
+      ),
       checksum: localChecksum!,
     };
   }
@@ -357,7 +470,8 @@ async function pull(options: Options) {
         entry.applied = true;
       }
     }
-  if (!options.dryRun) await writeLock(lockPath, next);
+  if (!options.dryRun && !options.frozen)
+    await writeLock(lockPath, next, context.config);
   summary(
     options,
     planned.filter(({ decision }) => decision !== "skip").length +
@@ -370,11 +484,12 @@ async function push(options: Options) {
   requireApiKey(context.client);
   let manifest = await context.client.manifest(context.config, true);
   assertManifest(manifest, context.config);
-  const lockPath = join(context.directory, ".vardum.lock");
-  const lock = await readLock(lockPath);
+  const lockPath = await safeLockPath(context.directory);
+  const lock = await readLock(lockPath, context.config);
   if (!lock || lock.vard !== manifest.id)
     throw new Error("Run vardum pull before pushing mapped outputs");
 
+  validateOutputPaths(manifest.items.map((item) => item.outputPath));
   const writable = manifest.items.filter((item) => item.writable);
   let changed = 0;
   for (const item of writable) {
@@ -409,6 +524,7 @@ async function push(options: Options) {
       mimeType,
       bytes,
     );
+    entry.applied = true;
     manifest = await waitForManifestVersion(
       context.client,
       context.config,
@@ -416,18 +532,44 @@ async function push(options: Options) {
       previousVersion,
     );
     const updated = manifest.items.find(({ id }) => id === item.id);
-    if (!updated?.versionId || !updated.fingerprint)
+    assertManifest(manifest, context.config);
+    if (
+      !updated?.versionId ||
+      !updated.fingerprint ||
+      !updated.downloadUrl ||
+      updated.outputPath !== item.outputPath
+    )
       throw new Error(
         `Uploaded output did not become ready: ${item.outputPath}`,
       );
+    if (lock.schema === 2) {
+      validateSnapshotUrl(
+        updated.downloadUrl,
+        updated.versionId,
+        context.config.server,
+      );
+      const downloaded = await context.client.download(updated.downloadUrl);
+      if (checksum(downloaded) !== localChecksum)
+        throw new Error(
+          `Uploaded output checksum mismatch: ${item.outputPath}; lock was not advanced`,
+        );
+    }
     lock.items[item.id] = {
       path: item.outputPath,
       versionId: updated.versionId,
       fingerprint: updated.fingerprint,
+      ...(lock.schema === 2
+        ? {
+            downloadUrl: validateSnapshotUrl(
+              updated.downloadUrl,
+              updated.versionId,
+              context.config.server,
+            ),
+          }
+        : {}),
       checksum: localChecksum,
     };
-    await writeLock(lockPath, lock);
-    entry.applied = true;
+    await writeLock(lockPath, lock, context.config);
   }
   summary(options, changed);
 }
@@ -663,8 +805,8 @@ function validateConfig(value: unknown): VardConfig {
     typeof input.server !== "string" ||
     typeof input.workspace !== "string" ||
     typeof input.vard !== "string" ||
-    !input.workspace ||
-    !input.vard
+    !input.workspace.trim() ||
+    !input.vard.trim()
   )
     throw new Error("vardum.json requires schema, server, workspace and vard");
   let server: URL;
@@ -676,14 +818,18 @@ function validateConfig(value: unknown): VardConfig {
   if (
     !["http:", "https:"].includes(server.protocol) ||
     server.username ||
-    server.password
+    server.password ||
+    server.search ||
+    server.hash
   )
-    throw new Error("vardum.json server must be HTTP(S) without credentials");
+    throw new Error(
+      "vardum.json server must be HTTP(S) without credentials, query or fragment",
+    );
   return {
     schema: 1,
-    server: server.toString().replace(/\/$/, ""),
-    workspace: input.workspace,
-    vard: input.vard,
+    server: server.toString().replace(/\/+$/, ""),
+    workspace: input.workspace.trim(),
+    vard: input.vard.trim(),
   };
 }
 
@@ -769,6 +915,7 @@ async function readPushLock(
 
 function parseOptions(args: string[]): Options {
   const options: Options = {
+    frozen: false,
     dryRun: false,
     delete: false,
     force: false,
@@ -778,13 +925,15 @@ function parseOptions(args: string[]): Options {
   };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
-    if (argument === "--dry-run") options.dryRun = true;
+    if (argument === "--frozen") options.frozen = true;
+    else if (argument === "--dry-run") options.dryRun = true;
     else if (argument === "--delete") options.delete = true;
     else if (argument === "--force") options.force = true;
     else if (argument === "--json") options.json = true;
     else if (["--server", "--workspace", "--vard"].includes(argument)) {
       const value = args[index + 1];
-      if (!value) throw new Error(`${argument} requires a value`);
+      if (!value || value.startsWith("-"))
+        throw new Error(`${argument} requires a value`);
       options.values.set(argument.slice(2), value);
       index += 1;
     } else if (argument.startsWith("-"))
@@ -837,15 +986,15 @@ function help() {
   console.log(`Vardum asset sync v${VERSION}
 
 Usage:
-  vardum init [--server URL --workspace ID --vard ID] [--force]
-  vardum login [--server URL]
+  vardum init [--server URL --workspace ID --vard ID] [--dry-run] [--force]
+  vardum login [--server URL --workspace ID]
   vardum logout [--server URL --workspace ID]
   vardum whoami
   vardum version
   vardum update [--json]
-  vardum status [--delete]
-  vardum sync [--dry-run] [--delete] [--force]
-  vardum pull [--dry-run] [--delete] [--force]
+  vardum status [--frozen | --delete]
+  vardum sync [--frozen | --delete] [--dry-run] [--force]
+  vardum pull [--frozen | --delete] [--dry-run] [--force]
   vardum push [--dry-run] [--force]
   vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
   vardum push-folder <directory> [prefix] [--dry-run] [--delete]
@@ -861,7 +1010,15 @@ Authentication:
 Safety:
   status is pull without writing anything, and reports local conflicts
   instead of refusing to run.
-  Pull and push use .vardum.lock for conflict detection.
+  Normal pull explicitly refreshes assets and the schema 2 .vardum.lock snapshot.
+  Commit vardum.json and .vardum.lock; CI uses pull --frozen to consume it
+  without fetching the current manifest or changing the lock. Matching files
+  need no download; downloaded SHA-256 is verified before replacement.
+  --frozen refuses missing/legacy locks (run normal pull to refresh) and cannot
+  use --delete. --force allows local replacement, never checksum bypass.
+  Use a schema-2-capable CLI build; older CLIs cannot maintain snapshots.
+  Frozen delivery still needs retained versions, valid signatures and an
+  available same-origin server; redirects are refused. No latest fallback.
   --delete removes only files/assets tracked by a previous CLI run, and
   asks first when it would delete remote assets in a terminal.
 

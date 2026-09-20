@@ -36,6 +36,14 @@ test("the login URL sends the key back to this process only", () => {
   assert.equal(url.searchParams.get("label"), "laptop");
 });
 
+test("project login preselects its workspace without changing the callback", () => {
+  const url = new URL(
+    loginUrl("https://vardum.com", 54321, "nonce", "laptop", "workspace-2"),
+  );
+  assert.equal(url.searchParams.get("workspace"), "workspace-2");
+  assert.equal(url.searchParams.get("callback"), "http://127.0.0.1:54321/");
+});
+
 // Stands in for the browser: posts a grant to the listener the CLI opened.
 test("the listener takes the browser's grant and refuses anything else", async () => {
   const state = newState();

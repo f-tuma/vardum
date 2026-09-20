@@ -140,7 +140,9 @@ export class VardumClient {
   }
 
   async download(path: string) {
-    const response = await fetch(new URL(path, `${this.server}/`), {
+    const downloadUrl = safeDownloadUrl(path, this.server);
+    const response = await fetch(downloadUrl, {
+      redirect: "error",
       headers: this.headers(),
     });
     if (!response.ok)
@@ -156,6 +158,7 @@ export class VardumClient {
       headers.set(key, value);
     const response = await fetch(new URL(path, `${this.server}/`), {
       ...init,
+      redirect: "error",
       headers,
     });
     if (response.status === 204) return undefined as T;
@@ -201,4 +204,21 @@ function safeHttpUrl(value: string) {
 
 function megabytes(bytes: number) {
   return `${Math.round(bytes / 1024 / 1024)} MB`;
+}
+
+/** Delivery is same-origin only; never send workspace keys to supplied hosts. */
+export function safeDownloadUrl(value: string, server: string) {
+  const url = new URL(value, `${server}/`);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.origin !== new URL(server).origin ||
+    url.hash ||
+    /[\\\x00-\x20\x7f]/.test(value)
+  )
+    throw new Error(
+      "Download URL must be same-origin HTTP(S), without credentials or fragments",
+    );
+  return url;
 }

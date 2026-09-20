@@ -1,6 +1,6 @@
 {
   "name": "@vardum/cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Developer-first CLI for syncing Vardum Vards into a project",
   "license": "MIT",
   "type": "module",
@@ -16,9 +16,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "pnpm build",
     "test": "node --import tsx --test src/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "node ../../scripts/check-pack-manager.mjs && pnpm build"
   },
   "publishConfig": {
     "access": "public"
@@ -30,5 +30,14 @@
   },
   "dependencies": {
     "@vardum/shared": "workspace:^"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frgtn-dot-dev/vardum.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://github.com/frgtn-dot-dev/vardum/tree/main/apps/cli#readme",
+  "bugs": {
+    "url": "https://github.com/frgtn-dot-dev/vardum/issues"
   }
 }

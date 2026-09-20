@@ -1,10 +1,13 @@
+import { CopyButton, FilterInput, PageTabs, TabPanel } from "./ui-controls";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import type { VardDefinition, VardFolderRule } from "@vardum/shared";
 import {
   createVard,
   deleteVard,
   getVard,
+  getVardManifest,
   listAssets,
   listSyncAssets,
   listVards,
@@ -12,23 +15,43 @@ import {
   updateVard,
   type AssetSummary,
   type TransformationInput,
+  type SyncAsset,
+  type VardItem,
 } from "./asset-api";
-import {
-  FolderBreadcrumbs,
-  useCloseDetailsOnOutsideClick,
-} from "./asset-dashboard";
+import { FolderBreadcrumbs } from "./asset-dashboard";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Modal } from "./modal";
+import { FormDialog } from "./form-dialog";
+import { FolderIcon } from "./folder-icon";
+import { InfoTip } from "./info-tip";
+import { cliSetupCommand, CLI_SETUP_VERSION } from "./cli-setup";
+import { VardFilePreview } from "./vard-file-preview";
+import { sourcePreview } from "./vard-preview-url";
+import {
+  applyVardMetadata,
+  generatedOutputs,
+  manualDraftItems,
+  refreshVardPreview,
+  type DraftItem,
+} from "./vard-editor-state";
 
-type DraftItem = {
-  id: string;
-  assetId: string;
-  key: string;
-  outputPath: string;
-  versionId: string | null;
-  transformation: TransformationInput | null;
-  writable: boolean;
-};
+const editorTabs = [
+  ["files", "Files"],
+  ["folders", "Folder rules"],
+  ["preview", "Preview"],
+  ["config", "CLI config"],
+  ["settings", "Settings"],
+] as const;
+
+function PublicManifestTip() {
+  return (
+    <InfoTip label="About public manifests">
+      This does not publish files or grant asset access. Any private mapped
+      asset, including a new folder member, blocks the entire anonymous
+      manifest; workspace readers can still use it.
+    </InfoTip>
+  );
+}
 
 export function VardsPage({
   workspaceId,
@@ -39,10 +62,15 @@ export function VardsPage({
   workspaceName: string;
   canEdit: boolean;
 }) {
+  const [search, setSearch] = useState("");
   const vards = useQuery({
     queryKey: ["vards", workspaceId],
     queryFn: () => listVards(workspaceId),
   });
+
+  const matchingVards = (vards.data?.vards ?? []).filter((vard) =>
+    vard.name.toLowerCase().includes(search.trim().toLowerCase()),
+  );
 
   return (
     <main className="dashboard-main settings-page" id="vards">
@@ -60,21 +88,28 @@ export function VardsPage({
             <h2>┌─ {workspaceName.toUpperCase()} VARDS</h2>
             <span>{vards.data?.vards.length ?? 0} TOTAL</span>
           </header>
+          <div className="list-toolbar">
+            <FilterInput
+              value={search}
+              onChange={setSearch}
+              label="Find Vards"
+            />
+          </div>
           {vards.isPending ? (
             <p className="settings-state">Loading Vards…</p>
           ) : vards.isError ? (
             <p className="error-strip settings-inline-error" role="alert">
               {vards.error.message}
             </p>
-          ) : vards.data.vards.length ? (
+          ) : matchingVards.length ? (
             <ul className="vard-list">
-              {vards.data.vards.map((vard) => (
+              {matchingVards.map((vard) => (
                 <li key={vard.id}>
                   <span>
                     <strong>{vard.name}</strong>
                     <small>
                       {vard.isPublic ? "PUBLIC" : "PRIVATE"} // {vard.itemCount}{" "}
-                      ITEMS
+                      MANUAL ITEMS
                     </small>
                   </span>
                   <Link
@@ -88,7 +123,13 @@ export function VardsPage({
               ))}
             </ul>
           ) : (
-            <p className="settings-state">└─ No Vards yet</p>
+            <p className="settings-state">
+              {search
+                ? "No matching Vards."
+                : canEdit
+                  ? "└─ Create a Vard to choose which files go into your project."
+                  : "└─ No Vards yet"}
+            </p>
           )}
         </section>
       </div>
@@ -99,12 +140,13 @@ export function VardsPage({
 function NewVardForm({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const detailsRef = useCloseDetailsOnOutsideClick();
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const formElement = event.currentTarget;
     setPending(true);
     setError("");
@@ -115,7 +157,7 @@ function NewVardForm({ workspaceId }: { workspaceId: string }) {
         isPublic: form.get("isPublic") === "on",
       });
       formElement.reset();
-      formElement.closest("details")?.removeAttribute("open");
+      setOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["vards", workspaceId] });
       await navigate({
         to: "/workspaces/$workspaceId/vards/$vardId",
@@ -129,29 +171,52 @@ function NewVardForm({ workspaceId }: { workspaceId: string }) {
   }
 
   return (
-    <details ref={detailsRef} className="upload-drawer form-drawer">
-      <summary>New Vard</summary>
-      <form onSubmit={submit}>
-        <div className="drawer-row">
+    <>
+      <button
+        className="primary-button"
+        type="button"
+        onClick={() => {
+          setError("");
+          setOpen(true);
+        }}
+      >
+        New Vard
+      </button>
+      <FormDialog
+        open={open}
+        title="New Vard"
+        pending={pending}
+        onClose={() => setOpen(false)}
+      >
+        <form className="creation-form" onSubmit={submit}>
           <label>
             Vard name
-            <input name="name" placeholder="Website" maxLength={80} required />
+            <input
+              name="name"
+              placeholder="Website"
+              maxLength={80}
+              autoFocus
+              required
+            />
           </label>
+          <div className="heading-with-tip">
+            <label className="checkbox-label">
+              <input type="checkbox" name="isPublic" />
+              Public manifest
+            </label>
+            <PublicManifestTip />
+          </div>
+          {error && (
+            <p className="error-strip" role="alert">
+              {error}
+            </p>
+          )}
           <button className="primary-button" disabled={pending}>
             {pending ? "Creating…" : "Create Vard"}
           </button>
-        </div>
-        <label className="checkbox-label">
-          <input type="checkbox" name="isPublic" />
-          Public manifest
-        </label>
-        {error && (
-          <p className="error-strip" role="alert">
-            {error}
-          </p>
-        )}
-      </form>
-    </details>
+        </form>
+      </FormDialog>
+    </>
   );
 }
 
@@ -172,6 +237,12 @@ export function VardEditor({
     queryKey: ["vard", workspaceId, vardId],
     queryFn: () => getVard(workspaceId, vardId),
   });
+  const preview = useQuery({
+    queryKey: ["vard-preview", workspaceId, vardId],
+    queryFn: () => getVardManifest(workspaceId, vardId),
+    enabled: Boolean(vard.data),
+    retry: false,
+  });
   const assets = useQuery({
     queryKey: ["sync-assets", workspaceId],
     queryFn: () => listSyncAssets(workspaceId),
@@ -188,34 +259,47 @@ export function VardEditor({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (!vard.data) return;
     setName(vard.data.name);
     setIsPublic(vard.data.isPublic);
-    setItems(
-      vard.data.items.map((item) => ({
-        id: item.id,
-        assetId: item.assetId,
-        key: item.key,
-        outputPath: item.outputPath,
-        versionId: item.pinned ? item.versionId : null,
-        transformation: item.transformation,
-        writable: item.writable,
-      })),
-    );
+    setItems(manualDraftItems(vard.data));
   }, [vard.data]);
 
-  // Every edit is an explicit act on one file, so each one is written straight
-  // through. The API replaces the whole item list, which is why the next state
-  // is computed first and sent as a whole.
-  async function persistItems(next: DraftItem[]) {
-    const previous = items;
-    setItems(next);
+  function beginSave() {
+    if (!canEdit || savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
     setError("");
     setMessage("");
+    return true;
+  }
+
+  async function refreshAfterSave() {
+    // A refresh failure is not a failed write. Never roll back accepted data.
     try {
-      await replaceVardItems(
+      await Promise.all([
+        queryClient.invalidateQueries(
+          { queryKey: ["vards", workspaceId] },
+          { throwOnError: true },
+        ),
+        refreshVardPreview(queryClient, workspaceId, vardId),
+      ]);
+    } catch {
+      setMessage("Saved. The Vard list could not refresh; reload to retry.");
+    }
+  }
+
+  async function persistItems(next: DraftItem[]) {
+    if (!beginSave()) return;
+    try {
+      await queryClient.cancelQueries({
+        queryKey: ["vard", workspaceId, vardId],
+      });
+      const saved = await replaceVardItems(
         workspaceId,
         vardId,
         next.map(
@@ -228,28 +312,53 @@ export function VardEditor({
           }),
         ),
       );
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["vard", workspaceId, vardId],
-        }),
-        queryClient.invalidateQueries({ queryKey: ["vards", workspaceId] }),
-      ]);
+      queryClient.setQueryData(["vard", workspaceId, vardId], saved);
+      setItems(manualDraftItems(saved));
       setMessage("Saved");
+      await refreshAfterSave();
     } catch (cause) {
-      setItems(previous);
       setError(cause instanceof Error ? cause.message : "Vard update failed");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
-  async function persistManifest(patch: { name?: string; isPublic?: boolean }) {
-    setError("");
-    setMessage("");
+  async function persistManifest(patch: {
+    name?: string;
+    isPublic?: boolean;
+    folderRules?: VardFolderRule[];
+  }) {
+    if (!beginSave()) return false;
     try {
-      await updateVard(workspaceId, vardId, patch);
-      await queryClient.invalidateQueries({ queryKey: ["vards", workspaceId] });
+      await queryClient.cancelQueries({
+        queryKey: ["vard", workspaceId, vardId],
+      });
+      const saved = await updateVard(workspaceId, vardId, patch);
+      queryClient.setQueryData<VardDefinition>(
+        ["vard", workspaceId, vardId],
+        (current) => (current ? applyVardMetadata(current, saved) : current),
+      );
+      setName(saved.name);
+      setIsPublic(saved.isPublic);
       setMessage("Saved");
+      await refreshAfterSave();
+      return true;
     } catch (cause) {
+      const current = queryClient.getQueryData<VardDefinition>([
+        "vard",
+        workspaceId,
+        vardId,
+      ]);
+      if (current) {
+        setName(current.name);
+        setIsPublic(current.isPublic);
+      }
       setError(cause instanceof Error ? cause.message : "Vard update failed");
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -276,16 +385,16 @@ export function VardEditor({
     });
   }
 
-  if (vard.isPending || assets.isPending)
-    return <div className="loading">Loading Vard…</div>;
-  if (vard.isError || assets.isError)
+  if (vard.isPending) return <div className="loading">Loading Vard…</div>;
+  if (vard.isError)
     return (
       <div className="state-panel" role="alert">
-        {vard.error?.message ?? assets.error?.message}
+        {vard.error.message}
       </div>
     );
 
   const { folders, files } = outputTree(items, outputPrefix);
+  const savedItems = new Map(vard.data.items.map((item) => [item.id, item]));
   const editing = newItem ?? items.find(({ id }) => id === editingId);
   const config = JSON.stringify(
     {
@@ -301,165 +410,295 @@ export function VardEditor({
   return (
     <main className="dashboard-main settings-page" id="vard-editor">
       <header className="settings-heading">
+        <Link
+          className="back-link"
+          to="/workspaces/$workspaceId/vards"
+          params={{ workspaceId }}
+        >
+          ← Vards
+        </Link>
         <h1>{vard.data.name}</h1>
-        <span>The files this Vard writes into a project, mirrored.</span>
+        <span>Project files and folder mappings.</span>
       </header>
 
-      <div className="settings-stack">
-        <section className="settings-panel">
-          <header>
-            <h2>┌─ MANIFEST</h2>
-            <span>{isPublic ? "PUBLIC" : "PRIVATE"}</span>
-          </header>
-          <form onSubmit={(event) => event.preventDefault()}>
-            <label>
-              Name
-              <input
-                value={name}
-                maxLength={80}
-                required
-                disabled={!canEdit}
-                onChange={(event) => setName(event.target.value)}
-                onBlur={() => {
-                  if (name && name !== vard.data.name)
-                    void persistManifest({ name });
-                }}
-              />
-            </label>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={isPublic}
-                disabled={!canEdit}
-                onChange={(event) => {
-                  setIsPublic(event.target.checked);
-                  void persistManifest({ isPublic: event.target.checked });
-                }}
-              />
-              Public manifest — anyone with its ID can pull these outputs
-            </label>
-            <div className="settings-url">
-              <span>VARD ID</span>
-              <code>{vardId}</code>
-            </div>
-          </form>
-        </section>
+      <PageTabs label="Vard editor" items={editorTabs}>
+        {error && (
+          <p className="error-strip" role="alert">
+            {error}
+          </p>
+        )}
+        {message && (
+          <p className="settings-state" role="status">
+            {message}
+          </p>
+        )}
+        <TabPanel id="settings">
+          <section className="settings-panel" id="vard-manifest">
+            <header>
+              <h2>┌─ MANIFEST</h2>
+              <span>{isPublic ? "PUBLIC" : "PRIVATE"}</span>
+            </header>
+            <form onSubmit={(event) => event.preventDefault()}>
+              <label>
+                Name
+                <input
+                  value={name}
+                  maxLength={80}
+                  required
+                  disabled={!canEdit || saving}
+                  onChange={(event) => setName(event.target.value)}
+                  onBlur={() => {
+                    if (name && name !== vard.data.name)
+                      void persistManifest({ name });
+                  }}
+                />
+              </label>
+              <div className="heading-with-tip">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={isPublic}
+                    disabled={!canEdit || saving}
+                    onChange={(event) => {
+                      void persistManifest({ isPublic: event.target.checked });
+                    }}
+                  />
+                  Public manifest
+                </label>
+                <PublicManifestTip />
+              </div>
+              <div className="settings-url">
+                <span>VARD ID</span>
+                <code>{vardId}</code>
+              </div>
+            </form>
+          </section>
 
-        <section className="settings-panel">
-          <header>
-            <h2>┌─ VARDUM.JSON</h2>
-            <button
-              type="button"
-              onClick={() => void navigator.clipboard.writeText(config)}
-            >
-              Copy
-            </button>
-          </header>
-          <pre className="vard-config">
-            <code>{config}</code>
-          </pre>
-          {!isPublic && (
-            <p className="settings-note">
-              Private Vards require <code>VARDUM_API_KEY</code> in the CLI
-              environment.
-            </p>
-          )}
-        </section>
-
-        <section className="settings-panel">
-          <header className="outputs-header">
-            <h2>┌─ OUTPUTS</h2>
-            <span role="status">
-              /{outputPrefix} // {items.length} FILES
-              {message && ` // ${message}`}
-            </span>
-            {canEdit && (
-              <button type="button" onClick={() => setPickerOpen(true)}>
-                Add asset
-              </button>
-            )}
-          </header>
-
-          {outputPrefix || folders.length || files.length ? (
-            <div className="vard-tree folder-grid">
-              {outputPrefix && (
+          {canEdit && (
+            <section className="settings-panel danger-zone">
+              <header>
+                <h2>┌─ DELETE VARD</h2>
+                <span>IRREVERSIBLE</span>
+              </header>
+              <div className="panel-action-row">
+                <p>Deletes this manifest only. Assets remain untouched.</p>
                 <button
-                  className="folder-open"
+                  className="danger-button"
                   type="button"
-                  onClick={() =>
-                    setOutputPrefix(outputPrefix.replace(/[^/]+\/$/, ""))
-                  }
+                  disabled={saving}
+                  onClick={() => setDeleteOpen(true)}
                 >
-                  <span aria-hidden="true">▱</span> ..
+                  Delete Vard
+                </button>
+              </div>
+            </section>
+          )}
+        </TabPanel>
+
+        <TabPanel id="config" guide="vard-config">
+          <section className="settings-panel" id="vard-setup">
+            <header>
+              <h2 className="heading-with-tip">
+                ┌─ TERMINAL SETUP
+                <InfoTip label="About terminal setup">
+                  Run in your project root using bash or zsh with Node.js 22 or
+                  newer. Installs the CLI, creates vardum.json, opens browser
+                  authorization for this workspace, then pulls your files. Each
+                  step runs only if the previous one succeeds.
+                </InfoTip>
+              </h2>
+              <CopyButton
+                label="Copy setup"
+                text={cliSetupCommand(
+                  window.location.origin,
+                  workspaceId,
+                  vardId,
+                )}
+              />
+            </header>
+            <pre className="vard-config vard-setup-command">
+              <code>
+                {cliSetupCommand(window.location.origin, workspaceId, vardId)}
+              </code>
+            </pre>
+            <p className="settings-state">
+              CLI {CLI_SETUP_VERSION} · npm release pending
+            </p>
+          </section>
+          <section className="settings-panel" id="vard-config">
+            <header>
+              <h2 className="heading-with-tip">
+                ┌─ VARDUM.JSON
+                <InfoTip label="About CLI configuration">
+                  Run vardum init with these values, or save this configuration
+                  as vardum.json in your project. Private files and manifests
+                  need workspace read access. Use vardum login locally or
+                  VARDUM_API_KEY in CI.
+                </InfoTip>
+              </h2>
+              <CopyButton text={config} />
+            </header>
+            <pre className="vard-config">
+              <code>{config}</code>
+            </pre>
+          </section>
+        </TabPanel>
+
+        <TabPanel id="folders" guide="vard-folders">
+          <FolderRulesForm
+            key={vardId}
+            rules={vard.data.folderRules}
+            canEdit={canEdit}
+            saving={saving}
+            onSave={(folderRules) => persistManifest({ folderRules })}
+          />
+        </TabPanel>
+
+        <TabPanel id="preview">
+          <section className="settings-panel" id="vard-preview">
+            <header>
+              <h2 className="heading-with-tip">
+                ┌─ RESOLVED OUTPUTS
+                <InfoTip label="About resolved outputs">
+                  Preview of saved configuration, excluding unsaved rules.
+                  Folder outputs use the latest ready originals and are
+                  read-only. Run vardum pull to adopt changes; --frozen uses
+                  your committed snapshot. There is no background sync.
+                </InfoTip>
+              </h2>
+              <button
+                type="button"
+                disabled={saving || preview.isFetching}
+                onClick={() => void preview.refetch()}
+              >
+                Refresh preview
+              </button>
+            </header>
+            {preview.isFetching ? (
+              <p className="settings-state" role="status">
+                Resolving outputs…
+              </p>
+            ) : preview.isError ? (
+              <p className="error-strip settings-inline-error" role="alert">
+                Preview unavailable: {preview.error.message}. Edit manual paths
+                or folder rules to repair collisions or reduce outputs, then
+                refresh. Configuration remains editable.
+              </p>
+            ) : preview.data ? (
+              <>
+                <div className="vard-preview-summary">
+                  <span>{preview.data.items.length} outputs</span>
+                  <span>{vard.data.items.length} manual</span>
+                  <span>
+                    {generatedOutputs(preview.data).length} from folders
+                  </span>
+                </div>
+                <ul className="vard-list">
+                  {generatedOutputs(preview.data).map((item) => (
+                    <li key={item.id}>
+                      <span>
+                        <strong>{item.outputPath}</strong>
+                        <small>{item.key} → original // READ-ONLY</small>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {!generatedOutputs(preview.data).length && (
+                  <p className="settings-state">└─ No folder outputs</p>
+                )}
+              </>
+            ) : null}
+          </section>
+        </TabPanel>
+
+        <TabPanel id="files" guide="vard-files">
+          <section className="settings-panel" id="vard-outputs">
+            <header className="outputs-header">
+              <h2>┌─ MANUAL OUTPUTS</h2>
+              <span role="status">
+                /{outputPrefix} // {items.length} FILES
+              </span>
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setPickerOpen(true)}
+                >
+                  Add asset
                 </button>
               )}
-              {folders.map((folder) => (
-                <button
-                  key={folder.prefix}
-                  className="folder-open"
-                  type="button"
-                  onClick={() => setOutputPrefix(folder.prefix)}
-                >
-                  <span aria-hidden="true">▱</span> {folder.name}
-                  <small>{folder.count}</small>
-                </button>
-              ))}
-              {files.map((item) => (
-                <button
-                  key={item.id}
-                  className="folder-open vard-file"
-                  type="button"
-                  onClick={() => setEditingId(item.id)}
-                >
-                  <span aria-hidden="true">▤</span>
-                  {item.outputPath.slice(outputPrefix.length)}
-                  <small>{itemBadge(item)}</small>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="settings-state">
-              └─{" "}
-              {items.length
-                ? "This folder holds no files"
-                : "Add the first asset output"}
-            </p>
-          )}
-
-          {error && (
-            <p className="error-strip settings-inline-error" role="alert">
-              {error}
-            </p>
-          )}
-        </section>
-
-        {canEdit && (
-          <section className="settings-panel danger-zone">
-            <header>
-              <h2>┌─ DELETE VARD</h2>
-              <span>IRREVERSIBLE</span>
             </header>
-            <div className="panel-action-row">
-              <p>Deletes this manifest only. Assets remain untouched.</p>
-              <button
-                className="danger-button"
-                type="button"
-                onClick={() => setDeleteOpen(true)}
-              >
-                Delete Vard
-              </button>
-            </div>
+
+            {outputPrefix || folders.length || files.length ? (
+              <div className="vard-tree folder-grid">
+                {outputPrefix && (
+                  <button
+                    className="folder-open"
+                    type="button"
+                    onClick={() =>
+                      setOutputPrefix(outputPrefix.replace(/[^/]+\/$/, ""))
+                    }
+                  >
+                    <FolderIcon /> ..
+                  </button>
+                )}
+                {folders.map((folder) => (
+                  <button
+                    key={folder.prefix}
+                    className="folder-open"
+                    type="button"
+                    onClick={() => setOutputPrefix(folder.prefix)}
+                  >
+                    <FolderIcon /> {folder.name}
+                    <small>{folder.count}</small>
+                  </button>
+                ))}
+                {files.map((item) => (
+                  <button
+                    key={item.id}
+                    className="folder-open vard-file"
+                    type="button"
+                    onClick={() => setEditingId(item.id)}
+                  >
+                    <VardFilePreview
+                      url={savedItems.get(item.id)?.downloadUrl}
+                      mimeType={savedItems.get(item.id)?.mimeType}
+                    />
+                    <span className="vard-file-caption">
+                      <span>{item.outputPath.slice(outputPrefix.length)}</span>
+                      <small>{itemBadge(item)}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="settings-state">
+                └─{" "}
+                {items.length
+                  ? "This folder holds no files"
+                  : "Add the first asset output"}
+              </p>
+            )}
+
+            {assets.isError && (
+              <p className="error-strip settings-inline-error" role="alert">
+                Asset details unavailable: {assets.error.message}. Manual
+                mappings and folder rules remain editable.
+              </p>
+            )}
           </section>
-        )}
-      </div>
+        </TabPanel>
+      </PageTabs>
 
       {editing && (
         <VardItemDialog
           key={editing.id}
           item={editing}
           isNew={Boolean(newItem)}
-          source={assets.data.assets.find(({ id }) => id === editing.assetId)}
-          canEdit={canEdit}
+          source={assets.data?.assets.find(({ id }) => id === editing.assetId)}
+          workspaceSlug={assets.data?.workspaceSlug}
+          saved={savedItems.get(editing.id)}
+          canEdit={canEdit && !saving}
           onClose={() => {
             setEditingId("");
             setNewItem(null);
@@ -505,10 +744,148 @@ export function VardEditor({
   );
 }
 
+function FolderRulesForm({
+  rules,
+  canEdit,
+  saving,
+  onSave,
+}: {
+  rules: VardFolderRule[];
+  canEdit: boolean;
+  saving: boolean;
+  onSave: (rules: VardFolderRule[]) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(rules);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) setDraft(rules);
+  }, [rules, dirty]);
+
+  function change(next: VardFolderRule[]) {
+    setDraft(next);
+    setDirty(true);
+  }
+
+  function changeRule(index: number, patch: Partial<VardFolderRule>) {
+    change(
+      draft.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)),
+    );
+  }
+
+  return (
+    <section className="settings-panel" id="vard-folders">
+      <header>
+        <h2 className="heading-with-tip">
+          ┌─ FOLDER RULES
+          <InfoTip label="About folder rules">
+            Recursively map a source folder to a project folder, for example
+            brand/ → assets/brand/. Empty prefixes mean root; other prefixes
+            must end with /. Only ready current originals are included. No
+            globs, transformations, pinned versions or writable outputs. Up to
+            64 rules, 255 characters per prefix and 1,000 total outputs.
+            Overlapping output paths are rejected.
+          </InfoTip>
+        </h2>
+        <span role="status">{dirty ? "UNSAVED RULES" : "SAVED RULES"}</span>
+      </header>
+      <form
+        className="folder-rules-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (canEdit && dirty && !saving && (await onSave(draft)))
+            setDirty(false);
+        }}
+      >
+        {draft.map((rule, index) => (
+          <div className="drawer-row" key={index}>
+            <label>
+              Source prefix {index + 1}
+              <input
+                value={rule.sourcePrefix}
+                maxLength={255}
+                placeholder="brand/ (empty = root)"
+                disabled={!canEdit || saving}
+                onChange={(event) =>
+                  changeRule(index, { sourcePrefix: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              Output prefix {index + 1}
+              <input
+                value={rule.outputPrefix}
+                maxLength={255}
+                placeholder="assets/brand/ (empty = root)"
+                disabled={!canEdit || saving}
+                onChange={(event) =>
+                  changeRule(index, { outputPrefix: event.target.value })
+                }
+              />
+            </label>
+            {canEdit && (
+              <button
+                type="button"
+                disabled={saving}
+                aria-label={`Remove folder rule ${index + 1}`}
+                onClick={() => change(draft.filter((_, i) => i !== index))}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+        {!draft.length && <p className="settings-state">└─ No folder rules</p>}
+        {canEdit && (
+          <div className="folder-rule-actions">
+            <div className="heading-with-tip">
+              <button
+                type="button"
+                disabled={saving || draft.length >= 64}
+                onClick={() =>
+                  change([...draft, { sourcePrefix: "", outputPrefix: "" }])
+                }
+              >
+                Add folder rule
+              </button>
+              <InfoTip label="About removing folder rules">
+                Removing a rule keeps source assets. To delete stale project
+                files, use vardum pull --delete when updating membership.
+                Pulling without --delete drops their tracking; later cleanup
+                must be manual.
+              </InfoTip>
+            </div>
+            <div className="folder-rule-save-actions">
+              <button
+                type="button"
+                disabled={saving || !dirty}
+                onClick={() => {
+                  setDraft(rules);
+                  setDirty(false);
+                }}
+              >
+                Discard changes
+              </button>
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={saving || !dirty}
+              >
+                {saving ? "Saving…" : "Save rules"}
+              </button>
+            </div>
+          </div>
+        )}
+      </form>
+    </section>
+  );
+}
+
 function VardItemDialog({
   item,
   isNew,
   source,
+  workspaceSlug,
+  saved,
   canEdit,
   onSave,
   onRemove,
@@ -516,7 +893,9 @@ function VardItemDialog({
 }: {
   item: DraftItem;
   isNew: boolean;
-  source?: { versionId: string; mimeType: string };
+  source?: SyncAsset;
+  workspaceSlug?: string;
+  saved?: VardItem;
   canEdit: boolean;
   onSave: (item: DraftItem) => void;
   onRemove: () => void;
@@ -524,6 +903,7 @@ function VardItemDialog({
 }) {
   const [draft, setDraft] = useState(item);
   const transformed = Boolean(draft.transformation);
+  const preview = sourcePreview(draft, workspaceSlug, source, saved);
 
   function change(patch: Partial<DraftItem>) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -544,6 +924,17 @@ function VardItemDialog({
           </button>
         </header>
 
+        <div className="vard-item-preview">
+          <VardFilePreview
+            url={preview.url}
+            mimeType={preview.mimeType}
+            label={`Source preview of ${item.key}`}
+            controls
+          />
+          <span>
+            Source · {draft.versionId ? "Pinned version" : "Latest version"}
+          </span>
+        </div>
         <div className="vard-item-fields">
           <label>
             Output path
@@ -801,7 +1192,7 @@ function AssetPicker({
                   type="button"
                   onClick={() => setPrefix(folder.prefix)}
                 >
-                  <span aria-hidden="true">▱</span> {folder.name}
+                  <FolderIcon /> {folder.name}
                 </button>
               ))}
             </div>

@@ -1,3 +1,4 @@
+import { isAPIError } from "better-auth/api";
 import { fromNodeHeaders } from "better-auth/node";
 import { eq } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
@@ -84,10 +85,17 @@ export async function authorizeAsset(
 
   const organizationId = await findWorkspaceOrganizationId(workspaceId);
   if (!organizationId) return { statusCode: 403, error: "Forbidden" };
-  const permission = await auth.api.hasPermission({
-    headers,
-    body: { organizationId, permissions: { asset: actions } },
-  });
+  const permission = await auth.api
+    .hasPermission({
+      headers,
+      body: { organizationId, permissions: { asset: actions } },
+    })
+    .catch((error: unknown) => {
+      // Better Auth throws for a signed-in non-member, rather than returning false.
+      if (isAPIError(error) && [401, 403].includes(error.statusCode))
+        return { success: false };
+      throw error;
+    });
 
   return permission.success
     ? {

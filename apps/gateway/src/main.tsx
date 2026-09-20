@@ -5,9 +5,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  redirect,
 } from "@tanstack/react-router";
 import { lazy, StrictMode, Suspense } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { AcceptInvitation } from "./accept-invitation";
 import { App } from "./app";
 import { CliLogin } from "./cli-login";
@@ -51,6 +52,7 @@ const cliLoginRoute = createRoute({
     callback: typeof search.callback === "string" ? search.callback : "",
     state: typeof search.state === "string" ? search.state : "",
     label: typeof search.label === "string" ? search.label : "cli",
+    workspace: typeof search.workspace === "string" ? search.workspace : "",
   }),
   component: CliLoginPage,
 });
@@ -82,17 +84,32 @@ const vardEditorRoute = createRoute({
 const workspaceAuditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/audit",
-  component: WorkspaceAuditPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/workspaces/$workspaceId/settings",
+      params: { workspaceId: params.workspaceId },
+      search: { tab: "activity" },
+      replace: true,
+    });
+  },
 });
 const workspaceSettingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/settings",
+  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
+    ...(typeof search.tab === "string" && search.tab
+      ? { tab: search.tab }
+      : {}),
+  }),
   component: WorkspaceSettingsPage,
 });
 const workspaceAssetsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/assets",
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { prefix: string; q?: string } => ({
+    ...(typeof search.q === "string" && search.q ? { q: search.q } : {}),
     prefix: typeof search.prefix === "string" ? search.prefix : "",
   }),
   component: WorkspaceAssetsPage,
@@ -100,7 +117,10 @@ const workspaceAssetsRoute = createRoute({
 const assetRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/assets/$assetId",
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { from: string; q?: string } => ({
+    ...(typeof search.q === "string" && search.q ? { q: search.q } : {}),
     from: typeof search.from === "string" ? search.from : "",
   }),
   component: AssetPage,
@@ -141,8 +161,8 @@ function AcceptInvitationPage() {
 }
 
 function CliLoginPage() {
-  const { callback, state, label } = cliLoginRoute.useSearch();
-  return <CliLogin callback={callback} state={state} label={label} />;
+  const { callback, state, label, workspace } = cliLoginRoute.useSearch();
+  return <CliLogin callback={callback} state={state} label={label} requestedWorkspace={workspace} />;
 }
 
 function AccountPage() {
@@ -169,11 +189,6 @@ function VardEditorPage() {
   return <App routeWorkspaceId={workspaceId} vardId={vardId} view="vards" />;
 }
 
-function WorkspaceAuditPage() {
-  const { workspaceId } = workspaceAuditRoute.useParams();
-  return <App routeWorkspaceId={workspaceId} view="audit" />;
-}
-
 function WorkspaceSettingsPage() {
   const { workspaceId } = workspaceSettingsRoute.useParams();
   return <App routeWorkspaceId={workspaceId} view="settings" />;
@@ -181,18 +196,26 @@ function WorkspaceSettingsPage() {
 
 function WorkspaceAssetsPage() {
   const { workspaceId } = workspaceAssetsRoute.useParams();
-  const { prefix } = workspaceAssetsRoute.useSearch();
-  return <App routeWorkspaceId={workspaceId} prefix={prefix} view="assets" />;
+  const { prefix, q } = workspaceAssetsRoute.useSearch();
+  return (
+    <App
+      routeWorkspaceId={workspaceId}
+      prefix={prefix}
+      searchQuery={q}
+      view="assets"
+    />
+  );
 }
 
 function AssetPage() {
   const { workspaceId, assetId } = assetRoute.useParams();
-  const { from } = assetRoute.useSearch();
+  const { from, q } = assetRoute.useSearch();
   return (
     <App
       routeWorkspaceId={workspaceId}
       assetId={assetId}
       prefix={from}
+      searchQuery={q}
       view="assets"
     />
   );
@@ -204,7 +227,14 @@ declare module "@tanstack/react-router" {
   }
 }
 
-createRoot(document.getElementById("root")!).render(
+// Route edits can reload this entry module during development. Reuse the root
+// so hot reload does not mount competing React trees into the same container.
+const reactRoot =
+  (import.meta.hot?.data.reactRoot as Root | undefined) ??
+  createRoot(document.getElementById("root")!);
+if (import.meta.hot) import.meta.hot.data.reactRoot = reactRoot;
+
+reactRoot.render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
