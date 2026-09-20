@@ -297,6 +297,27 @@ async function registryState(release) {
   return states;
 }
 
+export async function waitForPublishedRelease(
+  release,
+  {
+    attempts = 18,
+    delayMs = 10_000,
+    readState = registryState,
+    wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  } = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    // Retry only missing versions. Registry errors and conflicting hashes must
+    // still fail immediately; never retry publication to fix propagation.
+    const states = await readState(release);
+    if (states.every((pkg) => pkg.published)) return states;
+    if (attempt === attempts) break;
+    console.log(`Waiting for npm registry propagation (${attempt}/${attempts})`);
+    await wait(delayMs);
+  }
+  throw new Error("Not all release archives are available on npm yet");
+}
+
 async function main() {
   const [command, argument] = process.argv.slice(2);
   if (!argument)
@@ -314,16 +335,13 @@ async function main() {
     throw new Error(`Unknown command: ${command}`);
   // Preflight the whole batch. Identical archives permit retrying an interrupted
   // release; a published version with different bytes is never silently skipped.
-  const states = await registryState(release);
   if (command === "verify-registry") {
-    assert.ok(
-      states.every((pkg) => pkg.published),
-      "Not all release archives are available on npm yet",
-    );
+    await waitForPublishedRelease(release);
     return withInstalledRelease(directory, async () => {}, {
       publicRegistry: true,
     });
   }
+  const states = await registryState(release);
   for (const pkg of states) {
     console.log(
       `${pkg.name}@${pkg.version}: ${pkg.published ? "identical archive already published" : "version available"}`,

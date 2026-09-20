@@ -149,8 +149,9 @@ asset to a repository-relative output path and may follow latest, pin a version,
 or request a delivery transformation. Commit the generated `vardum.json`, then
 use `vardum pull` to explicitly refresh assets and the `.vardum.lock` snapshot.
 Commit both files; CI uses `vardum pull --frozen` with CLI 0.6.0 or newer
-source build to consume the locked file set without fetching the current Vard.
-CLI 0.6.0 is the prepared release candidate; see [release status](docs/npm-release.md). Older CLI builds cannot safely maintain snapshots.
+to consume the locked file set without fetching the current Vard.
+CLI 0.6.0 is available on npm; see [release status](docs/npm-release.md).
+Older CLI builds cannot safely maintain snapshots.
 Locked delivery still depends on version retention, valid signing and server
 availability. `vardum update` updates the CLI, not assets.
 

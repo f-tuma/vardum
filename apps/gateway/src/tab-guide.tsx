@@ -69,16 +69,8 @@ const guides = {
       <>
         <ol>
           <li>
-            Use a CLI build that supports <code>pull --frozen</code>. Check the{" "}
-            <a
-              href="https://github.com/frgtn-dot-dev/vardum/tree/main/apps/cli"
-              target="_blank"
-              rel="noreferrer"
-            >
-              CLI setup and compatibility notes
-            </a>
-            ; the published 0.5.0 package has a broken dependency and does not
-            support frozen snapshots.
+            Use Node.js 22 or newer. The setup command installs an exact CLI
+            version with support for <code>pull --frozen</code>.
           </li>
           <li>
             Choose <strong>Copy setup</strong> and run the command in your

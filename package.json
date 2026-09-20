@@ -13,7 +13,7 @@
     "build": "pnpm -r build",
     "dev": "docker compose --profile storage up -d --wait && docker compose --profile storage run --rm rustfs-init && pnpm --filter @vardum/shared build && pnpm --filter @vardum/api db:migrate && pnpm -r --parallel dev",
     "dev:apps": "pnpm -r --parallel dev",
-    "test": "pnpm --filter @vardum/shared build && pnpm -r test",
+    "test": "node --test scripts/*.test.mjs && pnpm --filter @vardum/shared build && pnpm -r test",
     "typecheck": "pnpm --filter @vardum/shared build && pnpm -r typecheck",
     "vardum": "tsx apps/cli/src/index.ts"
   },

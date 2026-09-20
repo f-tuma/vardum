@@ -8,7 +8,8 @@ engineering review, not a penetration test or a capacity certification.
 **Decision: not ready for an unrestricted production release.** The source build
 has a credible foundation for a supervised small-team pilot after the security
 and distribution blockers below are resolved. The public npm onboarding path
-currently fails before a user can start.
+failed before a user could start at the time of the initial review. Remediation
+steps below record subsequent fixes; step 5 closes the public npm distribution blocker.
 
 ## Verified results
 
@@ -210,7 +211,32 @@ The findings below preserve the original audit evidence. The creation bypass in
 blocker 2, runtime-role bypass in blocker 3, dependency findings in blocker 4,
 and the specific CI version/smoke/missing-integration gaps in blocker 6 are
 addressed by steps 1–3. Step 4 prepares the npm fix and addresses MCP/tool and
-release-gate contracts in source; public publication is still pending.
+release-gate contracts in source. Step 5 below completes public publication.
+
+### Step 5 — verified public npm release (2026-09-20)
+
+Published **CLI 0.6.0, MCP 0.2.0 and shared 0.2.0** from tag `v0.6.0`, commit
+`e8d17667933601ea7055bda8cabee26ac510e40f`, through GitHub Actions and npm OIDC.
+Each package trusts only `frgtn-dot-dev/vardum` workflow `release.yml` using the
+`npm` environment; that environment accepts only `v*` tags. No persistent npm
+token was added. npm provenance is unsupported for the private source repository.
+
+The [release workflow](https://github.com/frgtn-dot-dev/vardum/actions/runs/35520781363)
+passed its dependency audit, unit tests, typecheck/build, PostgreSQL integrations,
+independent candidate installations and production Compose smoke with real RustFS.
+The exact tested archives were published in dependency order. Registry hashes
+matched, and independent clean public-npm installs of CLI and MCP passed,
+including transitive shared resolution and CLI init checks.
+
+The first registry check ran before npm propagation finished. Retrying the publish
+job reused the same archives and skipped identical versions; verification and
+GitHub release creation then succeeded. The release gate now retries missing
+registry versions for a bounded period without retrying integrity or registry errors.
+
+This closes blocker 1 for the new versions and validates hosted release execution.
+Historical findings below remain for context. No production instance was deployed;
+worker recovery, backup/restore drills, resource budgets and external-user acceptance
+remain open. See [release status and compatibility](npm-release.md).
 
 ## Release blockers
 
