@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { mimeForFilename } from "@vardum/shared";
 import { stdin, stdout } from "node:process";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { VardumClient, type Manifest, type VardConfig } from "./client.js";
 import {
   credentialsPath,
@@ -124,31 +124,66 @@ try {
 }
 
 async function init(options: Options) {
-  const prompts = createInterface({ input: stdin, output: stdout });
+  if (options.delete || options.positionals.length)
+    throw new Error(
+      "init accepts --server, --workspace, --vard, --force, --dry-run and --json",
+    );
+  const fields = ["server", "workspace", "vard"] as const;
+  const missing = fields.filter((field) => !options.values.has(field));
+  if (missing.length && (!stdin.isTTY || options.json))
+    throw new Error(
+      `Non-interactive init requires ${missing.map((field) => `--${field}`).join(", ")}. Copy the setup command from your Vard's CLI config tab.`,
+    );
+
+  const prompts = missing.length
+    ? createInterface({ input: stdin, output: stdout })
+    : null;
   try {
-    const givenServer = options.values.get("server");
-    const givenWorkspace = options.values.get("workspace");
-    const givenVard = options.values.get("vard");
-    // A pasted value usually carries a trailing newline, so the last prompt
-    // can resolve the instant it lands. Confirming the write separately means
-    // a stray paste never silently creates vardum.json.
-    const prompted =
-      givenServer === undefined ||
-      givenWorkspace === undefined ||
-      givenVard === undefined;
-    const server = givenServer ?? (await prompts.question("Vardum URL: "));
+    const server =
+      options.values.get("server") ?? (await prompts!.question("Vardum URL: "));
     const workspace =
-      givenWorkspace ?? (await prompts.question("Workspace ID: "));
-    const vard = givenVard ?? (await prompts.question("Vard ID: "));
+      options.values.get("workspace") ??
+      (await prompts!.question("Workspace ID: "));
+    const vard =
+      options.values.get("vard") ?? (await prompts!.question("Vard ID: "));
     const config = validateConfig({ schema: 1, server, workspace, vard });
     const path = resolve("vardum.json");
-    if ((await checksumFile(path)) && !options.force)
-      throw new Error("vardum.json already exists; use --force to replace it");
-    if (prompted && !options.json && !options.force) {
-      console.log("");
-      console.log(`  server:    ${config.server}`);
-      console.log(`  workspace: ${config.workspace}`);
-      console.log(`  vard:      ${config.vard}`);
+    let existing: string | null = null;
+    try {
+      existing = await readFile(path, "utf8");
+    } catch (error) {
+      if (!(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        throw error;
+    }
+    if (existing !== null) {
+      let same = false;
+      try {
+        same =
+          JSON.stringify(validateConfig(JSON.parse(existing))) ===
+          JSON.stringify(config);
+      } catch {
+        /* Invalid existing config still requires explicit replacement. */
+      }
+      if (same) {
+        if (!options.json)
+          console.log("vardum.json already connects this Vard.");
+        summary(options, 0);
+        return;
+      }
+      if (!options.force)
+        throw new Error(
+          "vardum.json already exists with a different or invalid configuration; use --force to replace it",
+        );
+    }
+    if (prompts && !options.force && !options.dryRun) {
+      console.log(
+        `\n  server:    ${config.server}\n  workspace: ${config.workspace}\n  vard:      ${config.vard}`,
+      );
       const answer = (await prompts.question("Write vardum.json? [Y/n] "))
         .trim()
         .toLowerCase();
@@ -157,24 +192,29 @@ async function init(options: Options) {
         return;
       }
     }
-    await atomicWrite(
-      path,
-      Buffer.from(`${JSON.stringify(config, null, 2)}\n`),
-    );
-    report(
-      "create",
-      relative(process.cwd(), path) || "vardum.json",
-      options,
-    ).applied = true;
+    const entry = report("create", "vardum.json", options);
+    if (!options.dryRun) {
+      const bytes = Buffer.from(`${JSON.stringify(config, null, 2)}\n`);
+      if (options.force) await atomicWrite(path, bytes);
+      else await writeFile(path, bytes, { flag: "wx" });
+      entry.applied = true;
+    }
     summary(options, 1);
+    if (!options.json && !options.dryRun)
+      console.log("Next: vardum login, then vardum pull.");
   } finally {
-    prompts.close();
+    prompts?.close();
   }
 }
 
 async function login(options: Options) {
-  const server =
-    options.values.get("server") ?? (await optionalContext())?.config.server;
+  const context = await optionalContext();
+  const server = options.values.get("server") ?? context?.config.server;
+  const workspace =
+    options.values.get("workspace") ??
+    (context && server === context.config.server
+      ? context.config.workspace
+      : undefined);
   if (!server)
     throw new Error("Run vardum login inside a project, or pass --server URL");
 
@@ -183,7 +223,7 @@ async function login(options: Options) {
   const listener = awaitGrant(state);
   try {
     const port = await listener.listening;
-    const url = loginUrl(server, port, state, label);
+    const url = loginUrl(server, port, state, label, workspace);
     if (!options.json) {
       console.log(`Opening ${url}`);
       console.log("Waiting for the browser to authorize this machine…");
@@ -946,8 +986,8 @@ function help() {
   console.log(`Vardum asset sync v${VERSION}
 
 Usage:
-  vardum init [--server URL --workspace ID --vard ID] [--force]
-  vardum login [--server URL]
+  vardum init [--server URL --workspace ID --vard ID] [--dry-run] [--force]
+  vardum login [--server URL --workspace ID]
   vardum logout [--server URL --workspace ID]
   vardum whoami
   vardum version

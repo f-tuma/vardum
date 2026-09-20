@@ -1,3 +1,4 @@
+import { CopyButton, useDebouncedValue } from "./ui-controls";
 import { isVideoMimeType, uploadAccept } from "@vardum/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -19,10 +20,14 @@ import {
   restoreAssetVersion,
   setAssetVisibility,
   uploadVersion,
+  validateUploadFile,
   type AssetSummary,
   type TransformationInput,
 } from "./asset-api";
 import { ConfirmDialog } from "./confirm-dialog";
+import { InfoTip } from "./info-tip";
+import { FormDialog } from "./form-dialog";
+import { FolderIcon } from "./folder-icon";
 
 export function AssetDashboard({
   canPublish,
@@ -30,6 +35,7 @@ export function AssetDashboard({
   workspaceSlug,
   workspaceName,
   search,
+  onClearSearch,
   assetId,
   prefix,
 }: {
@@ -38,11 +44,12 @@ export function AssetDashboard({
   workspaceName: string;
   canPublish: boolean;
   search: string;
+  onClearSearch: () => void;
   assetId?: string;
   prefix: string;
 }) {
   const navigate = useNavigate();
-  const needle = search.trim();
+  const needle = useDebouncedValue(search.trim());
   const [uploadQueue, setUploadQueue] = useState<
     Array<{
       id: string;
@@ -64,7 +71,6 @@ export function AssetDashboard({
     setUploadQueue((prev) => prev.filter((u) => u.id !== id));
   }
   const assets = useQuery({
-    // ponytail: one request per keystroke; debounce if a workspace ever makes it show.
     queryKey: ["assets", workspaceId, needle ? "" : prefix, needle],
     queryFn: () => listAssets(workspaceId, needle ? "" : prefix, needle),
     enabled: !assetId,
@@ -106,6 +112,7 @@ export function AssetDashboard({
         workspaceId={workspaceId}
         workspaceSlug={workspaceSlug}
         fromPrefix={prefix}
+        fromSearch={search}
       />
     ) : (
       <div className="state-panel" role="alert">
@@ -124,23 +131,35 @@ export function AssetDashboard({
             onNavigate={openFolder}
           />
           <p>
-            {needle
-              ? `${filteredAssets.length} matches across every folder`
-              : `${filteredFolders.length + filteredAssets.length} items`}
+            {assets.isFetching
+              ? "Loading…"
+              : needle
+                ? `${filteredAssets.length} matches across all folders`
+                : `${filteredFolders.length + filteredAssets.length} items`}
           </p>
         </div>
-        <div className="page-actions">
-          <ImportForm workspaceId={workspaceId} prefix={prefix} />
-          <NewFolderForm workspaceId={workspaceId} prefix={prefix} />
-          <NewAssetForm
-            workspaceId={workspaceId}
-            prefix={prefix}
-            onAddUpload={addUpload}
-            onUpdateUpload={updateUpload}
-            onRemoveUpload={removeUpload}
-          />
-        </div>
+        {canPublish && (
+          <div className="page-actions">
+            <ImportForm workspaceId={workspaceId} prefix={prefix} />
+            <NewFolderForm workspaceId={workspaceId} prefix={prefix} />
+            <NewAssetForm
+              workspaceId={workspaceId}
+              prefix={prefix}
+              onAddUpload={addUpload}
+              onUpdateUpload={updateUpload}
+              onRemoveUpload={removeUpload}
+            />
+          </div>
+        )}
       </header>
+      {needle && (
+        <div className="search-results-bar">
+          <span>Results for “{needle}”</span>
+          <button type="button" onClick={onClearSearch}>
+            Clear search
+          </button>
+        </div>
+      )}
 
       {assets.isPending ? (
         <div className="state-panel">Loading assets…</div>
@@ -158,6 +177,7 @@ export function AssetDashboard({
                   <FolderCard
                     key={folder.prefix}
                     folder={folder}
+                    canPublish={canPublish}
                     workspaceId={workspaceId}
                     onOpen={openFolder}
                   />
@@ -176,6 +196,7 @@ export function AssetDashboard({
                     workspaceId={workspaceId}
                     workspaceSlug={workspaceSlug}
                     prefix={prefix}
+                    search={search}
                   />
                 ))}
               </ul>
@@ -186,7 +207,11 @@ export function AssetDashboard({
         <div className="empty-state">
           <h2>{search ? "No matching assets" : "No assets yet"}</h2>
           <p>
-            {search ? "Try another name or key." : "Upload your first asset."}
+            {search
+              ? "Try another name or key."
+              : canPublish
+                ? "Choose Upload asset to add your first file."
+                : "Files uploaded by your team will appear here."}
           </p>
         </div>
       )}
@@ -210,10 +235,12 @@ export function AssetDashboard({
 
 function FolderCard({
   folder,
+  canPublish,
   workspaceId,
   onOpen,
 }: {
   folder: { name: string; prefix: string };
+  canPublish: boolean;
   workspaceId: string;
   onOpen: (prefix: string) => void;
 }) {
@@ -247,31 +274,33 @@ function FolderCard({
         type="button"
         onClick={() => onOpen(folder.prefix)}
       >
-        <span aria-hidden="true">▱</span> {folder.name}
+        <FolderIcon /> {folder.name}
       </button>
-      <details ref={menuRef} className="folder-menu">
-        <summary aria-label={`Actions for folder ${folder.name}`}>
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="3" cy="8" r="1.25" />
-            <circle cx="8" cy="8" r="1.25" />
-            <circle cx="13" cy="8" r="1.25" />
-          </svg>
-        </summary>
-        <div className="folder-menu-popover" role="menu">
-          <button
-            className="folder-delete"
-            type="button"
-            role="menuitem"
-            disabled={pending}
-            onClick={() => {
-              menuRef.current?.removeAttribute("open");
-              setConfirmOpen(true);
-            }}
-          >
-            Delete folder
-          </button>
-        </div>
-      </details>
+      {canPublish && (
+        <details ref={menuRef} className="folder-menu">
+          <summary aria-label={`Actions for folder ${folder.name}`}>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="3" cy="8" r="1.25" />
+              <circle cx="8" cy="8" r="1.25" />
+              <circle cx="13" cy="8" r="1.25" />
+            </svg>
+          </summary>
+          <div className="folder-menu-popover" role="menu">
+            <button
+              className="folder-delete"
+              type="button"
+              role="menuitem"
+              disabled={pending}
+              onClick={() => {
+                menuRef.current?.removeAttribute("open");
+                setConfirmOpen(true);
+              }}
+            >
+              Delete folder
+            </button>
+          </div>
+        </details>
+      )}
       {error && (
         <span className="folder-error" role="alert">
           {error}
@@ -327,6 +356,11 @@ export function useCloseDetailsOnOutsideClick() {
   useEffect(() => {
     function closeOnOutsideClick(event: PointerEvent) {
       const details = ref.current;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".info-tip-position")
+      )
+        return;
       if (details?.open && !details.contains(event.target as Node))
         details.open = false;
     }
@@ -364,7 +398,7 @@ function ImportForm({
   prefix: string;
 }) {
   const queryClient = useQueryClient();
-  const detailsRef = useCloseDetailsOnOutsideClick();
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
   const [pending, setPending] = useState(false);
@@ -373,6 +407,7 @@ function ImportForm({
   // watches the count climb instead of waiting on one long request.
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const formElement = event.currentTarget;
     const source = String(new FormData(formElement).get("source"));
     setPending(true);
@@ -406,39 +441,48 @@ function ImportForm({
   }
 
   return (
-    <details
-      ref={detailsRef}
-      className="upload-drawer folder-drawer quiet-summary"
-    >
-      <summary>Import from S3</summary>
-      <form onSubmit={submit}>
-        <label>
-          Bucket prefix
-          <input
-            name="source"
-            placeholder="legacy-photos/"
-            maxLength={1024}
-            required
-          />
-          <small>
-            Objects already in the bucket are copied into this folder and
-            ingested. Vardum's own <code>originals/</code> and{" "}
-            <code>derived/</code> are refused.
-          </small>
-        </label>
-        {error && (
-          <p className="error-strip" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="folder-form-actions">
-          <span role="status">{progress}</span>
-          <button className="primary-button" disabled={pending}>
-            {pending ? "Importing…" : "Import"}
-          </button>
-        </div>
-      </form>
-    </details>
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setError("");
+          setProgress("");
+          setOpen(true);
+        }}
+      >
+        Import from S3
+      </button>
+      <FormDialog
+        open={open}
+        title="Import from S3"
+        pending={pending}
+        onClose={() => setOpen(false)}
+      >
+        <form className="creation-form" onSubmit={submit}>
+          <label>
+            Bucket prefix
+            <input
+              name="source"
+              autoFocus
+              placeholder="legacy-photos/"
+              maxLength={1024}
+              required
+            />
+          </label>
+          {error && (
+            <p className="error-strip" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="folder-form-actions">
+            <span role="status">{progress}</span>
+            <button className="primary-button" disabled={pending}>
+              {pending ? "Importing…" : "Import"}
+            </button>
+          </div>
+        </form>
+      </FormDialog>
+    </>
   );
 }
 
@@ -450,12 +494,13 @@ function NewFolderForm({
   prefix: string;
 }) {
   const queryClient = useQueryClient();
-  const detailsRef = useCloseDetailsOnOutsideClick();
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const formElement = event.currentTarget;
     setPending(true);
     setError("");
@@ -466,7 +511,7 @@ function NewFolderForm({
         String(new FormData(formElement).get("name")),
       );
       formElement.reset();
-      formElement.closest("details")?.removeAttribute("open");
+      setOpen(false);
       await queryClient.invalidateQueries({
         queryKey: ["assets", workspaceId, prefix],
       });
@@ -480,39 +525,51 @@ function NewFolderForm({
   }
 
   return (
-    <details
-      ref={detailsRef}
-      className="upload-drawer folder-drawer quiet-summary"
-    >
-      <summary>New folder</summary>
-      <form onSubmit={submit}>
-        <label>
-          Folder name
-          <input
-            name="name"
-            placeholder="Brand Assets"
-            maxLength={80}
-            onBlur={(event) => {
-              event.currentTarget.value = normalizeFolderName(
-                event.currentTarget.value,
-              );
-            }}
-            autoFocus
-            required
-          />
-        </label>
-        {error && (
-          <p className="error-strip" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="folder-form-actions">
-          <button className="primary-button" disabled={pending}>
-            {pending ? "Creating…" : "Create folder"}
-          </button>
-        </div>
-      </form>
-    </details>
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setError("");
+          setOpen(true);
+        }}
+      >
+        New folder
+      </button>
+      <FormDialog
+        open={open}
+        title="New folder"
+        pending={pending}
+        onClose={() => setOpen(false)}
+      >
+        <form className="creation-form" onSubmit={submit}>
+          <label>
+            Folder name
+            <input
+              name="name"
+              placeholder="Brand Assets"
+              maxLength={80}
+              onBlur={(event) => {
+                event.currentTarget.value = normalizeFolderName(
+                  event.currentTarget.value,
+                );
+              }}
+              autoFocus
+              required
+            />
+          </label>
+          {error && (
+            <p className="error-strip" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="folder-form-actions">
+            <button className="primary-button" disabled={pending}>
+              {pending ? "Creating…" : "Create folder"}
+            </button>
+          </div>
+        </form>
+      </FormDialog>
+    </>
   );
 }
 
@@ -530,13 +587,16 @@ function NewAssetForm({
   onRemoveUpload: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const detailsRef = useCloseDetailsOnOutsideClick();
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [pending, setPending] = useState(false);
   const [keyEdited, setKeyEdited] = useState(false);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
+    setPending(true);
     setStatus("Uploading…");
     setError("");
     const formElement = event.currentTarget;
@@ -547,13 +607,12 @@ function NewAssetForm({
     try {
       if (!(file instanceof File) || !file.size)
         throw new Error("Choose a file");
+      await validateUploadFile(file);
       const onProgress = (s: string, progress?: number) => {
         setStatus(s);
         onUpdateUpload(uploadId, s, progress);
       };
       onAddUpload(uploadId, file.name);
-      // Close the drawer immediately — progress moves to the global queue.
-      formElement.closest("details")?.removeAttribute("open");
       const created = await createAsset(workspaceId, {
         key: `${prefix}${String(form.get("key"))}`,
         displayName: String(form.get("displayName")),
@@ -561,6 +620,7 @@ function NewAssetForm({
       await uploadVersion(workspaceId, created.id, file, onProgress);
       formElement.reset();
       setKeyEdited(false);
+      setOpen(false);
       setStatus("Done");
       onUpdateUpload(uploadId, "Done");
       setTimeout(() => onRemoveUpload(uploadId), 5000);
@@ -571,6 +631,7 @@ function NewAssetForm({
       onUpdateUpload(uploadId, "Failed");
       setTimeout(() => onRemoveUpload(uploadId), 5000);
     } finally {
+      setPending(false);
       await queryClient.invalidateQueries({
         queryKey: ["assets", workspaceId],
       });
@@ -597,64 +658,81 @@ function NewAssetForm({
   }
 
   return (
-    <details ref={detailsRef} className="upload-drawer">
-      <summary>Upload asset</summary>
-      <form onSubmit={submit}>
-        <div className="form-grid">
-          <label>
-            Display name
-            <input
-              name="displayName"
-              onChange={(event) => {
-                const form = event.currentTarget.form;
-                if (form) generateKey(form, event.currentTarget.value);
-              }}
-              required
-            />
-          </label>
-          <label>
-            URL name
-            <span className="prefixed-input">
-              {prefix && <span className="field-prefix">/{prefix}</span>}
-              <input
-                name="key"
-                placeholder="logo"
-                pattern="[a-z0-9._-]+"
-                onChange={() => setKeyEdited(true)}
-                required
-              />
-            </span>
-          </label>
-          <div className="wide upload-file-row">
+    <>
+      <button
+        className="primary-button"
+        type="button"
+        onClick={() => {
+          setError("");
+          setStatus("");
+          setKeyEdited(false);
+          setOpen(true);
+        }}
+      >
+        Upload asset
+      </button>
+      <FormDialog
+        open={open}
+        title="Upload asset"
+        pending={pending}
+        onClose={() => setOpen(false)}
+      >
+        <form className="creation-form" onSubmit={submit}>
+          <div className="form-grid">
             <label>
-              File
+              Display name
               <input
-                name="file"
-                type="file"
-                accept={uploadAccept}
-                onChange={inferFields}
+                name="displayName"
+                autoFocus
+                onChange={(event) => {
+                  const form = event.currentTarget.form;
+                  if (form) generateKey(form, event.currentTarget.value);
+                }}
                 required
               />
-              <UploadLimitHint />
             </label>
-            <span className="muted" role="status">
-              {status}
-            </span>
-            <button
-              className="primary-button"
-              disabled={status === "Uploading…"}
-            >
-              Upload
-            </button>
+            <label>
+              URL name
+              <span className="prefixed-input">
+                {prefix && <span className="field-prefix">/{prefix}</span>}
+                <input
+                  name="key"
+                  placeholder="logo"
+                  pattern="[a-z0-9._-]+"
+                  onChange={() => setKeyEdited(true)}
+                  required
+                />
+              </span>
+            </label>
+            <div className="wide upload-file-row">
+              <label>
+                <span className="heading-with-tip">
+                  File <UploadLimitHint />
+                </span>
+                <input
+                  name="file"
+                  type="file"
+                  accept={uploadAccept}
+                  onChange={inferFields}
+                  required
+                />
+              </label>
+              <span className="muted" role="status">
+                {status}
+              </span>
+              <button className="primary-button" disabled={pending}>
+                Upload
+              </button>
+            </div>
           </div>
-        </div>
-        {error && (
-          <p className="error-strip" role="alert">
-            {error}
-          </p>
-        )}
-      </form>
-    </details>
+          {error && (
+            <p className="error-strip" role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+      </FormDialog>
+    </>
   );
 }
 
@@ -663,26 +741,26 @@ function AssetCard({
   workspaceId,
   workspaceSlug,
   prefix,
+  search,
 }: {
   asset: AssetSummary;
   workspaceId: string;
   workspaceSlug: string;
   prefix: string;
+  search: string;
 }) {
-  const [copied, setCopied] = useState(false);
   const path = assetDeliveryPath(workspaceSlug, asset);
   const status = asset.status ?? "empty";
 
-  async function copyUrl() {
-    await navigator.clipboard.writeText(
-      new URL(path, window.location.origin).href,
-    );
-    setCopied(true);
-  }
-
   return (
     <li className="asset-card">
-      <div className="asset-preview">
+      <Link
+        className="asset-preview"
+        to="/workspaces/$workspaceId/assets/$assetId"
+        params={{ workspaceId, assetId: asset.id }}
+        search={{ from: prefix, ...(search ? { q: search } : {}) }}
+        aria-label={`View ${asset.displayName}`}
+      >
         {asset.thumbnailUrl ? (
           isVideoMimeType(asset.mimeType) ? (
             <video
@@ -700,7 +778,7 @@ function AssetCard({
         <span className="asset-status">
           <i className={`status-dot ${status}`} /> {status}
         </span>
-      </div>
+      </Link>
       <div className="asset-info">
         <h2 title={asset.displayName}>{asset.displayName}</h2>
         <p className="asset-key">
@@ -722,19 +800,17 @@ function AssetCard({
               Open
             </a>
           )}
-          <button
-            type="button"
-            onClick={copyUrl}
+          <CopyButton
+            text={new URL(path, window.location.origin).href}
+            label="Copy URL"
             disabled={!asset.currentVersionId}
-          >
-            {copied ? "Copied" : "Copy URL"}
-          </button>
+          />
           <Link
             to="/workspaces/$workspaceId/assets/$assetId"
             params={{ workspaceId, assetId: asset.id }}
-            search={{ from: prefix }}
+            search={{ from: prefix, ...(search ? { q: search } : {}) }}
           >
-            Settings
+            Details
           </Link>
         </div>
       </div>
@@ -848,7 +924,13 @@ function AssetDelivery({
 
   return (
     <section className="inspector-section">
-      <h3>Delivery // last 30 days</h3>
+      <h3 className="heading-with-tip">
+        Delivery // last 30 days
+        <InfoTip label="About delivery statistics">
+          Successful responses, not confirmed downloads. Raw events are kept for
+          90 days.
+        </InfoTip>
+      </h3>
       {delivery.isPending ? (
         <p className="inspector-note">Loading figures…</p>
       ) : delivery.isError ? (
@@ -879,10 +961,6 @@ function AssetDelivery({
               </dd>
             </div>
           </dl>
-          <p className="inspector-note">
-            Successful responses, not confirmed downloads. Raw events are kept
-            for 90 days.
-          </p>
         </>
       )}
     </section>
@@ -895,16 +973,17 @@ function AssetDetailPage({
   workspaceId,
   workspaceSlug,
   fromPrefix,
+  fromSearch,
 }: {
   asset: AssetSummary;
   workspaceId: string;
   workspaceSlug: string;
   fromPrefix: string;
+  fromSearch: string;
   canPublish: boolean;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -968,10 +1047,25 @@ function AssetDetailPage({
             className="detail-back"
             to="/workspaces/$workspaceId/assets"
             params={{ workspaceId }}
-            search={{ prefix: fromPrefix }}
+            search={{
+              prefix: fromPrefix,
+              ...(fromSearch ? { q: fromSearch } : {}),
+            }}
             aria-label="Back to assets"
           >
-            ←
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M16.5 10h-13M9.5 4l-6 6 6 6" />
+            </svg>
           </Link>
           <div>
             <p className="breadcrumb">
@@ -986,18 +1080,11 @@ function AssetDetailPage({
               Open
             </a>
           )}
-          <button
-            type="button"
+          <CopyButton
+            text={new URL(path, window.location.origin).href}
+            label="Copy URL"
             disabled={!asset.currentVersionId}
-            onClick={async () => {
-              await navigator.clipboard.writeText(
-                new URL(path, window.location.origin).href,
-              );
-              setCopied(true);
-            }}
-          >
-            {copied ? "Copied" : "Copy URL"}
-          </button>
+          />
         </div>
       </header>
 
@@ -1046,16 +1133,20 @@ function AssetDetailPage({
           )}
         </section>
         <section className="detail-settings">
-          <section>
-            <h3>Visibility: {asset.isPublic ? "Public" : "Private"}</h3>
-            <p>
-              Private files require workspace read access, including signed
-              variants. New assets are private.
-            </p>
-            <p>
-              Making a public file private cannot revoke downloaded, offline, or
-              shared cached copies.
-            </p>
+          <section className="inspector-section asset-visibility">
+            <header className="asset-visibility-heading">
+              <h3 className="heading-with-tip">
+                Visibility
+                <InfoTip label="About asset visibility">
+                  Private files require workspace read access, including signed
+                  variants. New assets are private. Making a public file private
+                  cannot revoke downloaded, offline, or shared cached copies.
+                </InfoTip>
+              </h3>
+              <span className="asset-visibility-status">
+                {asset.isPublic ? "Public" : "Private"}
+              </span>
+            </header>
             {canPublish && (
               <button
                 type="button"
@@ -1065,7 +1156,11 @@ function AssetDetailPage({
                 Make {asset.isPublic ? "private" : "public"}
               </button>
             )}
-            {visibilityError && <p role="alert">{visibilityError}</p>}
+            {visibilityError && (
+              <p className="error-strip" role="alert">
+                {visibilityError}
+              </p>
+            )}
           </section>
           {asset.currentVersionId && !isVideoMimeType(asset.mimeType) && (
             <TransformationForm
@@ -1090,8 +1185,12 @@ function AssetDetailPage({
           />
           <AssetDelivery workspaceId={workspaceId} assetId={asset.id} />
           <section className="danger-zone">
-            <h3>Delete asset</h3>
-            <p>Permanently deletes this asset and every stored version.</p>
+            <h3 className="heading-with-tip">
+              Delete asset
+              <InfoTip label="About deleting an asset">
+                Permanently deletes this asset and every stored version.
+              </InfoTip>
+            </h3>
             {deleteError && (
               <p className="error-strip" role="alert">
                 {deleteError}
@@ -1111,6 +1210,7 @@ function AssetDetailPage({
       <ConfirmDialog
         open={confirmVisibility}
         title={`Make asset ${asset.isPublic ? "private" : "public"}?`}
+        tone="neutral"
         description={
           asset.isPublic
             ? "New requests will require workspace read access. Previously downloaded, offline, and cached copies cannot be revoked. Public Vards containing this asset will no longer be available anonymously."
@@ -1133,10 +1233,7 @@ function AssetDetailPage({
 }
 
 type DisplayFormat =
-  | NonNullable<TransformationInput["format"]>
-  | "gif"
-  | "svg"
-  | "tiff";
+  NonNullable<TransformationInput["format"]> | "gif" | "svg" | "tiff";
 
 /** Upload progress in the same box-drawing style as the rest of the shell. */
 function asciiBar(fraction: number, width = 12) {
@@ -1346,10 +1443,12 @@ function VersionForm({
 }) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError("");
     setStatus("Uploading…");
     setPending(true);
     const formElement = event.currentTarget;
@@ -1366,7 +1465,8 @@ function VersionForm({
         queryKey: ["assets", workspaceId],
       });
     } catch (cause) {
-      setStatus(cause instanceof Error ? cause.message : "Upload failed");
+      setStatus("");
+      setError(cause instanceof Error ? cause.message : "Upload failed");
     } finally {
       setPending(false);
     }
@@ -1374,14 +1474,29 @@ function VersionForm({
 
   return (
     <section className="inspector-section">
-      <h3>New version</h3>
+      <h3 className="heading-with-tip">
+        New version <UploadLimitHint />
+      </h3>
       <form className="compact-form version-upload-form" onSubmit={submit}>
         <label>
           File
-          <input name="file" type="file" accept={uploadAccept} required />
-          <UploadLimitHint />
+          <input
+            name="file"
+            type="file"
+            accept={uploadAccept}
+            required
+            onChange={() => {
+              setError("");
+              setStatus("");
+            }}
+          />
         </label>
         <button disabled={pending}>Upload</button>
+        {error && (
+          <p className="error-strip full" role="alert">
+            {error}
+          </p>
+        )}
         <span className="muted" role="status">
           {status}
         </span>
@@ -1398,10 +1513,9 @@ function UploadLimitHint() {
   });
   if (!limits.data) return null;
   return (
-    <span className="muted">
-      Images up to {formatUploadLimit(limits.data.image)}, videos up to{" "}
-      {formatUploadLimit(limits.data.video)}
-    </span>
+    <InfoTip label="Upload size limits">
+      {`Images up to ${formatUploadLimit(limits.data.image)}, videos up to ${formatUploadLimit(limits.data.video)}. Larger files will be rejected before upload.`}
+    </InfoTip>
   );
 }
 

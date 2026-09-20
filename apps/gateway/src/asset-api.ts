@@ -32,6 +32,10 @@ export type VardSummary = {
 
 export type OrganizationDirectory = {
   canCreateOrganization: boolean;
+  organizationCreation: {
+    status: "allowed" | "not_allowed" | "email_verification_required";
+    verificationEmailEnabled: boolean;
+  };
   organizations: Array<{
     id: string;
     name: string;
@@ -257,18 +261,21 @@ export function deleteVard(workspaceId: string, vardId: string) {
 
 export async function listSyncAssets(workspaceId: string) {
   const assets: SyncAsset[] = [];
+  let workspaceSlug: string | undefined;
   let cursor: string | null = null;
   do {
     const query = new URLSearchParams({ limit: "500" });
     if (cursor) query.set("cursor", cursor);
     const page = await request<{
+      workspaceSlug: string;
       assets: SyncAsset[];
       nextCursor: string | null;
     }>(`/api/workspaces/${workspaceId}/sync/assets?${query}`);
     assets.push(...page.assets);
+    workspaceSlug = page.workspaceSlug;
     cursor = page.nextCursor;
   } while (cursor);
-  return { assets };
+  return { assets, workspaceSlug };
 }
 
 export type AuditEvent = WorkspaceOverview["activity"][number];
@@ -557,12 +564,7 @@ export function createAsset(
   });
 }
 
-export async function uploadVersion(
-  workspaceId: string,
-  assetId: string,
-  file: File,
-  onProgress?: (status: string, fraction?: number) => void,
-) {
+export async function validateUploadFile(file: File) {
   const declaredType =
     mimeForFilename(file.name) || file.type || "application/octet-stream";
   const limit = uploadLimitFor(await getUploadLimits(), declaredType);
@@ -570,6 +572,16 @@ export async function uploadVersion(
     throw new Error(
       `${file.name} is ${formatUploadLimit(file.size)} — the limit for this file type is ${formatUploadLimit(limit)}`,
     );
+  return declaredType;
+}
+
+export async function uploadVersion(
+  workspaceId: string,
+  assetId: string,
+  file: File,
+  onProgress?: (status: string, fraction?: number) => void,
+) {
+  const declaredType = await validateUploadFile(file);
 
   onProgress?.("Requesting upload…");
   const version = await request<UploadVersion>(

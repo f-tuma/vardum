@@ -8,8 +8,9 @@ export function ResetPassword({
   token: string;
   callbackError: string;
 }) {
+  const invalidLink = Boolean(callbackError || !token);
   const [error, setError] = useState(
-    callbackError ? "This reset link is invalid or has expired." : "",
+    invalidLink ? "This reset link is invalid or has expired." : "",
   );
   const [pending, setPending] = useState(false);
   const [complete, setComplete] = useState(false);
@@ -44,13 +45,21 @@ export function ResetPassword({
         <div className="auth-brand">
           <span aria-hidden="true">╂</span> VARDUM
         </div>
-        <h1>{complete ? "Password updated" : "Choose a new password"}</h1>
+        <h1>
+          {complete
+            ? "Password updated"
+            : invalidLink
+              ? "Reset link unavailable"
+              : "Choose a new password"}
+        </h1>
         <p className="muted">
           {complete
             ? "You can now sign in with your new password."
-            : "Use at least eight characters."}
+            : invalidLink
+              ? "Request a new link from the sign-in page."
+              : "Use at least eight characters."}
         </p>
-        {!complete && !callbackError && (
+        {!complete && !invalidLink && (
           <form onSubmit={submit}>
             <label>
               New password
@@ -78,7 +87,7 @@ export function ResetPassword({
             </button>
           </form>
         )}
-        {callbackError && <p role="alert">{error}</p>}
+        {invalidLink && <p role="alert">{error}</p>}
         <a className="text-button auth-back-link" href="/app">
           Back to sign in
         </a>

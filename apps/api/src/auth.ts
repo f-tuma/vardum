@@ -66,8 +66,7 @@ export const auth = betterAuth({
       roles,
       creatorRole: "owner",
       disableOrganizationDeletion: true,
-      allowUserToCreateOrganization: ({ email }) =>
-        canCreateOrganization(email),
+      allowUserToCreateOrganization: (user) => canCreateOrganization(user),
       sendInvitationEmail: smtpEnabled
         ? async ({ id, email, organization, inviter, role }) => {
             const url = new URL("/accept-invitation", config.WEB_URL);

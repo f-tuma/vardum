@@ -268,7 +268,7 @@ async function deliverVersion(
     const { object } = delivered;
     if (!object.Body) throw new Error("S3 returned an empty body");
     const bytes = object.ContentLength ?? version.size;
-    // Prefer the DB MIME type for original assets — MinIO/S3 may report a
+    // Prefer the DB MIME type for original assets — RustFS/S3 may report a
     // generic binary type. For transformed variants, the variant's type wins.
     const mimeType = transformation
       ? (object.ContentType ?? delivered.mimeType)

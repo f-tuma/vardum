@@ -13,6 +13,12 @@ export function AuthForm() {
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
 
+  function switchMode(next: typeof mode) {
+    setMode(next);
+    setError("");
+    setStatus("");
+  }
+
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
@@ -94,7 +100,7 @@ export function AuthForm() {
               <input
                 name="password"
                 type="password"
-                minLength={8}
+                minLength={mode === "sign-up" ? 8 : undefined}
                 required
                 autoComplete={
                   mode === "sign-in" ? "current-password" : "new-password"
@@ -124,14 +130,16 @@ export function AuthForm() {
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setMode("sign-up")}
+                disabled={pending}
+                onClick={() => switchMode("sign-up")}
               >
                 Create an account
               </button>
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setMode("forgot")}
+                disabled={pending}
+                onClick={() => switchMode("forgot")}
               >
                 Forgot password?
               </button>
@@ -140,7 +148,8 @@ export function AuthForm() {
             <button
               className="text-button"
               type="button"
-              onClick={() => setMode("sign-in")}
+              disabled={pending}
+              onClick={() => switchMode("sign-in")}
             >
               Back to sign in
             </button>

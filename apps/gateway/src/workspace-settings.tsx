@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   useCallback,
   useEffect,
@@ -27,7 +27,11 @@ import {
   type WorkspaceInvitation,
   type WorkspaceMember,
 } from "./asset-api";
+import { InfoTip } from "./info-tip";
+import { CopyButton, FilterInput, PageTabs, TabPanel } from "./ui-controls";
 import { ConfirmDialog } from "./confirm-dialog";
+import { FormDialog } from "./form-dialog";
+import { AuditLog } from "./audit-log";
 
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -40,46 +44,58 @@ export function WorkspaceSettings({
   workspaceName: string;
   workspaceSlug: string;
 }) {
+  const { tab } = useSearch({ from: "/workspaces/$workspaceId/settings" });
+  const navigate = useNavigate();
   return (
     <main className="dashboard-main settings-page" id="settings">
       <header className="settings-heading">
-        <h1>Settings</h1>
-        <span>Workspace identity, delivery and developer credentials.</span>
+        <h1>Workspace settings</h1>
+        <span>{workspaceName}</span>
       </header>
 
-      <div className="settings-stack">
-        <GeneralSettings
-          workspaceId={workspaceId}
-          workspaceName={workspaceName}
-          workspaceSlug={workspaceSlug}
-        />
-        <DomainSettings workspaceId={workspaceId} />
-        <section className="settings-panel" id="audit-log">
-          <header>
-            <h2>┌─ AUDIT LOG</h2>
-            <span>FULL HISTORY</span>
-          </header>
-          <div className="panel-action-row">
-            <p>
-              Who changed what in this workspace, filterable by action and
-              actor. The Overview shows only the newest events.
-            </p>
-            <Link
-              to="/workspaces/$workspaceId/audit"
-              params={{ workspaceId }}
-              className="button-link primary-button"
-            >
-              Open audit log
-            </Link>
-          </div>
-        </section>
-        <ApiKeysSettings workspaceId={workspaceId} />
-        <DangerZone
-          workspaceId={workspaceId}
-          workspaceName={workspaceName}
-          workspaceSlug={workspaceSlug}
-        />
-      </div>
+      <PageTabs
+        label="Workspace settings"
+        value={tab ?? "workspace-identity"}
+        onValueChange={(nextTab) =>
+          void navigate({
+            to: "/workspaces/$workspaceId/settings",
+            params: { workspaceId },
+            search: { tab: nextTab },
+            replace: true,
+          })
+        }
+        items={[
+          ["workspace-identity", "General"],
+          ["custom-domain", "Domain"],
+          ["api-keys", "API keys"],
+          ["activity", "Activity"],
+          ["danger-zone", "Danger zone"],
+        ]}
+      >
+        <TabPanel id="workspace-identity">
+          <GeneralSettings
+            workspaceId={workspaceId}
+            workspaceName={workspaceName}
+            workspaceSlug={workspaceSlug}
+          />
+        </TabPanel>
+        <TabPanel id="custom-domain" guide="workspace-domain">
+          <DomainSettings workspaceId={workspaceId} />
+        </TabPanel>
+        <TabPanel id="activity">
+          <AuditLog workspaceId={workspaceId} />
+        </TabPanel>
+        <TabPanel id="api-keys" guide="workspace-keys">
+          <ApiKeysSettings workspaceId={workspaceId} />
+        </TabPanel>
+        <TabPanel id="danger-zone">
+          <DangerZone
+            workspaceId={workspaceId}
+            workspaceName={workspaceName}
+            workspaceSlug={workspaceSlug}
+          />
+        </TabPanel>
+      </PageTabs>
     </main>
   );
 }
@@ -116,9 +132,15 @@ function GeneralSettings({
   }
 
   return (
-    <section className="settings-panel">
+    <section className="settings-panel" id="workspace-identity">
       <header>
-        <h2>┌─ WORKSPACE IDENTITY</h2>
+        <h2 className="heading-with-tip">
+          ┌─ WORKSPACE IDENTITY
+          <InfoTip label="About workspace identity">
+            The name appears in the dashboard and workspace selector. The slug
+            is locked to keep asset URLs stable.
+          </InfoTip>
+        </h2>
         <span>GENERAL</span>
       </header>
       <form onSubmit={save}>
@@ -131,15 +153,13 @@ function GeneralSettings({
             maxLength={80}
             required
           />
-          <small>Shown in the dashboard and workspace selector.</small>
         </label>
         <label>
           Slug
           <input value={workspaceSlug} readOnly aria-readonly="true" />
-          <small>Locked because it is part of every stable asset URL.</small>
         </label>
         <div className="settings-url">
-          <span>PUBLIC PATH</span>
+          <span>DELIVERY PATH</span>
           <code>/w/{workspaceSlug}/&#123;key&#125;</code>
         </div>
         {error && (
@@ -279,7 +299,14 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="settings-panel" id="custom-domain">
       <header>
-        <h2>┌─ CUSTOM DOMAIN</h2>
+        <h2 className="heading-with-tip">
+          ┌─ CUSTOM DOMAIN
+          <InfoTip label="About custom domains">
+            Serve assets on your own domain. Save a hostname, add the displayed
+            DNS records and verify ownership. HTTPS must be configured with your
+            hosting provider.
+          </InfoTip>
+        </h2>
         <span>
           {record?.status.toUpperCase() ?? "LOADING"}
           {record?.status === "pending" ? " · POLLING" : ""}
@@ -375,6 +402,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
 }
 
 export function OrganizationMembers({ workspaceId }: { workspaceId: string }) {
+  const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState("");
   const [error, setError] = useState("");
@@ -409,6 +437,9 @@ export function OrganizationMembers({ workspaceId }: { workspaceId: string }) {
         <h2>┌─ ORGANIZATION MEMBERS</h2>
         <span>{members.data?.members.length ?? 0} USERS</span>
       </header>
+      <div className="list-toolbar">
+        <FilterInput value={search} onChange={setSearch} label="Find members" />
+      </div>
       {members.isPending ? (
         <p className="settings-state">Loading members…</p>
       ) : members.isError ? (
@@ -417,42 +448,54 @@ export function OrganizationMembers({ workspaceId }: { workspaceId: string }) {
         </p>
       ) : (
         <ul className="member-list">
-          {members.data.members.map((member) => {
-            const lastOwner = member.role === "owner" && ownerCount === 1;
-            return (
-              <li key={member.id}>
-                <span className="avatar">
-                  {(member.name || member.email).slice(0, 2).toUpperCase()}
-                </span>
-                <span className="member-identity">
-                  <strong>{member.name}</strong>
-                  <small>{member.email}</small>
-                </span>
-                <select
-                  aria-label={`Role for ${member.email}`}
-                  value={member.role}
-                  disabled={pendingId === member.id || lastOwner}
-                  title={
-                    lastOwner
-                      ? "An organization needs at least one owner"
-                      : undefined
-                  }
-                  onChange={(event) =>
-                    void changeRole(
-                      member,
-                      event.target.value as WorkspaceMember["role"],
-                    )
-                  }
-                >
-                  <option value="owner">Owner</option>
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-              </li>
-            );
-          })}
+          {members.data.members
+            .filter((member) =>
+              `${member.name} ${member.email}`
+                .toLowerCase()
+                .includes(search.trim().toLowerCase()),
+            )
+            .map((member) => {
+              const lastOwner = member.role === "owner" && ownerCount === 1;
+              return (
+                <li key={member.id}>
+                  <span className="avatar">
+                    {(member.name || member.email).slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="member-identity">
+                    <strong>{member.name}</strong>
+                    <small>{member.email}</small>
+                  </span>
+                  <select
+                    aria-label={`Role for ${member.email}`}
+                    value={member.role}
+                    disabled={pendingId === member.id || lastOwner}
+                    title={
+                      lastOwner
+                        ? "An organization needs at least one owner"
+                        : undefined
+                    }
+                    onChange={(event) =>
+                      void changeRole(
+                        member,
+                        event.target.value as WorkspaceMember["role"],
+                      )
+                    }
+                  >
+                    <option value="owner">Owner</option>
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </li>
+              );
+            })}
         </ul>
       )}
+      {members.data &&
+        !members.data.members.some((member) =>
+          `${member.name} ${member.email}`
+            .toLowerCase()
+            .includes(search.trim().toLowerCase()),
+        ) && <p className="settings-state">No matching members.</p>}
       {error && (
         <p className="error-strip settings-inline-error" role="alert">
           {error}
@@ -468,6 +511,7 @@ export function OrganizationInvitations({
   workspaceId: string;
 }) {
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [pendingId, setPendingId] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -481,6 +525,7 @@ export function OrganizationInvitations({
 
   async function invite(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pendingId) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     setPendingId("create");
@@ -492,6 +537,7 @@ export function OrganizationInvitations({
         role: String(form.get("role")) as WorkspaceInvitation["role"],
       });
       formElement.reset();
+      setOpen(false);
       setMessage(
         created.emailSent
           ? "Invitation sent"
@@ -542,26 +588,53 @@ export function OrganizationInvitations({
     <section className="settings-panel" id="invitations">
       <header>
         <h2>┌─ ORGANIZATION INVITATIONS</h2>
-        <span>{invitations.data?.invitations.length ?? 0} PENDING</span>
-      </header>
-      <form className="invitation-form" onSubmit={invite}>
-        <label>
-          Email
-          <input name="email" type="email" autoComplete="email" required />
-        </label>
-        <label>
-          Role
-          <select name="role" defaultValue="viewer">
-            <option value="viewer">Viewer</option>
-            <option value="editor">Editor</option>
-            <option value="owner">Owner</option>
-          </select>
-        </label>
-        <button className="primary-button" disabled={Boolean(pendingId)}>
-          {pendingId === "create" ? "Sending…" : "Send invitation"}
+        <button
+          type="button"
+          disabled={Boolean(pendingId)}
+          onClick={() => {
+            setError("");
+            setOpen(true);
+          }}
+        >
+          Invite member
         </button>
-      </form>
-      {error && (
+      </header>
+      <FormDialog
+        open={open}
+        title="Invite member"
+        pending={pendingId === "create"}
+        onClose={() => setOpen(false)}
+      >
+        <form className="creation-form" onSubmit={invite}>
+          <label>
+            Email
+            <input
+              name="email"
+              type="email"
+              autoComplete="email"
+              autoFocus
+              required
+            />
+          </label>
+          <label>
+            Role
+            <select name="role" defaultValue="viewer">
+              <option value="viewer">Viewer</option>
+              <option value="editor">Editor</option>
+              <option value="owner">Owner</option>
+            </select>
+          </label>
+          {error && (
+            <p className="error-strip" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="primary-button" disabled={Boolean(pendingId)}>
+            {pendingId === "create" ? "Sending…" : "Send invitation"}
+          </button>
+        </form>
+      </FormDialog>
+      {!open && error && (
         <p className="error-strip settings-inline-error" role="alert">
           {error}
         </p>
@@ -627,6 +700,7 @@ export function OrganizationInvitations({
 
 function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [revokeTarget, setRevokeTarget] = useState<{
@@ -645,6 +719,7 @@ function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
 
   async function createKey(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     setPending(true);
@@ -691,40 +766,71 @@ function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="settings-panel" id="api-keys">
       <header>
-        <h2>┌─ API KEYS</h2>
-        <span>{keys.data?.keys.length ?? 0} ACTIVE</span>
-      </header>
-      <form className="api-key-form" onSubmit={createKey}>
-        <label>
-          Name
-          <input name="name" minLength={1} maxLength={32} required />
-        </label>
-        <label>
-          Access
-          <select name="access" defaultValue="read">
-            <option value="read">Read only</option>
-            <option value="write">Read + write</option>
-          </select>
-        </label>
-        <button className="primary-button" disabled={pending}>
-          {pending ? "Creating…" : "Create key"}
+        <h2 className="heading-with-tip">
+          ┌─ API KEYS
+          <InfoTip label="About API key access">
+            Use a separate key for each integration. Read only can fetch files;
+            read + write can also publish. Revoke a key to stop its requests.
+          </InfoTip>
+        </h2>
+        <button
+          type="button"
+          onClick={() => {
+            setError("");
+            setSecret(null);
+            setOpen(true);
+          }}
+        >
+          New API key
         </button>
-      </form>
+      </header>
+      <FormDialog
+        open={open}
+        title={secret ? "API key created" : "New API key"}
+        pending={pending}
+        onClose={() => setOpen(false)}
+      >
+        {!secret && (
+          <form className="creation-form" onSubmit={createKey}>
+            <label>
+              Name
+              <input
+                name="name"
+                autoFocus
+                placeholder="e.g. Website production"
+                minLength={1}
+                maxLength={32}
+                required
+              />
+            </label>
+            <label>
+              Access
+              <select name="access" defaultValue="read">
+                <option value="read">Read only</option>
+                <option value="write">Read + write</option>
+              </select>
+            </label>
+            <button className="primary-button" disabled={pending}>
+              {pending ? "Creating…" : "Create key"}
+            </button>
+          </form>
+        )}
 
-      {secret && (
-        <div className="api-key-secret" role="status">
-          <span>NEW KEY // COPY NOW</span>
-          <code>{secret.key}</code>
-          <button
-            type="button"
-            onClick={() => void navigator.clipboard.writeText(secret.key)}
-          >
-            Copy key
-          </button>
-          <small>This secret will not be shown again.</small>
-        </div>
-      )}
-      {error && (
+        {secret && (
+          <div className="api-key-secret" role="status">
+            <span>NEW KEY // COPY NOW</span>
+            <code>{secret.key}</code>
+            <CopyButton text={secret.key} label="Copy key" />
+            <small>This secret will not be shown again.</small>
+          </div>
+        )}
+        {error && (
+          <p className="error-strip settings-inline-error" role="alert">
+            {error}
+          </p>
+        )}
+      </FormDialog>
+      {!open && error && (
         <p className="error-strip settings-inline-error" role="alert">
           {error}
         </p>
@@ -826,7 +932,9 @@ function DangerZone({
           </p>
         </div>
         <label>
-          Type <code>{workspaceSlug}</code> to confirm
+          <span>
+            Type <code>{workspaceSlug}</code> to confirm
+          </span>
           <input
             value={confirmation}
             autoComplete="off"

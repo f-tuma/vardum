@@ -1,3 +1,5 @@
+import { FilterInput, PageTabs, TabPanel } from "./ui-controls";
+import { NameSlugFields } from "./name-slug-fields";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState, type SyntheticEvent } from "react";
@@ -6,7 +8,8 @@ import {
   getOrganizationDirectory,
 } from "./asset-api";
 import { authClient } from "./auth-client";
-import { useCloseDetailsOnOutsideClick } from "./asset-dashboard";
+import { OrganizationVerification } from "./organization-verification";
+import { FormDialog } from "./form-dialog";
 import {
   OrganizationInvitations,
   OrganizationMembers,
@@ -17,6 +20,7 @@ export function OrganizationSettings({
 }: {
   organizationId: string;
 }) {
+  const [workspaceSearch, setWorkspaceSearch] = useState("");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const directory = useQuery({
@@ -26,38 +30,51 @@ export function OrganizationSettings({
   const organization = directory.data?.organizations.find(
     ({ id }) => id === organizationId,
   );
-  const workspaceDrawerRef = useCloseDetailsOnOutsideClick();
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [creatingOrganization, setCreatingOrganization] = useState(false);
   const [organizationError, setOrganizationError] = useState("");
+  const [organizationPending, setOrganizationPending] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
+  const [workspacePending, setWorkspacePending] = useState(false);
 
   async function createOrganization(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setOrganizationError("");
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const result = await authClient.organization.create({
-      name: String(form.get("name")),
-      slug: String(form.get("slug")),
-    });
-    if (result.error) {
+    if (organizationPending) return;
+    setOrganizationPending(true);
+    try {
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const result = await authClient.organization.create({
+        name: String(form.get("name")),
+        slug: String(form.get("slug")),
+      });
+      if (result.error) {
+        setOrganizationError(
+          result.error.message ?? "Organization creation failed",
+        );
+        return;
+      }
+      formElement.reset();
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await navigate({
+        to: "/organizations/$organizationId/settings",
+        params: { organizationId: result.data.id },
+      });
+      setCreatingOrganization(false);
+    } catch (cause) {
       setOrganizationError(
-        result.error.message ?? "Organization creation failed",
+        cause instanceof Error ? cause.message : "Organization creation failed",
       );
-      return;
+    } finally {
+      setOrganizationPending(false);
     }
-    formElement.reset();
-    await queryClient.invalidateQueries({ queryKey: ["organizations"] });
-    await navigate({
-      to: "/organizations/$organizationId/settings",
-      params: { organizationId: result.data.id },
-    });
-    setCreatingOrganization(false);
   }
 
   async function createWorkspace(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!organization) return;
+    if (!organization || workspacePending) return;
+    setWorkspacePending(true);
     setWorkspaceError("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
@@ -67,7 +84,7 @@ export function OrganizationSettings({
         slug: String(form.get("slug")),
       });
       formElement.reset();
-      formElement.closest("details")?.removeAttribute("open");
+      setCreatingWorkspace(false);
       await queryClient.invalidateQueries({ queryKey: ["organizations"] });
       await navigate({
         to: "/workspaces/$workspaceId",
@@ -77,6 +94,8 @@ export function OrganizationSettings({
       setWorkspaceError(
         cause instanceof Error ? cause.message : "Workspace creation failed",
       );
+    } finally {
+      setWorkspacePending(false);
     }
   }
 
@@ -100,130 +119,187 @@ export function OrganizationSettings({
         <span>Organization workspaces, members, roles and invitations.</span>
       </header>
 
-      <div className="settings-stack">
-        <section className="settings-panel">
-          <header>
-            <h2>┌─ ORGANIZATION</h2>
-            <span>{organization.role.toUpperCase()}</span>
-          </header>
-          <label>
-            Organization
-            <select
-              value={organization.id}
-              onChange={(event) =>
-                void navigate({
-                  to: "/organizations/$organizationId/settings",
-                  params: { organizationId: event.target.value },
-                })
-              }
-            >
-              {directory.data.organizations.map((record) => (
-                <option key={record.id} value={record.id}>
-                  {record.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="settings-url">
-            <span>SLUG</span>
-            <code>{organization.slug}</code>
-          </div>
-          {directory.data.canCreateOrganization && (
-            <div className="settings-actions">
-              <span />
-              <button
-                type="button"
-                onClick={() => {
-                  setOrganizationError("");
-                  setCreatingOrganization((value) => !value);
-                }}
+      <PageTabs
+        label="Organization settings"
+        items={[
+          ["organization-general", "General"],
+          ["organization-workspaces", "Workspaces"],
+          ...(organization.role === "owner" && accessWorkspaceId
+            ? ([
+                ["members", "Members"],
+                ["invitations", "Invitations"],
+              ] as Array<[string, string]>)
+            : []),
+        ]}
+      >
+        <TabPanel id="organization-general">
+          <section className="settings-panel" id="organization-general">
+            <header>
+              <h2>┌─ ORGANIZATION</h2>
+              <span>{organization.role.toUpperCase()}</span>
+            </header>
+            <label>
+              Organization
+              <select
+                value={organization.id}
+                onChange={(event) =>
+                  void navigate({
+                    to: "/organizations/$organizationId/settings",
+                    params: { organizationId: event.target.value },
+                  })
+                }
               >
-                {creatingOrganization ? "Cancel" : "New organization"}
-              </button>
+                {directory.data.organizations.map((record) => (
+                  <option key={record.id} value={record.id}>
+                    {record.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="settings-url">
+              <span>SLUG</span>
+              <code>{organization.slug}</code>
             </div>
-          )}
-          {creatingOrganization && (
-            <form onSubmit={createOrganization}>
-              <label>
-                Name
-                <input name="name" required />
-              </label>
-              <label>
-                Slug
-                <input name="slug" pattern="[a-z0-9-]+" required />
-              </label>
-              <button className="primary-button">Create organization</button>
-            </form>
-          )}
-          {organizationError && (
-            <p className="error-strip settings-inline-error" role="alert">
-              {organizationError}
-            </p>
-          )}
-        </section>
-
-        <section className="settings-panel">
-          <header>
-            <h2>┌─ WORKSPACES</h2>
-            {organization.canCreateWorkspace ? (
-              <details
-                ref={workspaceDrawerRef}
-                className="upload-drawer form-drawer quiet-summary"
-              >
-                <summary>New workspace</summary>
-                <form onSubmit={createWorkspace}>
-                  <div className="drawer-row">
-                    <label>
-                      Name
-                      <input name="name" required />
-                    </label>
-                    <label>
-                      Slug
-                      <input name="slug" pattern="[a-z0-9-]+" required />
-                    </label>
-                    <button className="primary-button">Create</button>
-                  </div>
-                  {workspaceError && (
-                    <p className="error-strip" role="alert">
-                      {workspaceError}
-                    </p>
-                  )}
-                </form>
-              </details>
-            ) : (
-              <span>{organization.workspaces.length} TOTAL</span>
+            {directory.data.organizationCreation?.status ===
+              "email_verification_required" && (
+              <OrganizationVerification
+                emailEnabled={
+                  directory.data.organizationCreation.verificationEmailEnabled
+                }
+              />
             )}
-          </header>
-          {organization.workspaces.length ? (
-            <ul className="organization-workspace-list">
-              {organization.workspaces.map((workspace) => (
-                <li key={workspace.id}>
-                  <span>
-                    <strong>{workspace.name}</strong>
-                    <small>{workspace.slug}</small>
-                  </span>
-                  <Link
-                    to="/workspaces/$workspaceId"
-                    params={{ workspaceId: workspace.id }}
-                    className="button-link primary-button"
-                  >
-                    Open
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="settings-state">└─ No workspaces</p>
-          )}
-        </section>
+            {directory.data.canCreateOrganization && (
+              <div className="settings-actions">
+                <span />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrganizationError("");
+                    setCreatingOrganization(true);
+                  }}
+                >
+                  New organization
+                </button>
+              </div>
+            )}
+            <FormDialog
+              open={creatingOrganization}
+              title="New organization"
+              pending={organizationPending}
+              onClose={() => setCreatingOrganization(false)}
+            >
+              <form className="creation-form" onSubmit={createOrganization}>
+                <NameSlugFields autoFocus />
+                {organizationError && (
+                  <p className="error-strip" role="alert">
+                    {organizationError}
+                  </p>
+                )}
+                <button
+                  className="primary-button"
+                  disabled={organizationPending}
+                >
+                  {organizationPending ? "Creating…" : "Create organization"}
+                </button>
+              </form>
+            </FormDialog>
+          </section>
+        </TabPanel>
+
+        <TabPanel id="organization-workspaces">
+          <section className="settings-panel" id="organization-workspaces">
+            <header>
+              <h2>┌─ WORKSPACES</h2>
+              {organization.canCreateWorkspace ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWorkspaceError("");
+                    setCreatingWorkspace(true);
+                  }}
+                >
+                  New workspace
+                </button>
+              ) : (
+                <span>{organization.workspaces.length} TOTAL</span>
+              )}
+            </header>
+            <FormDialog
+              open={creatingWorkspace}
+              title="New workspace"
+              pending={workspacePending}
+              onClose={() => setCreatingWorkspace(false)}
+            >
+              <form className="creation-form" onSubmit={createWorkspace}>
+                <NameSlugFields autoFocus />
+                {workspaceError && (
+                  <p className="error-strip" role="alert">
+                    {workspaceError}
+                  </p>
+                )}
+                <button className="primary-button" disabled={workspacePending}>
+                  {workspacePending ? "Creating…" : "Create workspace"}
+                </button>
+              </form>
+            </FormDialog>
+            <div className="list-toolbar">
+              <FilterInput
+                value={workspaceSearch}
+                onChange={setWorkspaceSearch}
+                label="Find workspaces"
+              />
+            </div>
+            {organization.workspaces.length ? (
+              <ul className="organization-workspace-list">
+                {organization.workspaces
+                  .filter((workspace) =>
+                    `${workspace.name} ${workspace.slug}`
+                      .toLowerCase()
+                      .includes(workspaceSearch.trim().toLowerCase()),
+                  )
+                  .map((workspace) => (
+                    <li key={workspace.id}>
+                      <span>
+                        <strong>{workspace.name}</strong>
+                        <small>{workspace.slug}</small>
+                      </span>
+                      <Link
+                        to="/workspaces/$workspaceId"
+                        params={{ workspaceId: workspace.id }}
+                        className="button-link primary-button"
+                      >
+                        Open
+                      </Link>
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <p className="settings-state">
+                {organization.canCreateWorkspace
+                  ? "└─ No workspaces yet. Use New workspace to get started."
+                  : "└─ No workspaces yet. Ask an organization owner to create one."}
+              </p>
+            )}
+            {organization.workspaces.length > 0 &&
+              !organization.workspaces.some((workspace) =>
+                `${workspace.name} ${workspace.slug}`
+                  .toLowerCase()
+                  .includes(workspaceSearch.trim().toLowerCase()),
+              ) && <p className="settings-state">No matching workspaces.</p>}
+          </section>
+        </TabPanel>
 
         {organization.role === "owner" && accessWorkspaceId && (
           <>
-            <OrganizationMembers workspaceId={accessWorkspaceId} />
-            <OrganizationInvitations workspaceId={accessWorkspaceId} />
+            <TabPanel id="members">
+              <OrganizationMembers workspaceId={accessWorkspaceId} />
+            </TabPanel>
+            <TabPanel id="invitations">
+              <OrganizationInvitations workspaceId={accessWorkspaceId} />
+            </TabPanel>
           </>
         )}
-      </div>
+      </PageTabs>
     </main>
   );
 }

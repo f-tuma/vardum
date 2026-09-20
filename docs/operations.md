@@ -13,17 +13,51 @@ set +a
 compose() {
   docker compose --env-file .env.production -f compose.production.yml "$@"
 }
-# Running the bundled object store? Add --profile minio to that command line.
+# Running the bundled object store? Add --profile rustfs to that command line.
 ```
+
+## Organization bootstrap and email verification
+
+For an instance using `ORGANIZATION_CREATION=allowlist`:
+
+1. Set `ORGANIZATION_CREATOR_EMAILS` to the administrator's email and configure
+   `SMTP_HOST` and `SMTP_FROM` plus the provider's port and credentials.
+2. Sign up with that address. Sign-in alone does not grant organization creation.
+3. Open the verification link in the inbox, then create the organization and
+   its first workspace. The app can resend the link or recheck verification.
+
+Without SMTP, unverified accounts cannot bootstrap an allowlisted instance.
+Configure outgoing mail and restart the API to complete verification; there is
+no automatic verification fallback. Previously verified allowlisted accounts
+remain eligible if SMTP is later disabled. `open` is a different trust policy:
+it permits **every signed-in account**, including unverified ones, to create
+organizations. Do not temporarily expose an internet-facing instance in that
+mode as a substitute for verifying its administrator.
+
+After upgrading, previously unverified allowlisted users must verify before
+creating additional organizations. Existing organizations, memberships and
+sign-ins remain available; the upgrade does not mark old accounts as verified.
+Review organizations created before this restriction if the instance was public.
+
+Regression check (requires PostgreSQL binaries, run as a non-root user):
+
+```sh
+PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:organization-verification
+```
+
+The check creates and removes its own temporary database, ignores `.env`, and
+uses real auth endpoints with captured outbound email. It covers both SMTP
+configurations without contacting a mail provider or the deployed database.
 
 ## Backup
 
 Stop API writes, then export PostgreSQL and mirror the bucket. PostgreSQL stays
 available to the backup commands.
 
-The `mc` commands below address the bundled MinIO from `--profile minio`. With
-an external bucket, replace them with your provider's own mirroring — the
-important part is that a database dump without the objects is not a backup.
+The `aws s3 sync` commands below address the bundled RustFS from
+`--profile rustfs`. With an external bucket, replace them with your provider's
+own mirroring — the important part is that a database dump without the objects
+is not a backup.
 
 ```sh
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -31,10 +65,9 @@ mkdir -p "backups/$stamp"
 compose stop api worker
 compose exec -T postgres pg_dump -U varda -d varda -Fc \
   > "backups/$stamp/postgres.dump"
-compose --profile minio run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
-  --entrypoint /bin/sh minio-init -ec \
-  'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" &&
-  mc mirror "local/$S3_BUCKET" /backup/objects'
+compose --profile rustfs run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
+  --entrypoint /bin/sh rustfs-init -ec \
+  'aws --endpoint-url http://rustfs:9000 s3 sync "s3://$S3_BUCKET" /backup/objects'
 compose up -d --wait
 ```
 
@@ -48,14 +81,18 @@ current database objects. Keep API and worker stopped until both stores match.
 
 ```sh
 backup=backups/20260822T120000Z
-compose --profile minio up -d postgres minio minio-init
+compose --profile rustfs up -d postgres rustfs rustfs-init
 compose stop api worker
+compose build
+# Prepare the runtime role so ACLs in newer backups have a valid grantee.
+compose run --rm migrate
 compose exec -T postgres pg_restore --clean --if-exists -U varda -d varda \
   < "$backup/postgres.dump"
-compose --profile minio run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
-  --entrypoint /bin/sh minio-init -ec \
-  'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" &&
-  mc mirror --overwrite /backup/objects "local/$S3_BUCKET"'
+compose --profile rustfs run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
+  --entrypoint /bin/sh rustfs-init -ec \
+  'aws --endpoint-url http://rustfs:9000 s3 sync /backup/objects "s3://$S3_BUCKET"'
+# Reapply pending migrations and runtime grants after restoring the dump.
+compose run --rm migrate
 compose up -d --build --wait
 curl --fail "$APP_URL/ready"
 ```
@@ -76,6 +113,80 @@ curl --fail "$APP_URL/ready"
 
 Database migrations are forward-only. To roll back across a migration, check
 out the previous release and restore the backup made before upgrading.
+
+## Runtime database role upgrade
+
+The production and both Dokploy templates keep the existing `varda` database
+administrator for PostgreSQL initialization, backups and the one-shot migration
+service. API and worker now connect as `varda_app`, with a separate password.
+They do not receive the administrator's connection string. The runtime owns no
+application or queue objects and has no superuser, BYPASSRLS, role membership,
+schema-creation or table-truncation privileges. Both entrypoints refuse to start
+in production when these restrictions are violated.
+
+For an existing installation:
+
+1. Back up the database, objects and environment. Keep `POSTGRES_PASSWORD`
+   unchanged; changing the environment alone does not change an existing
+   PostgreSQL administrator password.
+2. Add a **different** `POSTGRES_APP_PASSWORD` to the deployment environment.
+   Use at least 24 URL-safe letters, digits, underscores or hyphens; generate
+   one with `openssl rand -hex 32`. Store both secrets securely.
+3. Stop API and worker, deploy the matching images and run the migration service
+   before restarting them. Avoid running the old privileged workers alongside
+   the new services while queue grants are being changed.
+
+```sh
+compose stop api worker
+compose build
+compose run --rm migrate
+compose up -d --force-recreate api worker gateway
+curl --fail "$APP_URL/ready"
+```
+
+Dokploy uses the same environment variable and service dependency ordering.
+Stop the old API/worker before redeploying; verify the migration service succeeded
+and both new services started. No database reset or ownership transfer of existing
+tables is required. A pre-existing `varda_app` role with elevated attributes,
+memberships or owned objects is rejected for manual review rather than silently
+repurposed. Provisioning grants only data operations and checks the resulting role
+before committing its changes. A password rotation uses the same stop/migrate/
+restart sequence, which also prevents old connection pools surviving the change.
+
+pg-boss schema changes now run through its migration CLI before runtime startup.
+Runtime processes can enqueue, claim, schedule, retry and maintain jobs, but
+cannot rewrite the schema version or access executable BAM migration commands.
+Queue statistics persistence is disabled to avoid runtime partition DDL;
+Vardum's delivery analytics remain enabled. Delivery retention visits workspaces
+in batches with a transaction-local RLS context. Existing queue data is preserved
+when the migrator reruns.
+
+The PostgreSQL instance/database is dedicated to Vardum. For a manually managed
+deployment, give the migrator credentials able to apply DDL and provision the
+runtime role; set `POSTGRES_APP_PASSWORD` only on that one-shot process. Set API
+and worker `DATABASE_URL` to the matching `varda_app` connection and
+`NODE_ENV=production`. The local `pnpm dev` workflow still uses its development
+schema owner and automatic queue initialization; it is not a production template.
+
+RLS is defense against missing tenant filters, not a replacement for route
+authorization: the server selects `app.workspace_id`, auth/workspace-directory
+tables remain global, and verified custom-domain lookup has its existing read
+policy. A runtime connection must not be exposed to application end users.
+PostgreSQL explains the superuser/owner exceptions in its
+[row-security documentation](https://www.postgresql.org/docs/17/ddl-rowsecurity.html).
+
+Regression checks (native PostgreSQL binaries; unprivileged OS user):
+
+```sh
+PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:runtime-database
+PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:private-delivery
+bash scripts/smoke-production.sh
+```
+
+The first two create disposable PostgreSQL clusters and ignore `.env`. The last
+builds the production Compose stack in its own project, checks a real RustFS
+upload/ingest, private delivery and the deployed database role, then deletes only
+that project's data. Never substitute the deployed database for these fixtures.
 
 ## Asset visibility upgrade
 

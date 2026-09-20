@@ -16,12 +16,13 @@ const execFile = promisify(execFileCallback);
 const migrations = fileURLToPath(new URL("../drizzle", import.meta.url));
 
 // Explicit integration command only. Never reads .env or connects to configured services.
-// Requires unprivileged execution and native PostgreSQL binaries in /usr/bin.
+// Requires unprivileged execution and native PostgreSQL binaries in PG_BINDIR.
 test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTTP, frozen CLI", {
   timeout: 120_000,
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "varda-private-test-"));
   const data = join(root, "data");
+  const pgBin = process.env.PG_BINDIR ?? "/usr/bin";
   let started = false;
   let admin: Pool | undefined;
   let closeApp: (() => Promise<unknown>) | undefined;
@@ -87,7 +88,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     await admin?.end();
     await new Promise<void>((resolve) => objectServer.close(() => resolve()));
     if (started)
-      await execFile("/usr/bin/pg_ctl", [
+      await execFile(join(pgBin, "pg_ctl"), [
         "-D",
         data,
         "-m",
@@ -98,14 +99,14 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     await rm(root, { recursive: true, force: true });
     console.log(`Cleaned disposable cluster and fixtures: ${root}`);
   });
-  const cleanEnv = { PATH: process.env.PATH, HOME: root, LANG: "C" };
+  const cleanEnv = { PATH: process.env.PATH, LANG: "C" };
   await execFile(
-    "/usr/bin/initdb",
+    join(pgBin, "initdb"),
     ["-D", data, "-A", "trust", "-U", "postgres", "--no-locale"],
     { env: cleanEnv },
   );
   await execFile(
-    "/usr/bin/pg_ctl",
+    join(pgBin, "pg_ctl"),
     [
       "-D",
       data,
@@ -133,7 +134,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   process.env = {
     ...cleanEnv,
     NODE_ENV: "test",
-    DATABASE_URL: connection("fixture_app"),
+    DATABASE_URL: connection("varda_app"),
     BETTER_AUTH_URL: "http://localhost:3000",
     WEB_URL: "http://localhost:3000",
     BETTER_AUTH_SECRET: "isolated-test-auth-secret-at-least-32-characters",
@@ -268,12 +269,14 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       );
     },
   );
-  await sql(
-    "CREATE ROLE fixture_app LOGIN; GRANT USAGE, CREATE ON SCHEMA public TO fixture_app; GRANT ALL ON ALL TABLES IN SCHEMA public TO fixture_app; GRANT CREATE ON DATABASE postgres TO fixture_app",
-  );
+  const { migrateQueue } = await import("../src/queue-migrate.js");
+  const { provisionRuntimeRole, assertRuntimeDatabaseRole } = await import("../src/db/runtime-role.js");
+  await migrateQueue(connection("postgres"));
+  await provisionRuntimeRole(admin!, "isolated-private-test-runtime-password");
   const { buildApp } = await import("../src/app.js");
   const database = await import("../src/db/index.js");
   closeDatabase = database.closeDatabase;
+  await assertRuntimeDatabaseRole(database.pool);
   const queue = await import("../src/queue.js");
   stopQueue = queue.stopQueue;
   await queue.startQueue();
@@ -287,6 +290,11 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     0,
     "real app connection cannot bypass tenant RLS",
   );
+
+  await t.test("image pipeline under the production database role", async (imageTest) => {
+    const { checkImagePipeline } = await import("./image-pipeline.fixture.js");
+    await checkImagePipeline(imageTest, admin!, objects);
+  });
 
   const cookies: Record<string, string> = {};
   await t.test(

@@ -1,22 +1,48 @@
 # Vardum CLI
 
 The CLI materializes a workspace **Vard** into a project. Create a Vard in the
-web UI, select its assets and output paths, then copy the generated
-`vardum.json` into the target repository.
+web UI, select its assets and output paths, then run `vardum init` in the target
+repository to create `vardum.json`.
 
-Build and link the workspace package once during development:
+## First project
 
-```sh
-pnpm --filter @vardum/cli build
-pnpm --filter @vardum/cli link --global
-```
+Use Node.js 22 or newer. These commands target CLI **0.6.0** and the matching
+server release; see [release status and compatibility](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md)
+for candidate availability. Published CLI 0.5.0 has a broken workspace dependency
+and does not support frozen snapshots.
 
-Then run it from the repository containing `vardum.json`:
+1. In the web app, upload an image, create a Vard and add an output such as
+   `public/logo.svg`. Keep its CLI config tab open for the server URL, workspace
+   ID and Vard ID. **Copy setup** combines the following steps into one command
+   with all three values filled in (bash/zsh).
+2. In your project root, install an exact CLI version, initialize the project
+   and authorize your machine:
 
-```sh
-vardum pull
-vardum push
-```
+   ```sh
+   npm install --save-dev --save-exact @vardum/cli@0.6.0
+   npx vardum init
+   npx vardum login
+   npx vardum pull
+   ```
+
+   `init` asks for the three values from the CLI config tab and creates
+   `vardum.json`. Copying that JSON into the project manually also works.
+
+3. Review the downloaded files. Commit `vardum.json`, `.vardum.lock`,
+   `package.json` and your npm lockfile. In CI use the installed CLI:
+
+   ```sh
+   npm ci
+   npx --no-install vardum pull --frozen --json
+   ```
+
+   Supply a workspace read key through the CI secret `VARDUM_API_KEY`.
+   A normal `pull` intentionally adopts remote changes; frozen pull restores
+   the reviewed snapshot. `vardum push` only updates mappings marked Writable.
+
+For a source checkout before publication, run
+`pnpm --filter "@vardum/cli..." build` and use `node /absolute/path/to/vardum/apps/cli/dist/index.js`
+in place of `npx vardum` from the target project.
 
 Private files, private Vards and all write operations need a workspace key.
 Authorize the machine once and the CLI keeps it:
@@ -40,7 +66,7 @@ VARDUM_API_KEY=varda_... vardum pull --frozen --json
 ## Commands
 
 ```text
-vardum init [--server URL --workspace ID --vard ID] [--force]
+vardum init [--server URL --workspace ID --vard ID] [--dry-run] [--force]
 vardum whoami
 vardum version
 vardum update [--json]
@@ -51,6 +77,11 @@ vardum push [--dry-run] [--force]
 vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
 vardum push-folder <directory> [prefix] [--dry-run] [--delete]
 ```
+
+`init` safely reuses an existing configuration for the same Vard. A different
+or invalid configuration requires `--force`; `--dry-run` never writes it.
+Without an interactive terminal (including `--json`), supply all three flags.
+Project-based `login` preselects the workspace from `vardum.json` in the browser.
 
 `status` is `pull` that writes nothing, for asking what a sync would do — it
 reports locally edited files as conflicts rather than refusing to run.
@@ -107,11 +138,11 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 
 ## Reproducible asset consumption
 
-**Minimum compatible CLI:** the schema-2-capable source build containing
-`pull --frozen` (this feature is unreleased; the package version alone does not
-identify support yet). Pin that build in CI. Older clients, including previously
-published 0.5.0 builds, cannot safely maintain these snapshots. This is not a
-claim that a new npm release is available.
+**Minimum compatible CLI: 0.6.0**, with the matching server from the
+[compatibility table](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md#compatibility).
+Pin the exact tested version in CI. Older clients, including published 0.5.0,
+cannot safely maintain schema 2 snapshots. The repository's version bump alone
+does not mean the candidate is already available on npm.
 
 1. Run **`vardum pull`** to intentionally resolve the current Vard and refresh
    its files and snapshot. Use `--delete` explicitly if obsolete tracked outputs
@@ -178,4 +209,4 @@ visibility in the app or through MCP `set_asset_visibility` (publication require
 New workspace API/CLI keys have a finite 10,000-request/60-second allowance;
 private file requests now consume it. Existing custom key limits still apply.
 This allowance is not a throughput guarantee; see the
-[upgrade notes](../../docs/operations.md#asset-visibility-upgrade) for legacy keys.
+[upgrade notes](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/operations.md#asset-visibility-upgrade) for legacy keys.

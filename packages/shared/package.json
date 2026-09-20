@@ -1,6 +1,6 @@
 {
   "name": "@vardum/shared",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared Vardum wire types and accepted-format tables",
   "license": "MIT",
   "type": "module",
@@ -18,12 +18,21 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepack": "node ../../scripts/check-pack-manager.mjs && pnpm build"
   },
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
     "typescript": "5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frgtn-dot-dev/vardum.git",
+    "directory": "packages/shared"
+  },
+  "homepage": "https://github.com/frgtn-dot-dev/vardum/tree/main/packages/shared#readme",
+  "bugs": {
+    "url": "https://github.com/frgtn-dot-dev/vardum/issues"
   }
 }

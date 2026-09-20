@@ -11,7 +11,7 @@
 # Required environment:
 #   APP_URL=https://dev.vardum.com
 #   BETTER_AUTH_SECRET / TRANSFORM_SECRET   (dev-only secrets)
-#   POSTGRES_PASSWORD
+#   POSTGRES_PASSWORD / POSTGRES_APP_PASSWORD (different URL-safe secrets)
 #   S3_BUCKET / S3_REGION / S3_ENDPOINT / S3_PUBLIC_ENDPOINT
 #   S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY  (a separate bucket from production)
 #
@@ -20,7 +20,7 @@
 
 x-app-environment: &app-environment
   NODE_ENV: production
-  DATABASE_URL: postgres://varda:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/varda
+  DATABASE_URL: postgres://varda_app:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}@postgres:5432/varda
   BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
   TRANSFORM_SECRET: ${TRANSFORM_SECRET:?set TRANSFORM_SECRET}
   BETTER_AUTH_URL: ${APP_URL:?set APP_URL}
@@ -61,51 +61,70 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # Storage is external by default; COMPOSE_PROFILES=minio runs one in-stack.
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    profiles: [minio]
-    command: server /data --console-address ":9001"
+  # Storage is external by default; COMPOSE_PROFILES=rustfs runs one in-stack.
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    profiles: [rustfs]
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
-      MINIO_SERVER_URL: ${S3_PUBLIC_ENDPOINT}
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # No server-side domain config: RustFS is path-style by default, which is
+      # what S3_FORCE_PATH_STYLE=true asks for, and the app already signs the
+      # presigned POST against S3_PUBLIC_ENDPOINT itself. RUSTFS_SERVER_DOMAINS
+      # would switch this host to virtual-host style and break that.
+      # RustFS sends no CORS headers unless asked, and its PutBucketCors is not
+      # dependable yet, so the app's own ensureBucketCors() may not land. The
+      # browser uploads here with a presigned POST, so allow the origins at the
+      # server instead. Wildcard mode refuses credentialed requests, and a
+      # presigned POST carries no cookies.
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${S3_CORS_ALLOWED_ORIGINS:-*}
     volumes:
-      - dev-minio-data:/data
+      - dev-rustfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 5s
       timeout: 5s
       retries: 10
+    # The S3 API port is the only one Traefik should reach; the console stays on
+    # the project network.
     expose:
       - "9000"
       - "9001"
     networks:
       dokploy-network:
         aliases:
-          - vardum-dev-minio
+          - vardum-dev-rustfs
       default: {}
     restart: unless-stopped
 
-  minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    profiles: [minio]
+  rustfs-init:
+    image: amazon/aws-cli:2.36.47
+    profiles: [rustfs]
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET}
+    # Idempotent: create the bucket, or confirm it is already there.
     entrypoint: >-
-      /bin/sh -ec "mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
-      mc mb --ignore-existing local/$$S3_BUCKET"
+      /bin/sh -ec "aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket $$S3_BUCKET ||
+      aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket $$S3_BUCKET"
 
   migrate:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      DATABASE_URL: postgres://varda:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/varda
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}
     command: ["node", "dist/migrate.js"]
     depends_on:
       postgres:
@@ -173,7 +192,7 @@ services:
 
 volumes:
   dev-postgres-data:
-  dev-minio-data:
+  dev-rustfs-data:
 
 networks:
   dokploy-network:

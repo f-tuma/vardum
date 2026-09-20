@@ -108,7 +108,7 @@ async function api<T = unknown>(
 
 const server = new McpServer({
   name: "Vardum",
-  version: "0.1.0",
+  version: VERSION,
 });
 
 // ── Resources ──────────────────────────────────────────────────────────────
@@ -200,7 +200,7 @@ Folders exist only as key prefixes — no need to "create" them.
 - **editor**: full CRUD on assets, Vards, and presets
 - **owner**: workspace administration (members, API keys, domain, deletion)
 
-A workspace API key carries the permissions of whoever created it, nothing more.
+MCP uses a workspace-scoped asset key. Members, invitations, keys, domains and workspace administration require a browser session and are managed in the web app.
 
 ## Video assets
 MP4, WebM, MOV, AVI and MPEG are accepted. They are stored and delivered as-is —
@@ -241,293 +241,50 @@ Everything an editor can do, plus:
 - Full audit log access
 
 ## API key scoping
-A workspace API key inherits the permissions of the person who created it.
-A key can never grant more access than its creator has. Self-revocation
+MCP exposes asset and Vard tools only. A read key can list/read; a write key adds
+create, update, delete and publish. Keys are restricted to one workspace and do
+not grant browser-session administration, even when created by an owner. Self-revocation
 (\`vardum logout\`) is available to CLI keys without workspace admin access.`,
     },
   ],
 }));
 
-// ── Tools: Workspace ────────────────────────────────────────────────────────
-
-server.tool(
-  "list_organizations",
-  "List all organizations the authenticated user belongs to.",
-  {},
-  async () => {
-    const data = await api<{
-      organizations: Array<{
-        id: string;
-        name: string;
-        slug: string;
-        role: string;
-      }>;
-    }>("/api/organizations");
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(data.organizations, null, 2) },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "create_workspace",
-  "Create a new workspace inside an organization.",
-  {
-    organizationId: z.string().describe("Organization ID"),
-    name: z.string().min(1).max(64).describe("Display name for the workspace"),
-    slug: z
-      .string()
-      .regex(/^[a-z0-9][a-z0-9._-]*$/)
-      .describe("URL-safe slug (cannot be changed later)"),
-  },
-  async ({ organizationId, name, slug }) => {
-    const data = await api<{ id: string; name: string; slug: string }>(
-      `/api/organizations/${encodeURIComponent(organizationId)}/workspaces`,
-      { method: "POST", body: JSON.stringify({ name, slug }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "get_workspace",
-  "Retrieve workspace details including name, slug, and member count.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const [members, overview] = await Promise.all([
-      api<{
-        members: Array<{
-          id: string;
-          name: string | null;
-          email: string;
-          role: string;
-        }>;
-      }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/members`),
-      api<{
-        name: string;
-        slug: string;
-        storageUsed: number;
-        assetCount: number;
-      }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/overview`),
-    ]);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            { ...overview, members: members.members },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "update_workspace",
-  "Update the display name of a workspace. The slug cannot be changed.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    name: z.string().min(1).max(64).describe("New display name"),
-  },
-  async ({ workspaceId, name }) => {
-    const data = await api<{ id: string; name: string; slug: string }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}`,
-      { method: "PATCH", body: JSON.stringify({ name }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// ── Tools: Members & Invitations ────────────────────────────────────────────
-
-server.tool(
-  "list_members",
-  "List all members of a workspace with their roles.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{
-      members: Array<{
-        id: string;
-        name: string | null;
-        email: string;
-        role: string;
-      }>;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/members`);
-    return {
-      content: [{ type: "text", text: JSON.stringify(data.members, null, 2) }],
-    };
-  },
-);
-
-server.tool(
-  "change_member_role",
-  "Change a member's role in the workspace.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    memberId: z.string().describe("Member ID"),
-    role: z.enum(["owner", "editor", "viewer"]).describe("New role"),
-  },
-  async ({ workspaceId, memberId, role }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberId)}`,
-      { method: "PATCH", body: JSON.stringify({ role }) },
-    );
-    return { content: [{ type: "text", text: `Role changed to ${role}.` }] };
-  },
-);
-
-server.tool(
-  "list_invitations",
-  "List pending invitations for a workspace.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{
-      invitations: Array<{
-        id: string;
-        email: string;
-        role: string;
-        expiresAt: string;
-      }>;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`);
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(data.invitations, null, 2) },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "create_invitation",
-  "Invite someone by email to join a workspace with a specific role.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    email: z.string().email().describe("Recipient email address"),
-    role: z
-      .enum(["editor", "viewer"])
-      .describe("Role to assign (owner cannot be invited directly)"),
-  },
-  async ({ workspaceId, email, role }) => {
-    await api<{ id: string }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
-      { method: "POST", body: JSON.stringify({ email, role }) },
-    );
-    return {
-      content: [
-        { type: "text", text: `Invitation sent to ${email} (${role}).` },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "revoke_invitation",
-  "Revoke a pending invitation before it expires.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    invitationId: z.string().describe("Invitation ID"),
-  },
-  async ({ workspaceId, invitationId }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}`,
-      { method: "DELETE" },
-    );
-    return { content: [{ type: "text", text: "Invitation revoked." }] };
-  },
-);
-
-// ── Tools: API Keys ─────────────────────────────────────────────────────────
-
-server.tool(
-  "list_api_keys",
-  "List all API keys for a workspace.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{
-      keys: Array<{
-        id: string;
-        name: string | null;
-        start: string;
-        access: string;
-        createdAt: string;
-      }>;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/api-keys`);
-    return {
-      content: [{ type: "text", text: JSON.stringify(data.keys, null, 2) }],
-    };
-  },
-);
-
-server.tool(
-  "create_api_key",
-  "Create a new API key for a workspace. The full key is shown only once.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    name: z
-      .string()
-      .min(1)
-      .max(32)
-      .describe("Human-readable label for the key"),
-    access: z
-      .enum(["read", "write"])
-      .describe("Access level: read-only or read-write"),
-  },
-  async ({ workspaceId, name, access }) => {
-    const data = await api<{
-      id: string;
-      name: string;
-      key: string;
-      access: string;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/api-keys`, {
-      method: "POST",
-      body: JSON.stringify({ name, access }),
-    });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "revoke_api_key",
-  "Revoke (delete) an API key by ID.",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    keyId: z.string().describe("API key ID to revoke"),
-  },
-  async ({ workspaceId, keyId }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/api-keys/${encodeURIComponent(keyId)}`,
-      { method: "DELETE" },
-    );
-    return { content: [{ type: "text", text: "API key revoked." }] };
-  },
-);
-
 // ── Tools: Assets ───────────────────────────────────────────────────────────
 
 server.tool(
   "list_assets",
-  "List ready assets and their isPublic visibility, optionally filtered by prefix (virtual folder).",
+  "List one page of ready assets and visibility, optionally filtered by prefix. Pass nextCursor as cursor to continue; null means the end.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     prefix: z
       .string()
       .optional()
       .describe("Prefix filter (e.g. 'icons/' to list only that folder)"),
+    cursor: z
+      .string()
+      .max(255)
+      .optional()
+      .describe("nextCursor from the previous page"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe("Page size, default 100"),
   },
-  async ({ workspaceId, prefix = "" }) => {
+  async ({ workspaceId, prefix = "", cursor, limit = 100 }) => {
+    const query = new URLSearchParams({ prefix, limit: String(limit) });
+    if (cursor !== undefined) query.set("cursor", cursor);
     const data = await api<{
       workspaceSlug: string;
       assets: SyncAsset[];
+      nextCursor: string | null;
     }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/sync/assets?prefix=${encodeURIComponent(prefix)}&limit=500`,
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/sync/assets?${query}`,
     );
     return {
-      content: [{ type: "text", text: JSON.stringify(data.assets, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     };
   },
 );
@@ -814,24 +571,31 @@ server.tool(
     vardId: z.string().describe("Vard ID"),
     items: z
       .array(
-        z.object({
-          assetId: z.string().describe("The asset ID to include"),
-          outputPath: z
-            .string()
-            .describe("Relative output path in the project"),
-          writable: z
-            .boolean()
-            .describe("Whether this output can be pushed back"),
-          pinned: z
-            .boolean()
-            .describe("Whether the version is pinned (read-only)"),
-          transformation: z
-            .record(z.unknown())
-            .nullable()
-            .describe(
-              "Optional transformation parameters (w, h, fit, format, q) or null",
-            ),
-        }),
+        z
+          .object({
+            assetId: z.string().describe("The asset ID to include"),
+            outputPath: z
+              .string()
+              .describe("Relative output path in the project"),
+            writable: z
+              .boolean()
+              .describe("Whether this output can be pushed back"),
+            versionId: z
+              .string()
+              .uuid()
+              .nullable()
+              .optional()
+              .describe(
+                "Exact ready version ID to pin; null/omitted follows latest. Pinned outputs must not be writable.",
+              ),
+            transformation: z
+              .record(z.unknown())
+              .nullable()
+              .describe(
+                "Optional transformation parameters (w, h, fit, format, q) or null",
+              ),
+          })
+          .strict(),
       )
       .describe(
         "Complete list of manual items to set (replaces manual items only)",
@@ -844,54 +608,6 @@ server.tool(
     }>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}/items`,
       { method: "PUT", body: JSON.stringify({ items }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// ── Domain ─────────────────────────────────────────────────────────────────
-
-server.tool(
-  "get_domain",
-  "Get the current custom domain configuration for a workspace.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{ domain: string | null; verified: boolean }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/domain`,
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "configure_domain",
-  "Configure a custom domain for a workspace. Requires DNS verification (TXT + CNAME).",
-  {
-    workspaceId: z.string().describe("Workspace ID"),
-    domain: z.string().describe("Domain name (e.g. assets.example.com)"),
-  },
-  async ({ workspaceId, domain }) => {
-    const data = await api<{
-      domain: string;
-      verified: boolean;
-      txtRecord: string;
-      cnameTarget: string;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/domain`, {
-      method: "PUT",
-      body: JSON.stringify({ domain }),
-    });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  "verify_domain",
-  "Trigger domain verification. The agent should first read the current domain config to show the required DNS records, then call this once they are in place.",
-  { workspaceId: z.string().describe("Workspace ID") },
-  async ({ workspaceId }) => {
-    const data = await api<{ domain: string; verified: boolean }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/domain/verify`,
-      { method: "POST" },
     );
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   },

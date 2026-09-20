@@ -1,5 +1,5 @@
-import { and, count, lt, sql, type SQL } from "drizzle-orm";
-import { deliveryEvent } from "./db/app-schema.js";
+import { and, asc, count, gt, lt, sql, type SQL } from "drizzle-orm";
+import { deliveryEvent, workspace } from "./db/app-schema.js";
 import { db } from "./db/index.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
 
@@ -91,7 +91,10 @@ export async function deliverySummary(
     })
     .from(deliveryEvent)
     .where(
-      and(filter, sql`${deliveryEvent.createdAt} >= ${deliveryWindowStart(now)}`),
+      and(
+        filter,
+        sql`${deliveryEvent.createdAt} >= ${deliveryWindowStart(now)}`,
+      ),
     )
     .groupBy(day)
     .orderBy(day);
@@ -115,5 +118,24 @@ export async function deliverySummary(
 export async function deleteExpiredDeliveryEvents(now = new Date()) {
   const cutoff = new Date(now);
   cutoff.setUTCDate(cutoff.getUTCDate() - deliveryEventRetentionDays);
-  await db.delete(deliveryEvent).where(lt(deliveryEvent.createdAt, cutoff));
+  // Traverse the global workspace directory in bounded batches. Each delete
+  // gets its own transaction-local tenant context, just like ingest jobs.
+  let after: string | undefined;
+  while (true) {
+    const workspaces = await db
+      .select({ id: workspace.id })
+      .from(workspace)
+      .where(after === undefined ? undefined : gt(workspace.id, after))
+      .orderBy(asc(workspace.id))
+      .limit(100);
+    for (const { id } of workspaces) {
+      await inWorkspace(id, (transaction) =>
+        transaction
+          .delete(deliveryEvent)
+          .where(lt(deliveryEvent.createdAt, cutoff)),
+      );
+    }
+    if (workspaces.length < 100) return;
+    after = workspaces.at(-1)!.id;
+  }
 }

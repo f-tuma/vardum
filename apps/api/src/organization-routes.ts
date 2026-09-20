@@ -8,7 +8,8 @@ import { auth } from "./auth.js";
 import { auditEvent, workspace } from "./db/app-schema.js";
 import { member, organization } from "./db/auth-schema.js";
 import { db } from "./db/index.js";
-import { canCreateOrganization } from "./organization-policy.js";
+import { organizationCreationAccess } from "./organization-policy.js";
+import { smtpEnabled } from "./mail.js";
 
 const organizationParams = z.object({ organizationId: z.string().min(1) });
 const createWorkspaceBody = z.object({
@@ -74,9 +75,14 @@ export function registerOrganizationRoutes(app: FastifyInstance) {
       }
       organizations.set(row.id, item);
     }
+    const creationAccess = organizationCreationAccess(session.user);
     return {
       organizations: [...organizations.values()],
-      canCreateOrganization: canCreateOrganization(session.user.email),
+      canCreateOrganization: creationAccess === "allowed",
+      organizationCreation: {
+        status: creationAccess,
+        verificationEmailEnabled: smtpEnabled,
+      },
     };
   });
 

@@ -7,6 +7,11 @@ export const deliveryRetentionQueue = "delivery-retention";
 export const boss = new PgBoss({
   connectionString: config.DATABASE_URL,
   useListenNotify: true,
+  // Production DDL belongs to the one-shot migrator. Local development keeps
+  // its existing self-contained workflow with a schema-owning dev role.
+  migrate: config.NODE_ENV === "development",
+  createSchema: config.NODE_ENV === "development",
+  persistQueueStats: false,
 });
 
 boss.on("error", (error) => console.error("pg-boss error", error));

@@ -1,25 +1,20 @@
+import { NameSlugFields } from "./name-slug-fields";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { AccountSettings } from "./account-settings";
 import { getOrganizationDirectory } from "./asset-api";
 import { AssetDashboard } from "./asset-dashboard";
-import { AuditLog } from "./audit-log";
 import { AuthForm } from "./auth-form";
 import { authClient } from "./auth-client";
 import { OrganizationSettings } from "./organization-settings";
+import { OrganizationVerification } from "./organization-verification";
 import { VardEditor, VardsPage } from "./vards";
 import { WorkspaceOverview } from "./workspace-overview";
 import { WorkspaceSettings } from "./workspace-settings";
 
 type View =
-  | "overview"
-  | "assets"
-  | "vards"
-  | "audit"
-  | "settings"
-  | "organization"
-  | "account";
+  "overview" | "assets" | "vards" | "settings" | "organization" | "account";
 
 export function App({
   routeWorkspaceId,
@@ -27,6 +22,7 @@ export function App({
   assetId,
   vardId,
   prefix = "",
+  searchQuery = "",
   view = "overview",
 }: {
   routeWorkspaceId?: string;
@@ -34,6 +30,7 @@ export function App({
   assetId?: string;
   vardId?: string;
   prefix?: string;
+  searchQuery?: string;
   view?: View;
 }) {
   const session = authClient.useSession();
@@ -48,6 +45,7 @@ export function App({
       assetId={assetId}
       vardId={vardId}
       prefix={prefix}
+      searchQuery={searchQuery}
       view={view}
     />
   );
@@ -61,6 +59,7 @@ function WorkspaceApp({
   assetId,
   vardId,
   prefix,
+  searchQuery,
   view,
 }: {
   email: string;
@@ -70,6 +69,7 @@ function WorkspaceApp({
   assetId?: string;
   vardId?: string;
   prefix: string;
+  searchQuery: string;
   view: View;
 }) {
   const queryClient = useQueryClient();
@@ -77,8 +77,18 @@ function WorkspaceApp({
   const searchRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState(routeWorkspaceId ?? "");
   const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
-  const [search, setSearch] = useState("");
+  const search = searchQuery;
+  function setSearch(value: string) {
+    if (!routeWorkspaceId || view !== "assets" || assetId) return;
+    void navigate({
+      to: "/workspaces/$workspaceId/assets",
+      params: { workspaceId: routeWorkspaceId },
+      search: { prefix, ...(value ? { q: value } : {}) },
+      replace: true,
+    });
+  }
   const [error, setError] = useState("");
+  const [organizationPending, setOrganizationPending] = useState(false);
   const directory = useQuery({
     queryKey: ["organizations"],
     queryFn: getOrganizationDirectory,
@@ -96,17 +106,15 @@ function WorkspaceApp({
   );
   const preferredOrganizationId =
     routeOrganizationId ||
-    selectedOrganizationId ||
-    routeWorkspace?.organizationId;
+    routeWorkspace?.organizationId ||
+    selectedOrganizationId;
   const selected =
+    routeWorkspace ??
     allWorkspaces.find(
       (workspace) =>
         workspace.id === selectedId &&
         workspace.organizationId === preferredOrganizationId,
     ) ??
-    (routeWorkspace?.organizationId === preferredOrganizationId
-      ? routeWorkspace
-      : undefined) ??
     allWorkspaces.find(
       (workspace) => workspace.organizationId === preferredOrganizationId,
     ) ??
@@ -143,14 +151,29 @@ function WorkspaceApp({
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "k" &&
+        selected
+      ) {
         event.preventDefault();
-        searchRef.current?.focus();
+        if (view === "assets" && !assetId) searchRef.current?.focus();
+        else {
+          void navigate({
+            to: "/workspaces/$workspaceId/assets",
+            params: { workspaceId: selected.id },
+            search: { prefix: "" },
+          }).then(() => {
+            requestAnimationFrame(() =>
+              document.getElementById("asset-search")?.focus(),
+            );
+          });
+        }
       }
     };
     window.addEventListener("keydown", focusSearch);
     return () => window.removeEventListener("keydown", focusSearch);
-  }, []);
+  }, [selected?.id, view, assetId, navigate]);
 
   async function signOut() {
     await authClient.signOut();
@@ -160,23 +183,33 @@ function WorkspaceApp({
   async function createOrganization(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const result = await authClient.organization.create({
-      name: String(form.get("name")),
-      slug: String(form.get("slug")),
-    });
-    if (result.error) {
-      setError(result.error.message ?? "Organization creation failed");
-      return;
+    if (organizationPending) return;
+    setOrganizationPending(true);
+    try {
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const result = await authClient.organization.create({
+        name: String(form.get("name")),
+        slug: String(form.get("slug")),
+      });
+      if (result.error) {
+        setError(result.error.message ?? "Organization creation failed");
+        return;
+      }
+      setSelectedOrganizationId(result.data.id);
+      formElement.reset();
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await navigate({
+        to: "/organizations/$organizationId/settings",
+        params: { organizationId: result.data.id },
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Organization creation failed",
+      );
+    } finally {
+      setOrganizationPending(false);
     }
-    setSelectedOrganizationId(result.data.id);
-    formElement.reset();
-    await queryClient.invalidateQueries({ queryKey: ["organizations"] });
-    await navigate({
-      to: "/organizations/$organizationId/settings",
-      params: { organizationId: result.data.id },
-    });
   }
 
   return (
@@ -192,13 +225,11 @@ function WorkspaceApp({
                 : "#vards"
               : view === "settings"
                 ? "#settings"
-                : view === "audit"
-                  ? "#audit"
-                  : view === "organization"
-                    ? "#organization-settings"
-                    : view === "account"
-                      ? "#account"
-                      : "#overview"
+                : view === "organization"
+                  ? "#organization-settings"
+                  : view === "account"
+                    ? "#account"
+                    : "#overview"
         }
       >
         Skip to content
@@ -227,7 +258,6 @@ function WorkspaceApp({
                 if (!workspace) return;
                 setSelectedId(workspace.id);
                 setSelectedOrganizationId(workspace.organizationId);
-                setSearch("");
                 void navigate({
                   to: "/workspaces/$workspaceId",
                   params: { workspaceId: workspace.id },
@@ -320,19 +350,59 @@ function WorkspaceApp({
                   ? `${selected.slug} :: ${view}`
                   : `workspace :: ${view}`}
           </p>
-          {view === "assets" && (
+          {view === "assets" && !assetId && (
             <label className="command-search">
               <span aria-hidden="true">⌕</span>
               <input
                 ref={searchRef}
+                id="asset-search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setSearch("");
+                }}
                 placeholder="Search the whole workspace"
                 aria-label="Search assets"
                 disabled={!selected}
               />
-              <kbd>⌘K</kbd>
+              {search ? (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear asset search"
+                  onClick={() => {
+                    setSearch("");
+                    searchRef.current?.focus();
+                  }}
+                >
+                  ×
+                </button>
+              ) : (
+                <kbd>Ctrl / ⌘ K</kbd>
+              )}
             </label>
+          )}
+          {selected && (view !== "assets" || assetId) && (
+            <Link
+              className="global-search-link"
+              to="/workspaces/$workspaceId/assets"
+              params={{ workspaceId: selected.id }}
+              search={{ prefix: "" }}
+              onClick={(event) => {
+                event.preventDefault();
+                void navigate({
+                  to: "/workspaces/$workspaceId/assets",
+                  params: { workspaceId: selected.id },
+                  search: { prefix: "" },
+                }).then(() => {
+                  requestAnimationFrame(() =>
+                    document.getElementById("asset-search")?.focus(),
+                  );
+                });
+              }}
+            >
+              ⌕ Find assets <kbd>Ctrl / ⌘ K</kbd>
+            </Link>
           )}
         </header>
 
@@ -344,28 +414,44 @@ function WorkspaceApp({
           <div className="state-panel" role="alert">
             {directory.error.message}
           </div>
+        ) : (routeWorkspaceId && !routeWorkspace) ||
+          (routeOrganizationId &&
+            !organizations.some(({ id }) => id === routeOrganizationId)) ? (
+          <div className="state-panel" role="alert">
+            This workspace or organization is unavailable.{" "}
+            <Link to="/app">Back to your workspaces</Link>
+          </div>
+        ) : !organizations.length &&
+          directory.data?.organizationCreation?.status ===
+            "email_verification_required" ? (
+          <div className="empty-workspace">
+            <OrganizationVerification
+              emailEnabled={
+                directory.data.organizationCreation.verificationEmailEnabled
+              }
+            />
+          </div>
         ) : !organizations.length && directory.data?.canCreateOrganization ? (
           <div className="empty-workspace">
             <h1>Create an organization</h1>
             <p>Organizations own members, roles, and workspaces.</p>
             <form onSubmit={createOrganization}>
-              <label>
-                Name
-                <input name="name" required />
-              </label>
-              <label>
-                Slug
-                <input name="slug" pattern="[a-z0-9-]+" required />
-              </label>
+              <NameSlugFields />
               {error && <p role="alert">{error}</p>}
-              <button className="primary-button">Create organization</button>
+              <button className="primary-button" disabled={organizationPending}>
+                {organizationPending ? "Creating…" : "Create organization"}
+              </button>
             </form>
           </div>
         ) : view === "organization" && selectedOrganization ? (
-          <OrganizationSettings organizationId={selectedOrganization.id} />
+          <OrganizationSettings
+            key={selectedOrganization.id}
+            organizationId={selectedOrganization.id}
+          />
         ) : selected ? (
           view === "overview" ? (
             <WorkspaceOverview
+              key={selected.id}
               workspaceId={selected.id}
               workspaceSlug={selected.slug}
               workspaceName={selected.name}
@@ -380,26 +466,28 @@ function WorkspaceApp({
               />
             ) : (
               <VardsPage
+                key={selected.id}
                 workspaceId={selected.id}
                 workspaceName={selected.name}
                 canEdit={selected.organizationRole !== "viewer"}
               />
             )
-          ) : view === "audit" ? (
-            <AuditLog workspaceId={selected.id} workspaceName={selected.name} />
           ) : view === "settings" ? (
             <WorkspaceSettings
+              key={selected.id}
               workspaceId={selected.id}
               workspaceSlug={selected.slug}
               workspaceName={selected.name}
             />
           ) : (
             <AssetDashboard
+              key={selected.id}
               canPublish={selected.organizationRole !== "viewer"}
               workspaceId={selected.id}
               workspaceSlug={selected.slug}
               workspaceName={selected.name}
               search={search}
+              onClearSearch={() => setSearch("")}
               assetId={routeWorkspaceId === selected.id ? assetId : undefined}
               prefix={prefix}
             />

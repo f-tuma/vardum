@@ -21,14 +21,22 @@ jobs:
               with:
                   persist-credentials: false
             - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-              with:
-                  version: 10.32.1
             - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
               with:
                   node-version: 22
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+            - name: Check dependency advisories (including build tools)
+              run: pnpm audit --audit-level=moderate
             - run: pnpm test
+            - name: Install PostgreSQL for isolated auth regression tests
+              run: sudo apt-get update -qq && sudo apt-get install -y postgresql
+            - name: Check organization email verification
+              run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:organization-verification
+            - name: Check runtime database privileges and workspace isolation
+              run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:runtime-database
+            - name: Check private delivery with the production database role
+              run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:private-delivery
             - run: pnpm typecheck
             - run: pnpm build
             - run: docker compose --env-file .env.production.example -f compose.production.yml config --quiet

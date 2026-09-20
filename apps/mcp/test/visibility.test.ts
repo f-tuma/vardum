@@ -88,7 +88,7 @@ test("MCP lists visibility and delegates publishing and denial to the API", {
     name: "list_assets",
     arguments: { workspaceId: "workspace" },
   });
-  assert.equal(JSON.parse(text(listed))[0].isPublic, false);
+  assert.equal(JSON.parse(text(listed)).assets[0].isPublic, false);
   const args = { workspaceId: "workspace", assetId, isPublic: true };
   const published = await publisher.callTool({
     name: "set_asset_visibility",

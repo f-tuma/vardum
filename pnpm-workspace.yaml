@@ -3,6 +3,9 @@ packages:
   - packages/*
 
 overrides:
+  # drizzle-kit still pulls the deprecated loader's esbuild 0.18 (GHSA-67mh-4wv8-2f99).
+  # Match drizzle-kit's supported esbuild line; recheck/remove when the loader is dropped.
+  "@esbuild-kit/core-utils>esbuild": "0.25.12"
   "@smithy/core": "3.31.1"
   "@smithy/fetch-http-handler": "5.6.13"
   "@smithy/node-http-handler": "4.9.13"
@@ -11,6 +14,7 @@ overrides:
   "jose": "6.2.8"
   "nanostores": "1.4.2"
   "rolldown": "1.2.4"
+  "semver": "7.8.5"
 
 blockExoticSubdeps: true
 minimumReleaseAge: 10080
@@ -22,3 +26,10 @@ minimumReleaseAgeExclude:
   - "auth@1.7.1"
   - "better-auth@1.7.1"
 trustPolicy: no-downgrade
+
+# Unused optional peers of drizzle-orm/better-auth (this project uses drizzle
+# on pg); esbuild ships per-platform binaries and needs no postinstall.
+allowBuilds:
+  '@prisma/client': false
+  better-sqlite3: false
+  esbuild: false

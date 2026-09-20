@@ -7,12 +7,14 @@ export function Modal({
   open,
   label,
   className = "panel-dialog",
+  initialFocus,
   onClose,
   children,
 }: {
   open: boolean;
   label: string;
   className?: string;
+  initialFocus?: string;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -25,11 +27,13 @@ export function Modal({
     if (open && !dialog.open) {
       returnFocusRef.current = document.activeElement as HTMLElement | null;
       dialog.showModal();
+      if (initialFocus)
+        dialog.querySelector<HTMLElement>(initialFocus)?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
       restoreFocus(dialog, returnFocusRef.current);
     }
-  }, [open]);
+  }, [open, initialFocus]);
 
   return (
     <dialog

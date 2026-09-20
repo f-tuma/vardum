@@ -1,7 +1,7 @@
 {
   "name": "@vardum/mcp",
-  "version": "0.1.0",
-  "description": "MCP server for Vardum \u2014 let AI agents manage assets, Vards, workspaces, and more.",
+  "version": "0.2.0",
+  "description": "MCP server for workspace-scoped Vardum assets and Vards",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -16,9 +16,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "pnpm build",
     "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "node ../../scripts/check-pack-manager.mjs && pnpm build"
   },
   "publishConfig": {
     "access": "public"
@@ -31,5 +31,14 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frgtn-dot-dev/vardum.git",
+    "directory": "apps/mcp"
+  },
+  "homepage": "https://github.com/frgtn-dot-dev/vardum/tree/main/apps/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/frgtn-dot-dev/vardum/issues"
   }
 }

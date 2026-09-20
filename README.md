@@ -6,6 +6,9 @@ See the [product direction](docs/product-direction.md) for the target users,
 core workflow, first milestone, and planned templates and usage monitoring.
 That document describes intended behavior, not a list of shipped features.
 
+The [production readiness review dated 2026-09-20](docs/production-readiness-2026-09-20.md)
+records verified behavior, release blockers and the remaining acceptance work.
+
 ## Development
 
 Requires Node.js 22+, pnpm, and Docker.
@@ -57,24 +60,29 @@ with AWS that host is bucket-prefixed, which is what `VITE_UPLOAD_ORIGINS` is
 for. Providers that do not serve virtual-hosted buckets need
 `S3_FORCE_PATH_STYLE=true`.
 
-For a single box with no object store of its own, `--profile minio` starts one
-alongside the app and treats `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` as its
-root credentials:
+For a single box with no object store of its own, `--profile rustfs` starts
+RustFS alongside the app and treats `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` as
+its root credentials:
 
 ```sh
 compose="docker compose --env-file .env.production -f compose.production.yml"
-$compose --profile minio up -d --wait minio   # storage first
-$compose --profile minio run --rm minio-init  # create the bucket once
-$compose up -d --build --wait                 # then the app, without the profile
+$compose --profile rustfs up -d --wait rustfs   # storage first
+$compose --profile rustfs run --rm rustfs-init  # create the bucket once
+$compose up -d --build --wait                   # then the app, without the profile
 ```
 
 Storage is brought up on its own because `up --wait` aborts as soon as any
 container in the wait set has exited, and the bucket-creating one always has.
 An external bucket needs none of this — it is the single `up` above.
 
-Keep `POSTGRES_PASSWORD` URL-safe because it is embedded in `DATABASE_URL`.
-Database migrations run once before the API and worker start. `/health` is the
-liveness endpoint; `/ready` also verifies PostgreSQL.
+Use separate URL-safe `POSTGRES_PASSWORD` (administrator/migrator) and
+`POSTGRES_APP_PASSWORD` (API/worker) secrets. The runtime secret needs at least
+24 letters, digits, underscores or hyphens; `openssl rand -hex 32` works.
+The one-shot migrator prepares application tables, pg-boss and the limited
+`varda_app` role before API/worker startup. Production services reject an
+administrator or schema-owning connection. `/health` is the liveness endpoint;
+`/ready` also verifies PostgreSQL. Existing installs must follow the
+[database-role upgrade](docs/operations.md#runtime-database-role-upgrade).
 
 Stop the stack without deleting data:
 
@@ -104,7 +112,7 @@ already terminates TLS:
 Copy `.env.dokploy.example` into the Dokploy environment editor and expose one
 Domain: the app hostname on service `gateway`, container port 80. Objects live in
 the bucket named by those variables, so there is no storage service to publish
-unless you set `COMPOSE_PROFILES=minio` to run one in the stack.
+unless you set `COMPOSE_PROFILES=rustfs` to run one in the stack.
 
 In production the marketing site is its own Dokploy application, joined to
 `dokploy-network` and given no Domain of its own. Point `MARKETING_UPSTREAM` at
@@ -122,8 +130,17 @@ asset permissions across every workspace in the organization.
 
 Organization creation is enforced by the API through `ORGANIZATION_CREATION`:
 `allowlist` (recommended), `open`, or `disabled`. For `allowlist`, set a
-comma-separated `ORGANIZATION_CREATOR_EMAILS`. Self-hosters can use `open` on a
-trusted instance or allowlist the bootstrap administrator.
+comma-separated `ORGANIZATION_CREATOR_EMAILS`. An allowlisted account must also
+verify its email before it can create an organization. Configure SMTP for the
+bootstrap administrator, sign up, then follow the verification link. The app
+offers resend and verification checks; without SMTP it asks for administrator
+help and keeps creation blocked. Existing verified accounts can still create
+organizations if SMTP is later disabled.
+
+`open` deliberately allows every signed-in account to create organizations,
+including unverified accounts; use it only on a trusted instance. `disabled`
+prevents all new organizations. Neither policy removes existing memberships.
+See [organization bootstrap and upgrades](docs/operations.md#organization-bootstrap-and-email-verification).
 
 ## Vards and CLI sync
 
@@ -131,9 +148,9 @@ A Vard is a project manifest assembled in the workspace UI. Each item maps an
 asset to a repository-relative output path and may follow latest, pin a version,
 or request a delivery transformation. Commit the generated `vardum.json`, then
 use `vardum pull` to explicitly refresh assets and the `.vardum.lock` snapshot.
-Commit both files; CI uses `vardum pull --frozen` with a schema-2-capable CLI
+Commit both files; CI uses `vardum pull --frozen` with CLI 0.6.0 or newer
 source build to consume the locked file set without fetching the current Vard.
-The feature is unreleased; older CLI builds cannot safely maintain snapshots.
+CLI 0.6.0 is the prepared release candidate; see [release status](docs/npm-release.md). Older CLI builds cannot safely maintain snapshots.
 Locked delivery still depends on version retention, valid signing and server
 availability. `vardum update` updates the CLI, not assets.
 
@@ -171,8 +188,8 @@ membership-updating pull** to remove stale tracked local files. A normal pull
 without deletion drops stale tracking but leaves those files on disk; a later
 `--delete` cannot discover them, so deliberate manual cleanup is required.
 
-This requires the folder-aware API, gateway and MCP source build, not a new npm
-release. See [MCP rule operations](apps/mcp/README.md#folder-rules) and
+This requires the matching folder-aware API/gateway and MCP 0.2.0 candidate;
+see [release status](docs/npm-release.md), [MCP rule operations](apps/mcp/README.md#folder-rules) and
 [migration/rollback guidance](docs/operations.md#folder-rule-upgrade).
 
 ## Asset visibility
@@ -227,22 +244,17 @@ Three workspace packages are published to npm: `@vardum/shared` (wire types and
 the accepted-format tables), `@vardum/cli` and `@vardum/mcp`. The API and the
 gateway are private and stay in the repository.
 
-Bump the versions that changed, note them in `CHANGELOG.md`, then tag:
+Prepare archives with the repository's pinned pnpm, then test and publish those
+same archives. `npm pack` from a source workspace is blocked because it leaves
+`workspace:` dependencies unresolved. The `Release` workflow requires a tag
+matching the CLI version, runs unit/integration/production tests, installs the
+candidate CLI and MCP independently, then publishes shared → CLI → MCP. It checks
+registry integrity and fresh installs again after publication.
 
-```sh
-git tag v0.5.0 && git push --tags
-```
-
-The `Release` workflow runs the test suite, the build and the publish smoke
-test, then `pnpm -r publish`, which walks the workspace in dependency order and
-skips any version already on the registry — so one tag releases whatever
-changed. It needs an `NPM_TOKEN` secret (an npm automation token) on the `npm`
-environment; add required reviewers there if a release should be approved by
-hand. Publishing from a laptop works the same way: `pnpm -r publish`.
-
-Packages are published to npmjs, not GitHub Packages: installing from GitHub's
-npm registry requires a token even for public packages, which would break
-`npx @vardum/cli` and every MCP client config.
+See [the release procedure and compatibility table](docs/npm-release.md) for
+candidate versions, exact commands, partial-release recovery and npm setup.
+Publishing remains an explicit action; preparing or testing archives does not
+publish them. Packages use the public npmjs registry.
 
 ## Versions
 
