@@ -522,7 +522,7 @@ export function VardEditor({
               </code>
             </pre>
             <p className="settings-state">
-              CLI {CLI_SETUP_VERSION} · npm release pending
+              CLI {CLI_SETUP_VERSION} · Node.js 22+
             </p>
           </section>
           <section className="settings-panel" id="vard-config">

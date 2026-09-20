@@ -1,18 +1,31 @@
-# npm release candidates
+# npm releases
 
-Status on 2026-09-20: **prepared locally, not published**. The public registry
-still has CLI 0.5.0, MCP 0.1.0 and shared 0.1.0. CLI/MCP contain an unsupported
-`workspace:^` dependency and cannot provide the documented new-user install path.
-Those versions are immutable; release the new versions below together.
+Status on 2026-09-20: **published and verified on npm** — CLI 0.6.0, MCP 0.2.0
+and shared 0.2.0. Their registry SHA-512 values match the tested archives;
+CLI and MCP each install independently, resolving shared transitively.
+
+- Release: [`v0.6.0`](https://github.com/frgtn-dot-dev/vardum/releases/tag/v0.6.0)
+- Source commit: `e8d17667933601ea7055bda8cabee26ac510e40f`
+- [Successful release workflow](https://github.com/frgtn-dot-dev/vardum/actions/runs/35520781363)
+- The release assets contain the three published archives and `release.json`.
+
+The initial post-publication check ran before npm had propagated the new versions.
+Verification then passed locally and in a retry of the publish job using the same
+archives; already-published matching versions were skipped. Future verification
+waits up to 18 checks, 10 seconds apart, for missing versions. Registry errors
+and conflicting integrity values fail immediately.
+
+Older CLI 0.5.0 / MCP 0.1.0 have unsupported `workspace:^` dependencies and remain
+immutable. Install the new versions below.
 
 ## Compatibility
 
-| Component | Candidate | Required counterpart |
+| Component | Released version | Required counterpart |
 | --- | --- | --- |
-| `@vardum/cli` | 0.6.0, Node ≥22 | Matching server candidate; minimum CLI for schema 2 frozen snapshots |
-| `@vardum/mcp` | 0.2.0, Node ≥22 | Matching server candidate; 11 asset/Vard tools using a workspace key |
+| `@vardum/cli` | 0.6.0, Node ≥22 | Matching server release; minimum CLI for schema 2 frozen snapshots |
+| `@vardum/mcp` | 0.2.0, Node ≥22 | Matching server release; 11 asset/Vard tools using a workspace key |
 | `@vardum/shared` | 0.2.0 | CLI/MCP archives require `^0.2.0`; resolved automatically by npm |
-| API / gateway / worker | Server source accompanying this candidate, intended tag `v0.6.0` | Apply migrations through `0010_vard_folder_rules.sql` and follow runtime-role/visibility upgrade instructions |
+| API / gateway / worker | Server source at tag `v0.6.0` | Apply migrations through `0010_vard_folder_rules.sql` and follow runtime-role/visibility upgrade instructions |
 | Existing CLI ≤0.5.0 / MCP 0.1.0 | Not supported for this workflow | Upgrade; these artifacts are not a fallback for frozen snapshots |
 
 The API has no independent published npm version. This table describes the
@@ -87,6 +100,7 @@ its npm Settings → Trusted publishing and add GitHub Actions with:
 | Environment | `npm` |
 | Allowed actions | Allow direct `npm publish` |
 
+These three connections were configured and exercised on 2026-09-20.
 Create the GitHub environment `npm` and restrict its deployment policy to tags
 matching `v*`. Configure any required reviewers there. npm validates this trust
 when the workflow publishes; simply saving the form does not test the connection.

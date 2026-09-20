@@ -4,14 +4,21 @@ All notable changes to Vardum are documented here.
 
 ## Unreleased
 
+### Fixed
+
+- Release verification waits for npm registry propagation before installing
+  published packages; registry errors and integrity conflicts still fail immediately.
+
+## [0.6.0] - 2026-09-20
+
 ### Added
 
-- CLI 0.6.0 candidate: schema 2 snapshots and `pull --frozen` for reviewed CI
+- CLI 0.6.0: schema 2 snapshots and `pull --frozen` for reviewed CI
   builds, private asset delivery, and recursive Vard folder membership.
 - Private-by-default assets and explicit publication; public manifests do not
   publish their member files. Folder-generated outputs remain read-only.
-- Release candidates CLI 0.6.0, MCP 0.2.0 and shared 0.2.0, with independently
-  tested npm installs and production tests of the exact candidate archives.
+- Published CLI 0.6.0, MCP 0.2.0 and shared 0.2.0, with independently
+  tested npm installs and production tests of the exact published archives.
 - Restore any ready version of an asset from its version history.
 - Import objects that are already in the bucket from an S3 prefix.
 - OpenAPI 3 document at `/api/openapi.json`, generated from the route schemas.
@@ -80,8 +87,8 @@ All notable changes to Vardum are documented here.
   `PutBucketCors` is not dependable yet.
 
 `vardum login`, private delivery and folder rules require the matching server
-release. CLI 0.6.0 / MCP 0.2.0 / shared 0.2.0 are prepared candidates, not yet
-published. The existing CLI 0.5.0 / MCP 0.1.0 artifacts cannot be overwritten;
+release. CLI 0.6.0 / MCP 0.2.0 / shared 0.2.0 are published on npm.
+The existing CLI 0.5.0 / MCP 0.1.0 artifacts cannot be overwritten;
 see `docs/npm-release.md` for the release procedure and compatibility.
 
 ## [0.1.0] - 2026-08-22
@@ -98,4 +105,5 @@ see `docs/npm-release.md` for the release procedure and compatibility.
 - Production Compose stack with PostgreSQL, MinIO, migrations, API, worker and nginx.
 - Backup, restore and upgrade documentation.
 
+[0.6.0]: https://github.com/frgtn-dot-dev/vardum/releases/tag/v0.6.0
 [0.1.0]: https://github.com/frgtn-dot-dev/vardum/releases/tag/v0.1.0
