@@ -10,8 +10,9 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until<T>(
   read: () => Promise<T>,
   matches: (value: T) => boolean,
+  timeoutMs = 20_000,
 ) {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + timeoutMs;
   let value: T;
   do {
     value = await read();
@@ -409,9 +410,12 @@ export async function checkIngestRecovery(
         assert.equal(failed.retryable, true);
         assert.equal(failed.current_version_id, item.currentId);
         assert.equal((await retry(item)).statusCode, 202);
+        // A fresh process may miss NOTIFY while its listener connects. Its
+        // production fallback poll is 30s, longer than the helper's default.
         await until(
           () => state(item.versionId),
           (row) => row.status === "ready",
+          60_000,
         );
         await kill(replacement);
       } finally {
