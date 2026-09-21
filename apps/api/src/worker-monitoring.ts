@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { WipData } from "pg-boss";
+import { config } from "./config.js";
 import {
   heartbeatIntervalMs,
   heartbeatMaxAgeSeconds,
@@ -76,7 +77,7 @@ export async function startWorkerMonitoring(workers: () => WipData[]) {
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(3001, "127.0.0.1", resolve);
+      server.listen(config.WORKER_HEALTH_PORT, "127.0.0.1", resolve);
     });
   } catch (error) {
     await pool.end();

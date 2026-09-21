@@ -241,6 +241,10 @@ All three production/Dokploy templates now check each worker locally using
 `node dist/worker-healthcheck.js`. The worker binds its health server only to
 `127.0.0.1:3001` inside its container; do not publish this port. One worker process
 per container is expected.
+For multiple development workers on the same host, set a distinct
+`WORKER_HEALTH_PORT` for each process (default 3001); the healthcheck command reads
+the same setting. Integration fixtures choose an unused port instead of binding
+the running development worker's port.
 
 | Probe | Access | Meaning |
 | --- | --- | --- |
