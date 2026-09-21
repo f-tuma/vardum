@@ -1,0 +1,51 @@
+groups:
+  - name: vardum
+    rules:
+      - alert: VardumMonitoringUnavailable
+        expr: up{job="vardum"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Vardum monitoring cannot be scraped
+          description: Check the API, network and monitoring bearer token.
+      - alert: VardumDependencyUnavailable
+        expr: vardum_dependency_up{job="vardum"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Vardum dependency probe failed
+          description: Check PostgreSQL or the configured S3 bucket and credentials.
+      - alert: VardumQueueMonitoringUnavailable
+        expr: vardum_queue_monitor_up{job="vardum"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Vardum cannot read worker or queue state
+          description: Check the database, migrations and limited runtime grants.
+      - alert: VardumNoWorkers
+        expr: vardum_workers_live{job="vardum"} < 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Vardum has no responsive worker
+          description: Inspect worker logs and restart failed processes. API readiness does not cover workers.
+      - alert: VardumQueueStalled
+        expr: vardum_queue_oldest_ready_seconds{job="vardum"} >= 300 or vardum_queue_oldest_active_seconds{job="vardum"} >= 360
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Vardum queue is not making timely progress
+          description: Check worker availability, queue backlog and object storage before retrying failed uploads.
+      - alert: VardumQueueFailures
+        expr: vardum_queue_failed_15m{job="vardum"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Vardum jobs exhausted their retries
+          description: Inspect worker logs and the failed version history. This 15-minute gauge can remain positive after a successful retry.

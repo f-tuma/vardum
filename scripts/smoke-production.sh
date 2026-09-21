@@ -12,6 +12,7 @@ export POSTGRES_PASSWORD="smoke-database-password"
 export POSTGRES_APP_PASSWORD="smoke-runtime-password-at-least-24-characters"
 export BETTER_AUTH_SECRET="smoke-auth-secret-at-least-32-characters"
 export TRANSFORM_SECRET="smoke-transform-secret-at-least-32-characters"
+export MONITORING_TOKEN="smoke-monitoring-token-at-least-32-characters"
 export ORGANIZATION_CREATION="open"
 export ORGANIZATION_CREATOR_EMAILS=""
 # The disposable check has no external bucket, so it runs the bundled RustFS.

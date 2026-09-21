@@ -273,6 +273,10 @@ test(
         assert.deepEqual(errors, []);
       },
     );
+    await t.test("operational monitoring under the restricted database role", async (monitoringTest) => {
+      const { checkOperations } = await import("./operations.fixture.js");
+      await checkOperations(monitoringTest, admin!, runtime!);
+    });
     await t.test(
       "retention visits each workspace under RLS and preserves recent delivery events",
       async () => {

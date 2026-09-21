@@ -4,8 +4,18 @@ All notable changes to Vardum are documented here.
 
 ## Unreleased
 
+### Added
+
+- Worker heartbeats, container health checks and token-protected operational
+  health/Prometheus endpoints for database, storage and queue status. Includes
+  tested alert rules and setup instructions; requires migration
+  `0012_worker_heartbeat.sql`. External monitoring and notification delivery must
+  be configured by the deployment operator.
+
 ### Fixed
 
+- Lost idle PostgreSQL connections no longer terminate the API or worker.
+  Operational probes report database outages and recover when it returns.
 - Ingest jobs no longer remain processing after queue retries are exhausted or
   jobs disappear. Workers reconcile interrupted versions on startup and every
   minute; authorized users can retry the same stored upload from version history.

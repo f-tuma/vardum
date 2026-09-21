@@ -223,13 +223,105 @@ replaced; retry cannot recreate its bytes.
 Check worker logs for storage/queue errors when failures recur. The user-facing
 message intentionally omits raw storage credentials and provider diagnostics.
 Uploads that were never finalized remain pending and are outside this recovery
-path. Queue metrics/alerts and abandoned-upload cleanup are separate work.
+path. See worker/queue monitoring below; abandoned-upload cleanup remains separate
+work.
 
 Regression coverage runs in `test:private-delivery` (real PostgreSQL/limited role,
 HTTP object fixture, concurrent retries, expired attempt fencing and SIGKILL of a
 real worker process) and `scripts/smoke-production.sh` (real RustFS outage,
 exhaustion, scheduled reconciliation, worker restart and retry). Both own disposable
 data; never run outage injection against a deployed stack.
+
+## Worker and queue monitoring
+
+Apply `0012_worker_heartbeat.sql` with the migration service before deploying
+matching API and worker images. It adds a global operational table containing
+only random worker instance IDs and heartbeat times; existing assets are unchanged.
+All three production/Dokploy templates now check each worker locally using
+`node dist/worker-healthcheck.js`. The worker binds its health server only to
+`127.0.0.1:3001` inside its container; do not publish this port. One worker process
+per container is expected.
+
+| Probe | Access | Meaning |
+| --- | --- | --- |
+| `/health` | Public | API process responds |
+| `/ready` | Public | Existing API database readiness; does not gate the UI on worker/S3 availability |
+| Worker `127.0.0.1:3001/health` | Container loopback | Its pollers are responsive and its database heartbeat is fresh |
+| `/api/operations/health` | Monitoring bearer token | Database/queue query, bucket reachability, at least one live worker, and bounded queue wait/active age; 200 or 503 |
+| `/api/operations/metrics` | Monitoring bearer token | Prometheus gauges; 200 even when a dependency is down so failure metrics remain scrapeable |
+
+Set `MONITORING_TOKEN` on the API to a random, URL-safe secret of at least 32
+characters (`openssl rand -hex 32`). Empty disables both operational endpoints
+with 404. Workspace keys, browser sessions and query-string tokens cannot access
+them. Keep the token in the monitoring system's secret store and use HTTPS over
+untrusted networks. It is read-only fleet access, not a per-workspace credential.
+Responses are non-cacheable and expose counts/ages, never asset names, job payloads,
+storage endpoints, raw errors or worker IDs. The gateway proxies these API paths.
+
+Each worker publishes a database-clock heartbeat every 15 seconds only while all
+four pollers are responsive. Idle pollers must have fetched within 75 seconds;
+active jobs may run for up to 360 seconds (the job timeout is 300 seconds).
+Graceful shutdown removes its own row; a dead/frozen worker expires after 60
+seconds. Other live replicas still count, so one restarting replica does not
+report total worker loss. Old rows are pruned after one day. Container health
+uses three failed checks at 15-second intervals after a 30-second startup grace.
+Docker's restart policy applies to process exits; an unhealthy running container
+still needs an orchestrator/operator response.
+
+Probes use a separate single-connection pool with 2-second connection/statement
+limits and a 2.5-second client query timeout, plus an abortable 2-second S3
+`HeadBucket`. Concurrent scrapes share work and completed results are reused for
+at most 5 seconds. Failed database observations omit unknown worker/queue gauges
+instead of reporting healthy zeroes. Ensure the storage principal can perform
+`HeadBucket` (S3 `ListBucket` permission); this probe checks bucket access, not
+successful upload, per-object reads or free storage capacity.
+
+Failed idle application database connections are removed by the pool without
+terminating API/worker processes. A database outage still fails database-dependent
+requests, but operational probes remain available and reconnect when it returns.
+The logs record `database.connection_lost` without connection credentials.
+
+Metrics are gauges, including `vardum_queue_failed_15m`, a sliding count of terminal
+queue failures in the last 15 minutes. It may remain positive after retry succeeds;
+invalid user image validation completes the queue job and is not an infrastructure
+failure. Future scheduled retries do not contribute to oldest-ready age. Completed
+and old failed jobs are excluded from the queue query. Queue aggregation relies on
+the pinned pg-boss 12 schema and is covered by runtime integration tests.
+
+A minimal Prometheus scrape job (replace the hostname; store exactly the same token
+in the credentials file, without a `Bearer` prefix):
+
+```yaml
+scrape_configs:
+  - job_name: vardum
+    scheme: https
+    metrics_path: /api/operations/metrics
+    scrape_interval: 15s
+    scrape_timeout: 8s
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/vardum-monitoring-token
+    static_configs:
+      - targets: [vardum.example.com]
+rule_files:
+  - /etc/prometheus/vardum-alerts.yml
+```
+
+Copy `docker/monitoring/alerts.yml` to the rule path. It covers failed scrapes,
+database/S3 probes, unavailable queue observations, no workers, waiting jobs older
+than 300 seconds, active jobs older than 360 seconds, and recent terminal failures.
+Tune warning thresholds to measured workloads. Wire these rules to your own
+Alertmanager receivers and test notification delivery; this repository does not
+install a monitoring service or send notifications to an unconfigured destination.
+The JSON health endpoint uses the same 300/360-second age thresholds, while recent
+failures remain warnings rather than keeping health degraded after recovery.
+
+The production smoke freezes a real worker until its heartbeat expires, resumes
+it, and stops/restarts its disposable RustFS and PostgreSQL. It checks authenticated
+metrics, readiness independence, unknown values during database loss, and recovery.
+The isolated runtime suite covers multiple replicas, future retries, failure-window
+expiry and a real SQL lock causing a bounded timeout. Unit tests cover auth,
+configuration, poller deadlines, metric format and coalesced probes.
 
 ## Asset visibility upgrade
 

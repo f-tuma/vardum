@@ -1,0 +1,43 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'vardum_workers_live{job="vardum",instance="app"}'
+        values: '1 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VardumNoWorkers
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumNoWorkers
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              severity: critical
+            exp_annotations:
+              summary: Vardum has no responsive worker
+              description: Inspect worker logs and restart failed processes. API readiness does not cover workers.
+      - eval_time: 4m
+        alertname: VardumNoWorkers
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'up{job="vardum",instance="app"}'
+        values: '0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VardumMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumMonitoringUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              severity: critical
+            exp_annotations:
+              summary: Vardum monitoring cannot be scraped
+              description: Check the API, network and monitoring bearer token.

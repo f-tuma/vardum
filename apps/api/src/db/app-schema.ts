@@ -39,6 +39,16 @@ const tenantPolicy = (column: AnyPgColumn) =>
     withCheck: sql`${column} = current_setting('app.workspace_id', true)`,
   });
 
+// Global operational liveness only; no tenant identifiers or job payloads.
+export const workerHeartbeat = pgTable(
+  "worker_heartbeat",
+  {
+    id: uuid("id").primaryKey(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("worker_heartbeat_seen_idx").on(table.seenAt)],
+);
+
 export const workspace = pgTable(
   "workspace",
   {

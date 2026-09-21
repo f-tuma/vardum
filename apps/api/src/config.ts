@@ -20,6 +20,15 @@ const schema = z
     TRANSFORM_SECRET: z.string().min(32).default(developmentSecret),
     BETTER_AUTH_URL: z.url().default("http://localhost:3000"),
     WEB_URL: z.url().default("http://localhost:5173"),
+    MONITORING_TOKEN: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z
+        .string()
+        .min(32)
+        .max(256)
+        .regex(/^[A-Za-z0-9_-]+$/)
+        .optional(),
+    ),
     CUSTOM_DOMAIN_TARGET: optionalString,
     ORGANIZATION_CREATION: z
       .enum(["open", "allowlist", "disabled"])

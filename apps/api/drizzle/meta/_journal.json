@@ -85,6 +85,13 @@
       "when": 1789994652333,
       "tag": "0011_asset_ingest_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789996591952,
+      "tag": "0012_worker_heartbeat",
+      "breakpoints": true
     }
   ]
 }
