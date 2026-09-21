@@ -92,6 +92,13 @@
       "when": 1789996591952,
       "tag": "0012_worker_heartbeat",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790005243735,
+      "tag": "0013_upload_cleanup",
+      "breakpoints": true
     }
   ]
 }

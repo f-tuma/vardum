@@ -6,6 +6,11 @@ All notable changes to Vardum are documented here.
 
 ### Added
 
+- Workspace original-storage reservations and unfinished-upload limits, bounded
+  API/delivery admission, shared transform capacity and Compose CPU/memory limits.
+  Expired unfinished uploads are audited and cleaned by a monitored worker queue;
+  failed deletes retain their reservation and retry. Requires migration
+  `0013_upload_cleanup.sql`; see `docs/operations.md` for defaults and scope.
 - Verified PostgreSQL/object-store backup bundles with SHA-256 checksums and
   content metadata, plus restore into an empty target with runtime grants
   reapplied. Production CI/release smoke now rehearses recovery in a second

@@ -224,6 +224,9 @@ export const assetVersion = pgTable(
     ingestJobId: uuid("ingest_job_id"),
     ingestAttemptId: uuid("ingest_attempt_id"),
     retryable: boolean("retryable").default(false).notNull(),
+    uploadExpiredAt: timestamp("upload_expired_at", { withTimezone: true }),
+    uploadCleanedAt: timestamp("upload_cleaned_at", { withTimezone: true }),
+    uploadSweepAt: timestamp("upload_sweep_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -247,6 +250,12 @@ export const assetVersion = pgTable(
     index("asset_version_processing_idx")
       .on(table.workspaceId, table.id)
       .where(sql`${table.status} = 'processing'`),
+    index("asset_version_pending_idx")
+      .on(table.workspaceId, table.createdAt)
+      .where(sql`${table.status} = 'pending'`),
+    index("asset_version_cleanup_idx")
+      .on(table.workspaceId, table.uploadSweepAt)
+      .where(sql`${table.uploadExpiredAt} IS NOT NULL`),
     check("asset_version_number_check", sql`${table.number} > 0`),
     check("asset_version_size_check", sql`${table.size} > 0`),
     tenantPolicy(table.workspaceId),

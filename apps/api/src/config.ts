@@ -59,6 +59,46 @@ const schema = z
     UPLOAD_MAX_IMAGE_MB: z.coerce.number().int().min(1).default(25),
     UPLOAD_MAX_VIDEO_MB: z.coerce.number().int().min(1).default(200),
     UPLOAD_MAX_FILE_MB: z.coerce.number().int().min(1).default(100),
+    WORKSPACE_STORAGE_MB: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000_000)
+      .default(10_240),
+    WORKSPACE_PENDING_UPLOADS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(100),
+    UPLOAD_PENDING_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+    API_MAX_INFLIGHT: z.coerce.number().int().min(1).max(10_000).default(128),
+    DELIVERY_MAX_INFLIGHT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(64),
+    DELIVERY_REQUESTS_PER_SECOND: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100_000)
+      .default(100),
+    TRANSFORM_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(2),
+    TRANSFORM_QUEUE_LIMIT: z.coerce.number().int().min(0).max(128).default(8),
+    TRANSFORM_MAX_OUTPUT_PIXELS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100_000_000)
+      .default(16_000_000),
+    TRANSFORM_TIMEOUT_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(120)
+      .default(15),
     S3_REGION: z.string().default("us-east-1"),
     S3_BUCKET: z.string().min(3).default("varda"),
     S3_ENDPOINT: z.url().optional(),

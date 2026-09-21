@@ -5,6 +5,7 @@ export const monitoredQueues = [
   "asset-delete",
   "asset-ingest-recovery",
   "delivery-retention",
+  "upload-cleanup",
 ] as const;
 export const heartbeatIntervalMs = 15_000;
 export const heartbeatMaxAgeSeconds = 60;

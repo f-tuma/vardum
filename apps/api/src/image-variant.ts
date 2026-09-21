@@ -1,15 +1,23 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { getObject, putDerivedObject } from "./storage.js";
+import { config } from "./config.js";
+import { CapacityError } from "./resource-budget.js";
+import { withTransformBudget, outputPixels } from "./transform-budget.js";
+import { getObject, putDerivedObject, readBoundedObject } from "./storage.js";
 import {
   canonicalizeTransformation,
   type Transformation,
 } from "./transformation.js";
 
+// libvips threads/cache are per process, independently of request admission.
+sharp.concurrency(1);
+sharp.cache({ memory: 32, files: 0, items: 100 });
+
 type Source = {
   id: string;
   storageKey: string;
   mimeType: string;
+  size: number;
 };
 
 // ponytail: process-local lock; use a distributed lock if duplicate cross-node work is measured.
@@ -36,12 +44,15 @@ export async function getImageVariant(
 
   let generation = generating.get(storageKey);
   if (!generation) {
-    generation = generate(
-      source,
-      storageKey,
-      mimeType,
-      transformation,
-      outputFormat,
+    generation = withTransformBudget((signal) =>
+      generate(
+        source,
+        storageKey,
+        mimeType,
+        transformation,
+        outputFormat,
+        signal,
+      ),
     ).finally(() => {
       generating.delete(storageKey);
     });
@@ -56,12 +67,38 @@ async function generate(
   storageKey: string,
   mimeType: string,
   transformation: Transformation,
-  outputFormat?: "avif" | "jpeg" | "png" | "webp",
+  outputFormat: "avif" | "jpeg" | "png" | "webp" | undefined,
+  signal: AbortSignal,
 ) {
-  const original = await getObject(source.storageKey);
-  if (!original.Body) throw new Error("S3 returned an empty body");
-  const bytes = Buffer.from(await original.Body.transformToByteArray());
-  let image = sharp(bytes, { animated: true, limitInputPixels: 100_000_000 });
+  const boundedSignal = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(config.TRANSFORM_TIMEOUT_SECONDS * 1000),
+  ]);
+  const original = await getObject(source.storageKey, undefined, boundedSignal);
+  const bytes = await readBoundedObject(
+    original,
+    Math.min(source.size, config.UPLOAD_MAX_IMAGE_MB * 1024 ** 2),
+    boundedSignal,
+  );
+  let image = sharp(bytes, {
+    animated: true,
+    limitInputPixels: 100_000_000,
+  }).timeout({ seconds: config.TRANSFORM_TIMEOUT_SECONDS });
+  const metadata = await image.metadata();
+  if (
+    !metadata.width ||
+    !metadata.height ||
+    outputPixels(
+      metadata.width,
+      metadata.pageHeight ?? metadata.height,
+      metadata.pages ?? 1,
+      transformation,
+    ) > config.TRANSFORM_MAX_OUTPUT_PIXELS
+  )
+    throw new CapacityError(
+      "Transformed image exceeds the output pixel limit. Request smaller dimensions.",
+      422,
+    );
 
   if (transformation.w || transformation.h) {
     image = image.resize({
@@ -86,7 +123,10 @@ async function generate(
       break;
   }
 
-  await putDerivedObject(storageKey, await image.toBuffer(), mimeType);
+  boundedSignal.throwIfAborted();
+  const result = await image.toBuffer();
+  boundedSignal.throwIfAborted();
+  await putDerivedObject(storageKey, result, mimeType, boundedSignal);
 }
 
 function extensionForMimeType(mimeType: string) {

@@ -14,6 +14,7 @@ import {
 import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
 import { recordDeliveryEvent } from "./delivery-analytics.js";
+import { CapacityError } from "./resource-budget.js";
 import { getImageVariant } from "./image-variant.js";
 import { getObject } from "./storage.js";
 import {
@@ -330,6 +331,10 @@ async function deliverVersion(
     if (object.ContentRange) reply.code(206);
     return reply.send(object.Body);
   } catch (error) {
+    if (error instanceof CapacityError) {
+      if (error.statusCode === 503) reply.header("retry-after", "1");
+      return reply.code(error.statusCode).send({ error: error.message });
+    }
     request.log.error({ error, versionId }, "Asset delivery failed");
     return reply.code(502).send({ error: "Asset content unavailable" });
   }

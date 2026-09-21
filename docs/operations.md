@@ -50,6 +50,79 @@ The check creates and removes its own temporary database, ignores `.env`, and
 uses real auth endpoints with captured outbound email. It covers both SMTP
 configurations without contacting a mail provider or the deployed database.
 
+## Resource budgets and unfinished uploads
+
+Deploy migration `0013_upload_cleanup.sql` with matching API and worker images.
+Back up first. Existing ready/processing versions are retained; old **pending**
+versions become eligible for automatic expiry after the configured deadline.
+Choose limits for existing workspaces before deployment. Lowering a quota below
+current usage blocks new uploads/imports without deleting existing files.
+
+| Setting | Default | Scope |
+| --- | --- | --- |
+| `WORKSPACE_STORAGE_MB` | 10240 MiB | Reserved original bytes per workspace, across all API replicas |
+| `WORKSPACE_PENDING_UPLOADS` | 100 | Pending + processing versions per workspace, including retries |
+| `UPLOAD_PENDING_HOURS` | 24 hours | Time to finalize an upload; presigned POST itself lasts 15 minutes |
+| `API_MAX_INFLIGHT` | 128 | Requests per API process, through response/stream completion |
+| `DELIVERY_MAX_INFLIGHT` | 64 | Delivery requests per API process, including HEAD/redirects/ranges |
+| `DELIVERY_REQUESTS_PER_SECOND` | 100 | Delivery token bucket per API process, with a one-second burst |
+| `TRANSFORM_CONCURRENCY` | 2 | Uncached transforms across API replicas sharing the database |
+| `TRANSFORM_QUEUE_LIMIT` | 8 | Additional transform requests per process; at most two seconds of waiting |
+| `TRANSFORM_MAX_OUTPUT_PIXELS` | 16000000 | Total output pixels including all animation frames |
+| `TRANSFORM_TIMEOUT_SECONDS` | 15 | Encode timeout and storage-operation deadline |
+| `API_MEMORY_LIMIT` / `API_CPU_LIMIT` | 2g / 2 | Hard Compose container limits per API replica |
+| `WORKER_MEMORY_LIMIT` / `WORKER_CPU_LIMIT` | 1g / 1 | Hard Compose container limits per worker replica |
+
+MiB is 1,048,576 bytes. Reservation and version insertion share a short, locked
+database transaction. All retained versions count, including failures and uploads
+that have not reached storage yet. S3 import and manual ingest retry use the same
+admission rules. `GET /api/workspaces/:workspaceId/storage-usage` returns reserved
+bytes, byte limit, unfinished count and unfinished limit to authorized readers.
+Storage overflow returns `413`; unfinished/rate limits return `429`; busy request
+or transform capacity returns `503`. `429`/`503` include `Retry-After: 1` and are
+not cacheable. Clients may retry those responses with bounded backoff. Health and
+protected operational probes remain outside request admission.
+
+The storage quota accounts for **original-version reservations**, not total bucket
+or database usage. Derived cache objects, source import objects, provider version
+history, logs and backup bundles need separate storage monitoring and retention.
+Use a provider lifecycle rule scoped to `derived/` for derived-cache retention;
+never apply that rule to `originals/`. Request/rate limits multiply with the number
+of API replicas; enforce a fleet-wide edge budget when needed. Keep the same
+`TRANSFORM_CONCURRENCY` on every replica. Its PostgreSQL session advisory locks
+require a direct connection or session pooling, not transaction-mode PgBouncer.
+Connections are released on completion/failure, and locks disappear when the
+database session ends. See [PostgreSQL advisory locks](https://www.postgresql.org/docs/17/explicit-locking.html#ADVISORY-LOCKS).
+
+Cached variants and original downloads bypass encoder slots but still consume
+delivery admission. Identical variants share work within one process. API libvips
+concurrency is one thread per image with a 32 MiB operation cache; neither is a
+hard total-memory bound. Input reads reject bytes beyond the reservation, output
+estimation includes animation and extreme aspect ratios, and oversized transforms
+return `422` with guidance to request smaller dimensions. Sharp timeout cancellation
+is cooperative; container limits remain the hard boundary. See [sharp limits](https://sharp.pixelplumbing.com/api-utility/)
+and [encoding timeout](https://sharp.pixelplumbing.com/api-output/#timeout).
+
+The monitored `upload-cleanup` queue runs at worker startup and every minute in
+batches of at most 100 versions. It changes only expired pending versions to a
+non-retryable failure, with an audit entry; processing/ready versions and current
+version pointers remain unchanged. Finalize rechecks the deadline while locking
+the version, so it cannot race the transition. The worker deletes the exact
+original key outside the transaction and releases its reservation only after a
+successful S3 response. Partial deletion errors preserve the reservation and retry.
+Failed-version tombstones are re-swept daily in those same bounded batches, since
+an upload already in flight can finish late. These rows remain in version history;
+they are not silently removed. New uploads get a new version/key. A stopped worker
+does not clean expired reservations, so monitor its heartbeat and cleanup queue.
+
+The production smoke includes real RustFS expiry, cross-session transform
+saturation/recovery, a 200-request admission burst, and twelve concurrent WebP
+requests from a synthetic 2048×2048 JPEG. It records successful-request p95 and
+the API container's peak memory. These are functional load samples, not an SLO or
+tenant-capacity certification. Before opening a deployment to untrusted users,
+measure your codecs, animations, cache miss ratio and replica count; set edge
+limits, bucket retention and alerts for disk/memory, rejections and queue delay.
+
 ## Backup
 
 `node scripts/backup.mjs` creates and verifies a matched PostgreSQL + object-store

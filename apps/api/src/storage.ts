@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import {
   CopyObjectCommand,
   DeleteObjectsCommand,
@@ -187,13 +188,17 @@ export function deleteObjects(storageKeys: string[]) {
         Delete: { Objects: storageKeys.map((Key) => ({ Key })), Quiet: true },
       }),
     )
-    .then(() => undefined);
+    .then((result) => {
+      if (result.Errors?.length)
+        throw new Error("Object store did not delete every requested object");
+    });
 }
 
 export function putDerivedObject(
   storageKey: string,
   body: Buffer,
   contentType: string,
+  signal?: AbortSignal,
 ) {
   return storage.send(
     new PutObjectCommand({
@@ -203,5 +208,31 @@ export function putDerivedObject(
       ContentType: contentType,
       CacheControl: "public, max-age=31536000, immutable",
     }),
+    { abortSignal: signal },
   );
+}
+
+export async function readBoundedObject(
+  object: Awaited<ReturnType<typeof getObject>>,
+  maximum: number,
+  signal?: AbortSignal,
+) {
+  const body = object.Body as Readable | undefined;
+  if (!body) throw new Error("S3 returned an empty body");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    if (object.ContentLength !== undefined && object.ContentLength > maximum)
+      throw new Error("Object exceeds reserved upload size");
+    for await (const chunk of body) {
+      signal?.throwIfAborted();
+      size += chunk.length;
+      if (size > maximum)
+        throw new Error("Object exceeds reserved upload size");
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks, size);
+  } finally {
+    body.destroy();
+  }
 }

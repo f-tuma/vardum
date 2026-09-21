@@ -39,6 +39,13 @@ import {
   transformedAssetUrl,
   type Transformation,
 } from "./transformation.js";
+import {
+  reserveUpload,
+  lockWorkspaceBudget,
+  workspaceUsage,
+  uploadDeadline,
+  expirePending,
+} from "./upload-lifecycle.js";
 import { maximumUploadSize, uploadLimits } from "./upload-limits.js";
 
 const thumbnailTransformation = {
@@ -222,6 +229,22 @@ export function registerAssetRoutes(app: FastifyInstance) {
       },
     },
     async () => uploadLimits,
+  );
+
+  api.get(
+    "/api/workspaces/:workspaceId/storage-usage",
+    { schema: { params: workspaceParams } },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "read",
+      ]);
+      if (!("principal" in authorization))
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      return inWorkspace(workspaceId, (tx) => workspaceUsage(tx, workspaceId));
+    },
   );
 
   api.get(
@@ -431,6 +454,14 @@ export function registerAssetRoutes(app: FastifyInstance) {
         const filename = object.key.split("/").at(-1) ?? key;
 
         const created = await inWorkspace(workspaceId, async (transaction) => {
+          await lockWorkspaceBudget(transaction, workspaceId);
+          const [existing] = await transaction
+            .select({ id: asset.id })
+            .from(asset)
+            .where(and(eq(asset.workspaceId, workspaceId), eq(asset.key, key)))
+            .limit(1);
+          if (existing) return false;
+          await reserveUpload(transaction, workspaceId, object.size);
           const [row] = await transaction
             .insert(asset)
             .values({
@@ -512,14 +543,26 @@ export function registerAssetRoutes(app: FastifyInstance) {
           continue;
         }
 
-        await inWorkspace(workspaceId, async (transaction) => {
+        const queued = await inWorkspace(workspaceId, async (transaction) => {
+          const [pending] = await transaction
+            .select()
+            .from(assetVersion)
+            .where(eq(assetVersion.id, versionId))
+            .for("update");
+          if (!pending || pending.status !== "pending") return false;
+          if (uploadDeadline(pending.createdAt).getTime() < Date.now()) {
+            await expirePending(transaction, versionId);
+            return false;
+          }
           await enqueueAssetIngest(
             transaction,
             { workspaceId, assetId, versionId, requestId: request.id },
             authorization.principal.reference,
           );
+          return true;
         });
-        imported += 1;
+        if (queued) imported += 1;
+        else skipped += 1;
       }
 
       return { imported, skipped, nextToken: page.nextToken };
@@ -1261,6 +1304,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const versionId = randomUUID();
       const storageKey = `originals/${workspaceId}/${assetId}/${versionId}/source`;
       const version = await inWorkspace(workspaceId, async (transaction) => {
+        await reserveUpload(transaction, workspaceId, request.body.size);
         const [target] = await transaction
           .select({
             id: asset.id,
@@ -1309,7 +1353,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
           requestId: request.id,
         });
 
-        return { id: versionId, number, status: "pending" as const };
+        return {
+          id: versionId,
+          number,
+          status: "pending" as const,
+          expiresAt: uploadDeadline(new Date()).toISOString(),
+        };
       });
       if (!version) return reply.code(404).send({ error: "Asset not found" });
 
@@ -1342,6 +1391,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .code(authorization.statusCode)
           .send({ error: authorization.error });
       const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceBudget(transaction, workspaceId);
         const [version] = await transaction
           .select()
           .from(assetVersion)
@@ -1360,6 +1410,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             code: 409,
             error: "This version cannot be retried. Upload a new file.",
           };
+        await reserveUpload(transaction, workspaceId, 0);
         await enqueueAssetIngest(
           transaction,
           { workspaceId, assetId, versionId, requestId: request.id },
@@ -1431,6 +1482,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .send({ error: pending.error ?? "Version processing failed" });
       }
 
+      if (uploadDeadline(pending.createdAt).getTime() < Date.now()) {
+        await inWorkspace(workspaceId, (tx) => expirePending(tx, versionId));
+        return reply
+          .code(409)
+          .send({ error: "Upload expired. Upload a new file." });
+      }
       let uploaded: Awaited<ReturnType<typeof inspectUpload>>;
       try {
         uploaded = await inspectUpload(pending.storageKey);
@@ -1450,6 +1507,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
         const [current] = await transaction
           .select({
             status: assetVersion.status,
+            createdAt: assetVersion.createdAt,
             number: assetVersion.number,
             filename: assetVersion.filename,
             key: asset.key,
@@ -1461,6 +1519,10 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .for("update");
         if (!current) return null;
         if (current.status !== "pending") return current.status;
+        if (uploadDeadline(current.createdAt).getTime() < Date.now()) {
+          await expirePending(transaction, versionId);
+          return "failed" as const;
+        }
 
         await enqueueAssetIngest(
           transaction,

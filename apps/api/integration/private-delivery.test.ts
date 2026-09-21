@@ -32,10 +32,21 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   const objects = new Map<string, Buffer>();
   let storageReads = 0;
   let storageFailure = false;
+  let deleteFailure = false;
   let beforeObjectRead: (key: string) => Promise<void> = async () => {};
   const objectServer = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://objects.invalid");
     const key = decodeURIComponent(url.pathname.replace(/^\/fixture\//, ""));
+    if (req.method === "POST" && url.searchParams.has("delete")) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks).toString();
+      const keys = [...body.matchAll(/<Key>(.*?)<\/Key>/g)].map(match => match[1]!);
+      res.setHeader("content-type", "application/xml");
+      if (deleteFailure) return res.end(`<DeleteResult><Error><Key>${keys[0]}</Key><Code>AccessDenied</Code></Error></DeleteResult>`);
+      for (const key of keys) objects.delete(key);
+      return res.end("<DeleteResult/>");
+    }
     if (url.searchParams.has("list-type")) {
       res.setHeader("content-type", "application/xml");
       return res.end(
@@ -136,6 +147,8 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   process.env = {
     ...cleanEnv,
     NODE_ENV: "test",
+    // The auth matrix deliberately exceeds production traffic budgets. Admission has dedicated tests.
+    DELIVERY_REQUESTS_PER_SECOND: "10000",
     DATABASE_URL: connection("varda_app"),
     BETTER_AUTH_URL: "http://localhost:3000",
     WEB_URL: "http://localhost:3000",
@@ -1751,4 +1764,12 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       setReadHook: (hook) => { beforeObjectRead = hook; },
     });
   });
+  await t.test("resource budgets and upload expiry under the production role", async (resourceTest) => {
+    const { checkResourceBudgets } = await import("./resource-budget.fixture.js");
+    await checkResourceBudgets(resourceTest, { admin: admin!, app, objects, keyHeaders,
+      setDeleteFailure: value => { deleteFailure = value; },
+      setReadHook: hook => { beforeObjectRead = hook; },
+    });
+  });
+
 });
