@@ -188,6 +188,49 @@ builds the production Compose stack in its own project, checks a real RustFS
 upload/ingest, private delivery and the deployed database role, then deletes only
 that project's data. Never substitute the deployed database for these fixtures.
 
+## Interrupted upload processing
+
+Apply `0011_asset_ingest_recovery.sql` with the migration service before starting
+this API/worker build. Stop old API and worker instances first; do not mix worker
+versions during this upgrade. The additive migration retains existing files and
+versions, adds processing job/attempt identifiers and a retry flag, and indexes
+processing versions. No database reset or npm client update is needed.
+
+An upload and its queued processing job commit together. Transient storage errors
+use the queue's existing retries (three retries with backoff). The worker checks
+processing versions at startup and every minute: active/queued/retrying jobs stay
+processing, while exhausted, cancelled or missing jobs become failed and retryable.
+Existing jobs without the new identifier are adopted by singleton version ID.
+Each scan uses short workspace-scoped transactions and does not read object bytes.
+
+A crashed worker's active job must first expire or miss its queue heartbeat before
+queue maintenance retries/fails it. Recovery is eventual, not an exact one-minute
+completion guarantee: queue maintenance, retry backoff and backlog add latency.
+At least one worker and PostgreSQL must be running for reconciliation to progress.
+If all workers are stopped, restart them; healthy API `/ready` alone does not
+confirm a working ingest pipeline.
+
+After repairing storage/connectivity, open the asset's **Version history** and
+choose **Retry processing**. It reuses the same stored upload and version number,
+requires asset publish permission, and records `asset.version_retried` in activity.
+Repeated clicks while processing enqueue nothing extra. A previously ready
+current version remains available until a newer version finishes successfully;
+an old worker attempt cannot overwrite a replacement. The detail page refreshes
+processing state automatically. Invalid image bytes/type/limits are not retryable:
+upload a corrected file instead. A deleted source object must be restored or
+replaced; retry cannot recreate its bytes.
+
+Check worker logs for storage/queue errors when failures recur. The user-facing
+message intentionally omits raw storage credentials and provider diagnostics.
+Uploads that were never finalized remain pending and are outside this recovery
+path. Queue metrics/alerts and abandoned-upload cleanup are separate work.
+
+Regression coverage runs in `test:private-delivery` (real PostgreSQL/limited role,
+HTTP object fixture, concurrent retries, expired attempt fencing and SIGKILL of a
+real worker process) and `scripts/smoke-production.sh` (real RustFS outage,
+exhaustion, scheduled reconciliation, worker restart and retry). Both own disposable
+data; never run outage injection against a deployed stack.
+
 ## Asset visibility upgrade
 
 **Do not run old unauthenticated delivery code while accepting private assets.**

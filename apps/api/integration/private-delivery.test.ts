@@ -18,7 +18,7 @@ const migrations = fileURLToPath(new URL("../drizzle", import.meta.url));
 // Explicit integration command only. Never reads .env or connects to configured services.
 // Requires unprivileged execution and native PostgreSQL binaries in PG_BINDIR.
 test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTTP, frozen CLI", {
-  timeout: 120_000,
+  timeout: 180_000,
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "varda-private-test-"));
   const data = join(root, "data");
@@ -32,6 +32,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   const objects = new Map<string, Buffer>();
   let storageReads = 0;
   let storageFailure = false;
+  let beforeObjectRead: (key: string) => Promise<void> = async () => {};
   const objectServer = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://objects.invalid");
     const key = decodeURIComponent(url.pathname.replace(/^\/fixture\//, ""));
@@ -56,6 +57,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       return res.end();
     }
     storageReads++;
+    await beforeObjectRead(key);
     if (storageFailure) {
       res.statusCode = 503;
       return res.end();
@@ -251,7 +253,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
             "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
           )
         ).rows[0].count,
-        11,
+        JSON.parse(await readFile(join(migrations, "meta/_journal.json"), "utf8")).entries.length,
       );
       await assert.rejects(
         sql(
@@ -1741,4 +1743,12 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       );
     },
   );
+  await t.test("ingest recovery and retry under the production database role", async (recoveryTest) => {
+    const { checkIngestRecovery } = await import("./ingest-recovery.fixture.js");
+    await checkIngestRecovery(recoveryTest, {
+      admin: admin!, app, objects, keyHeaders, cookies,
+      setStorageFailure: (value) => { storageFailure = value; },
+      setReadHook: (hook) => { beforeObjectRead = hook; },
+    });
+  });
 });

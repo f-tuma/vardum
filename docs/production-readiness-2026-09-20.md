@@ -238,6 +238,51 @@ Historical findings below remain for context. No production instance was deploye
 worker recovery, backup/restore drills, resource budgets and external-user acceptance
 remain open. See [release status and compatibility](npm-release.md).
 
+### Step 6 — interrupted ingest recovery (2026-09-21)
+
+Implemented in source; no live production deployment or new npm release.
+Migration `0011_asset_ingest_recovery.sql` adds durable job/attempt identifiers,
+a retry flag and a partial processing index. Enqueue and version state commit
+atomically. Startup/minute reconciliation follows pg-boss state across workspaces:
+live jobs remain processing, while exhausted or missing jobs become failed and
+retryable. Existing queued jobs are adopted without duplicate enqueueing.
+
+Version history now shows the failure and **Retry processing** for authorized
+publishers. Retry reuses the stored object and version; concurrent requests enqueue
+one job. Attempt fencing and abort signals protect against expired workers;
+older ready versions stay current until a newer version successfully finishes.
+Invalid image bytes/type/limits require a replacement upload. Detail/history
+refresh while processing and clear the failure after success.
+
+Validation:
+
+- Workspace unit tests, typecheck and build passed.
+- **38 private-delivery integration checks**, including seven new recovery cases,
+  passed against disposable PostgreSQL with the limited production role. They cover
+  transaction rollback, temporary storage outage, retry exhaustion, role/tenant
+  denial, concurrent retry, invalid bytes, missing/legacy jobs, stale attempt
+  completion and actual SIGKILL/restart of a worker process. Object storage in
+  this suite is an HTTP fixture.
+- **Eight runtime-database checks** passed, including migration reruns and queue
+  operations with the restricted role.
+- **Production Compose smoke passed with real RustFS**: stop object storage,
+  exhaust a queued upload's attempts, allow scheduled reconciliation, restart
+  storage/worker, retry through the authorized API and verify the original
+  version ID, current pointer and checksum. Retry backoff is shortened only in
+  that disposable stack. Existing installed CLI/MCP acceptance, transformations,
+  private delivery and deployed database role checks also passed.
+- Browser QA on localhost covered failure → Retry processing → processing → ready
+  without a manual reload, and desktop/mobile layout. Errors use a full-width
+  row beneath the action to remain readable on narrow screens. No relevant
+  browser console errors were observed. Only temporary QA fixture data was used.
+
+See [operations](operations.md#interrupted-upload-processing) for upgrade and
+recovery instructions. Recovery requires a running worker/database and waits for
+queue expiry/maintenance; the minute schedule is not a one-minute SLA. This closes
+the stuck-processing/operator-retry gap. Worker health/queue alerts, never-finalized
+upload cleanup, backup/restore rehearsal, resource budgets and first-user acceptance
+remain open.
+
 ## Release blockers
 
 ### 1. Public npm CLI and MCP artifacts have unresolved workspace dependencies
@@ -362,11 +407,11 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
 
 ## Operational and lifecycle gaps before dependable external use
 
-- **Worker failure recovery:** storage failures throw outside the image-validation
-  error handler after the version is marked `processing`. Queue retries exist,
-  but there is no application-level final retry exhaustion reconciliation or
-  operator retry flow. A version can stay in processing after a persistent outage.
-  Add terminal status, retry/reconciliation and a recovery test.
+- **Worker failure recovery (addressed in step 6):** the original audit found
+  versions stuck in `processing` after a persistent storage outage exhausted the
+  queue retries. Terminal reconciliation, authorized retry and outage/restart
+  tests now cover this path. Deploy the migration and matching worker/API/gateway
+  together; worker monitoring below is still separate work.
 - **Readiness and alerting:** `/ready` checks PostgreSQL only. The worker has no
   health/heartbeat check in Compose. Add queue age/failure visibility and object-store
   checks/alerts so healthy HTTP does not conceal a stopped ingest pipeline.

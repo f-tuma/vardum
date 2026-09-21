@@ -25,7 +25,8 @@ import {
 import { apikey, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
 import { deliverySummary } from "./delivery-analytics.js";
-import { assetDeleteQueue, assetIngestQueue, boss } from "./queue.js";
+import { assetDeleteQueue, boss } from "./queue.js";
+import { enqueueAssetIngest } from "./asset-ingest.js";
 import {
   copyObject,
   createUpload,
@@ -512,18 +513,11 @@ export function registerAssetRoutes(app: FastifyInstance) {
         }
 
         await inWorkspace(workspaceId, async (transaction) => {
-          await boss.send(
-            assetIngestQueue,
+          await enqueueAssetIngest(
+            transaction,
             { workspaceId, assetId, versionId, requestId: request.id },
-            { db: fromDrizzle(transaction, sql), singletonKey: versionId },
+            authorization.principal.reference,
           );
-          await transaction
-            .update(assetVersion)
-            .set({
-              status: "processing",
-              updatedBy: authorization.principal.reference,
-            })
-            .where(eq(assetVersion.id, versionId));
         });
         imported += 1;
       }
@@ -1143,6 +1137,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             checksum: assetVersion.checksum,
             error: assetVersion.error,
             createdAt: assetVersion.createdAt,
+            retryable: assetVersion.retryable,
             createdBy: assetVersion.createdBy,
           })
           .from(assetVersion)
@@ -1335,6 +1330,68 @@ export function registerAssetRoutes(app: FastifyInstance) {
   );
 
   api.post(
+    "/api/workspaces/:workspaceId/assets/:assetId/versions/:versionId/retry",
+    { schema: { params: versionParams } },
+    async (request, reply) => {
+      const { workspaceId, assetId, versionId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, [
+        "publish",
+      ]);
+      if (!("principal" in authorization))
+        return reply
+          .code(authorization.statusCode)
+          .send({ error: authorization.error });
+      const result = await inWorkspace(workspaceId, async (transaction) => {
+        const [version] = await transaction
+          .select()
+          .from(assetVersion)
+          .where(
+            and(
+              eq(assetVersion.id, versionId),
+              eq(assetVersion.assetId, assetId),
+            ),
+          )
+          .for("update");
+        if (!version) return { code: 404, error: "Version not found" };
+        // Concurrent clicks return the same accepted state without adding jobs.
+        if (version.status === "processing") return { code: 202 };
+        if (version.status !== "failed" || !version.retryable)
+          return {
+            code: 409,
+            error: "This version cannot be retried. Upload a new file.",
+          };
+        await enqueueAssetIngest(
+          transaction,
+          { workspaceId, assetId, versionId, requestId: request.id },
+          authorization.principal.reference,
+        );
+        await transaction.insert(auditEvent).values({
+          workspaceId,
+          actorType: authorization.principal.actorType,
+          actorId: authorization.principal.actorId,
+          action: "asset.version_retried",
+          targetType: "asset_version",
+          targetId: versionId,
+          metadata: {
+            assetId,
+            number: version.number,
+            filename: version.filename,
+          },
+          requestId: request.id,
+        });
+        return { code: 202 };
+      });
+      return reply
+        .code(result.code)
+        .send(
+          result.error
+            ? { error: result.error }
+            : { id: versionId, status: "processing" },
+        );
+    },
+  );
+
+  api.post(
     "/api/workspaces/:workspaceId/assets/:assetId/versions/:versionId/finalize",
     { schema: { params: versionParams } },
     async (request, reply) => {
@@ -1405,21 +1462,11 @@ export function registerAssetRoutes(app: FastifyInstance) {
         if (!current) return null;
         if (current.status !== "pending") return current.status;
 
-        await boss.send(
-          assetIngestQueue,
+        await enqueueAssetIngest(
+          transaction,
           { workspaceId, assetId, versionId, requestId: request.id },
-          {
-            db: fromDrizzle(transaction, sql),
-            singletonKey: versionId,
-          },
+          authorization.principal.reference,
         );
-        await transaction
-          .update(assetVersion)
-          .set({
-            status: "processing",
-            updatedBy: authorization.principal.reference,
-          })
-          .where(eq(assetVersion.id, versionId));
         await transaction.insert(auditEvent).values({
           workspaceId,
           actorType: authorization.principal.actorType,

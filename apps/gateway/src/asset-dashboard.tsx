@@ -18,6 +18,7 @@ import {
   listAssets,
   listAssetVersions,
   restoreAssetVersion,
+  retryAssetVersion,
   setAssetVisibility,
   uploadVersion,
   validateUploadFile,
@@ -83,6 +84,8 @@ export function AssetDashboard({
     queryKey: ["asset", workspaceId, assetId],
     queryFn: () => getAsset(workspaceId, assetId!),
     enabled: Boolean(assetId),
+    refetchInterval: (query) =>
+      query.state.data?.status === "processing" ? 1500 : false,
   });
   const filteredAssets = assets.data?.assets ?? [];
   const filteredFolders = assets.data?.folders ?? [];
@@ -835,13 +838,23 @@ function VersionHistory({
   const history = useQuery({
     queryKey: ["asset-versions", workspaceId, assetId, currentVersionId],
     queryFn: () => listAssetVersions(workspaceId, assetId),
+    refetchInterval: (query) =>
+      query.state.data?.versions.some(
+        (version) => version.status === "processing",
+      )
+        ? 1500
+        : false,
   });
 
-  async function restore(versionId: string) {
+  async function updateVersion(versionId: string, retry = false) {
     setPendingId(versionId);
     setError("");
     try {
-      await restoreAssetVersion(workspaceId, assetId, versionId);
+      await (retry ? retryAssetVersion : restoreAssetVersion)(
+        workspaceId,
+        assetId,
+        versionId,
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["assets", workspaceId] }),
@@ -850,7 +863,9 @@ function VersionHistory({
         }),
       ]);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Restore failed");
+      setError(
+        cause instanceof Error ? cause.message : "Version update failed",
+      );
     } finally {
       setPendingId("");
     }
@@ -880,23 +895,32 @@ function VersionHistory({
                   {new Date(version.createdAt).toLocaleString()}
                 </small>
               </span>
-              {/* Versions are immutable, so this only moves the pointer. */}
               <button
                 type="button"
                 disabled={
                   !canPublish ||
                   version.current ||
-                  version.status !== "ready" ||
+                  !(
+                    version.status === "ready" ||
+                    (version.status === "failed" && version.retryable)
+                  ) ||
                   Boolean(pendingId)
                 }
-                onClick={() => void restore(version.id)}
+                onClick={() =>
+                  void updateVersion(version.id, version.status === "failed")
+                }
               >
                 {pendingId === version.id
-                  ? "Restoring…"
+                  ? "Working…"
                   : version.status === "ready"
                     ? "Restore"
-                    : version.status}
+                    : version.status === "failed" && version.retryable
+                      ? "Retry processing"
+                      : version.status}
               </button>
+              {version.error && (
+                <small className="version-error">{version.error}</small>
+              )}
             </li>
           ))}
         </ul>

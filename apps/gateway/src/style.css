@@ -1805,10 +1805,10 @@ button.search-clear {
   list-style: none;
 }
 .version-list li {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 0.4rem 0.75rem;
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -1817,6 +1817,15 @@ button.search-clear {
 .version-list small {
   display: block;
   font: 0.6rem var(--mono);
+}
+.version-list .version-error {
+  grid-column: 1 / -1;
+  color: var(--red);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.version-list li > span {
+  min-width: 0;
 }
 .version-list strong b {
   color: var(--violet);

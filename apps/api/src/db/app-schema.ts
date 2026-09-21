@@ -211,6 +211,9 @@ export const assetVersion = pgTable(
     width: integer("width"),
     height: integer("height"),
     error: text("error"),
+    ingestJobId: uuid("ingest_job_id"),
+    ingestAttemptId: uuid("ingest_attempt_id"),
+    retryable: boolean("retryable").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -231,6 +234,9 @@ export const assetVersion = pgTable(
     }).onDelete("cascade"),
     index("asset_version_workspace_idx").on(table.workspaceId),
     index("asset_version_asset_idx").on(table.assetId),
+    index("asset_version_processing_idx")
+      .on(table.workspaceId, table.id)
+      .where(sql`${table.status} = 'processing'`),
     check("asset_version_number_check", sql`${table.number} > 0`),
     check("asset_version_size_check", sql`${table.size} > 0`),
     tenantPolicy(table.workspaceId),
