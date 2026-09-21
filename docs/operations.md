@@ -4,7 +4,8 @@ These commands assume the production Compose stack and `.env.production` from
 the repository root. Keep that environment file outside public backups: it
 contains the secrets needed to keep sessions and signed delivery URLs valid.
 
-Load the deployment values and set the Compose shortcut once per shell:
+For operations on the existing deployment, load its values and set the Compose
+shortcut once per shell. Restore uses a separate, fresh shell as described below.
 
 ```sh
 set -a
@@ -137,6 +138,13 @@ passwords can differ if the target configuration and runtime grants agree; retai
 the application signing secrets. Use PostgreSQL 17 for this tested procedure and
 first restore the matching application revision. Older PostgreSQL/application
 versions are not supported downgrade targets.
+
+Run the restore commands in a **fresh shell without exported source deployment
+variables**. Do not run the `.env.production` initialization from the top of this
+guide in that shell. Both Compose and the backup script follow normal
+[Compose environment precedence](https://docs.docker.com/compose/how-tos/environment-variables/envvars-precedence/):
+exported shell variables override values in `--env-file .env.restore`. Check that
+the target configuration names the new stores, bucket and ports before starting it.
 
 ```sh
 restore_project=vardum-restore
