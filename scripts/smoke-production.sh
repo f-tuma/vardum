@@ -70,7 +70,7 @@ curl --fail --silent "${APP_URL}/health" >/dev/null
 curl --fail --silent "${APP_URL}/ready" >/dev/null
 curl --fail --silent "${APP_URL}/" >/dev/null
 
-# Run smoke test using separate ES module file
+# Run deployed checks, including the public npm first-project onboarding consumer.
 SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node "$(dirname "$0")/smoke-test.js"
 
 # Probe the actual API connection from the deployed image, after creating data.

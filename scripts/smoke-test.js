@@ -1,4 +1,5 @@
 // Production smoke test script
+import { checkOnboarding } from "./smoke-onboarding.mjs";
 import { checkInstalledPackages } from "./smoke-installed-packages.mjs";
 import { checkRustfsRecovery } from "./smoke-ingest-recovery.mjs";
 import { checkResourceBudgets } from "./smoke-resource-budgets.mjs";
@@ -173,6 +174,7 @@ if (
 ) {
   throw new Error(`Transform/cache analytics failed: ${JSON.stringify(transformedOverview.delivery)}`);
 }
+await checkOnboarding({ base, cookie, workspaceId: workspace.id });
 await checkInstalledPackages({ releaseDir: process.env.SMOKE_RELEASE_DIR, base, cookie, workspaceId: workspace.id, otherWorkspaceId: secondary.id });
 await checkRustfsRecovery({ request, workspaceId: workspace.id, assetId: asset.id, currentVersionId: version.id, file: svg });
 await checkResourceBudgets({ base, cookie, workspaceId: workspace.id, assetId: asset.id });
