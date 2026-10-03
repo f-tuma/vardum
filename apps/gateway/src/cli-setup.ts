@@ -7,7 +7,7 @@ function shellArgument(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-export function cliSetupCommand(
+export function cliSetupCommands(
   server: string,
   workspace: string,
   vard: string,
@@ -18,5 +18,9 @@ export function cliSetupCommand(
     `${cli} init --server ${shellArgument(server)} --workspace ${shellArgument(workspace)} --vard ${shellArgument(vard)}`,
     `${cli} login`,
     `${cli} pull`,
-  ].join(" && ");
+  ];
+}
+
+export function cliSetupCommand(server: string, workspace: string, vard: string) {
+  return cliSetupCommands(server, workspace, vard).join(" && ");
 }

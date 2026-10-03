@@ -110,6 +110,24 @@ export function assetDeliveryPath(
     : `/w/${encodeURIComponent(workspaceSlug)}/${encodedKey}`;
 }
 
+/** Pin browser previews to current bytes without changing the shareable URL. */
+export function assetPreviewUrl(
+  workspaceSlug: string,
+  asset: Pick<AssetSummary, "key" | "isPublic" | "customDomain" | "currentVersionId" | "thumbnailUrl">,
+  url: string | null | undefined = asset.thumbnailUrl,
+) {
+  if (!url || !asset.currentVersionId) return null;
+  const suffixAt = url.search(/[?#]/);
+  const path = suffixAt === -1 ? url : url.slice(0, suffixAt);
+  const suffix = suffixAt === -1 ? "" : url.slice(suffixAt);
+  const stablePath = assetDeliveryPath(workspaceSlug, asset);
+  // Existing immutable links can intentionally refer to a pinned old version.
+  if (path !== stablePath) return url;
+  const encodedKey = asset.key.split("/").map(encodeURIComponent).join("/");
+  const prefix = stablePath.slice(0, stablePath.length - encodedKey.length);
+  return `${prefix}__v/${encodeURIComponent(asset.currentVersionId)}/${encodedKey}${suffix}`;
+}
+
 type CreatedAsset = Pick<AssetSummary, "id" | "key" | "displayName">;
 type UploadVersion = {
   id: string;
@@ -267,6 +285,7 @@ export async function listSyncAssets(workspaceId: string) {
   do {
     const query = new URLSearchParams({ limit: "500" });
     if (cursor) query.set("cursor", cursor);
+    // oxlint-disable-next-line no-await-in-loop -- each page needs the previous page's cursor
     const page = await request<{
       workspaceSlug: string;
       assets: SyncAsset[];
@@ -626,16 +645,17 @@ export async function uploadVersion(
     const requestUrl = validateUploadUrl(version.upload.url);
     const upload = new XMLHttpRequest();
     upload.open(version.upload.method, requestUrl.href);
-    upload.upload.onprogress = (event) => {
+    upload.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return;
       onProgress?.("Uploading…", event.loaded / event.total);
-    };
-    upload.onload = () =>
+    });
+    upload.addEventListener("load", () =>
       upload.status >= 200 && upload.status < 300
         ? resolve()
-        : reject(new Error(`Storage upload failed (${upload.status})`));
-    upload.onerror = () => reject(new Error("Storage upload failed"));
-    upload.onabort = () => reject(new Error("Storage upload cancelled"));
+        : reject(new Error(`Storage upload failed (${upload.status})`)),
+    );
+    upload.addEventListener("error", () => reject(new Error("Storage upload failed")));
+    upload.addEventListener("abort", () => reject(new Error("Storage upload cancelled")));
     upload.send(form);
   });
 

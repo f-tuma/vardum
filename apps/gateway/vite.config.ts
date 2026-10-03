@@ -1,9 +1,14 @@
+import path from "node:path";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   envDir: "../..",
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { "@": path.resolve(import.meta.dirname, "./src") },
+  },
   server: {
     allowedHosts: ["vite.f-tuma.dev"],
     proxy: {
@@ -15,7 +20,7 @@ export default defineConfig({
       "/storage": {
         target: "http://localhost:9000",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/storage/, ""),
+        rewrite: (url) => url.replace(/^\/storage/, ""),
       },
     },
   },

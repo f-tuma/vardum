@@ -1,16 +1,11 @@
-import { useEffect, useRef } from "react";
-
-function slugify(name: string) {
-  return name
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+import { useEffect, useId, useRef } from "react";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { slugify } from "@/lib/format";
 
 /** Shared creation fields; native form reset also restores automatic slugs. */
 export function NameSlugFields({ autoFocus = false }: { autoFocus?: boolean }) {
+  const id = useId();
   const slugRef = useRef<HTMLInputElement>(null);
   const manuallyEdited = useRef(false);
 
@@ -25,11 +20,13 @@ export function NameSlugFields({ autoFocus = false }: { autoFocus?: boolean }) {
 
   return (
     <>
-      <label>
-        Name
-        <input
+      <Field>
+        <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
+        <Input
+          id={`${id}-name`}
           name="name"
           autoFocus={autoFocus}
+          autoComplete="off"
           required
           onChange={(event) => {
             if (!manuallyEdited.current && slugRef.current) {
@@ -37,19 +34,23 @@ export function NameSlugFields({ autoFocus = false }: { autoFocus?: boolean }) {
             }
           }}
         />
-      </label>
-      <label>
-        Slug
-        <input
+      </Field>
+      <Field>
+        <FieldLabel htmlFor={`${id}-slug`}>Slug</FieldLabel>
+        <Input
           ref={slugRef}
+          id={`${id}-slug`}
           name="slug"
           pattern="[a-z0-9-]+"
+          autoComplete="off"
+          spellCheck={false}
           required
           onChange={(event) => {
             manuallyEdited.current = event.currentTarget.value !== "";
           }}
         />
-      </label>
+        <FieldDescription>Used in URLs. Cannot be changed later.</FieldDescription>
+      </Field>
     </>
   );
 }

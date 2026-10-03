@@ -1,5 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { CircleCheckIcon, TerminalIcon } from "lucide-react";
+import { useId, useState } from "react";
+import { AuthLayout } from "@/components/auth-layout";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import {
+  NativeSelect,
+  NativeSelectOptGroup,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { Spinner } from "@/components/ui/spinner";
 import { createCliKey, getOrganizationDirectory } from "./asset-api";
 import { AuthForm } from "./auth-form";
 import { authClient } from "./auth-client";
@@ -16,6 +33,7 @@ export function CliLogin({
   label: string;
   requestedWorkspace?: string;
 }) {
+  const id = useId();
   const session = authClient.useSession();
   const target = loopbackCallback(callback);
   const [workspaceId, setWorkspaceId] = useState("");
@@ -31,15 +49,10 @@ export function CliLogin({
     queryFn: getOrganizationDirectory,
     enabled: Boolean(session.data),
   });
-  const workspaces =
-    directory.data?.organizations.flatMap((organization) =>
-      organization.workspaces.map((workspace) => ({
-        ...workspace,
-        organizationName: organization.name,
-      })),
-    ) ?? [];
+  const organizations = directory.data?.organizations ?? [];
+  const workspaces = organizations.flatMap((organization) => organization.workspaces);
   const selected = workspaceId || requestedWorkspace || workspaces[0]?.id || "";
-  const selectedAvailable = workspaces.some(({ id }) => id === selected);
+  const selectedAvailable = workspaces.some(({ id: candidate }) => candidate === selected);
 
   async function authorize() {
     if (!target || !selectedAvailable) return;
@@ -48,7 +61,7 @@ export function CliLogin({
     try {
       const created = await createCliKey(selected, { label, access });
       const workspaceName =
-        workspaces.find((w) => w.id === selected)?.name ?? selected;
+        workspaces.find((workspace) => workspace.id === selected)?.name ?? selected;
       // pi-lens-ignore: identifier — loopback-callback already validated the URL
       await fetch(target, {
         method: "POST",
@@ -70,118 +83,95 @@ export function CliLogin({
 
   if (!target)
     return (
-      <main className="auth-shell">
-        <section className="auth-panel">
-          <div className="auth-brand">
-            <span aria-hidden="true">╂</span> VARDUM
-          </div>
-          <h1>Authorize the CLI</h1>
-          <p role="alert">
-            This link does not come from a CLI running on your machine, so it
-            cannot be authorized. Start over with <code>vardum login</code>.
-          </p>
-        </section>
-      </main>
+      <AuthLayout
+        title="Authorize the CLI"
+        description={
+          <>
+            This link did not come from a CLI on your machine. Start again with{" "}
+            <code>vardum login</code>.
+          </>
+        }
+      />
     );
   // No session yet: let the user sign in right here. better-auth's useSession
   // is reactive, so this component re-renders into the authorize form below
   // the moment the sign-in succeeds — same tab, same callback/state.
   if (session.isPending)
     return (
-      <main className="auth-shell">
-        <section className="auth-panel">
-          <div className="auth-brand">
-            <span aria-hidden="true">╂</span> VARDUM
-          </div>
-          <h1>Authorize the CLI</h1>
-          <p className="muted">Checking your account…</p>
-        </section>
-      </main>
+      <AuthLayout title="Authorize the CLI">
+        <Spinner />
+      </AuthLayout>
     );
   if (!session.data) return <AuthForm />;
 
+  if (authorized)
+    return (
+      <AuthLayout title="CLI authorized">
+        <Alert>
+          <CircleCheckIcon />
+          <AlertTitle>
+            {label} can now access {authorized.workspaceName}
+          </AlertTitle>
+          <AlertDescription>
+            <code>{authorized.key.slice(0, 12)}••••</code> — you can close this tab.
+          </AlertDescription>
+        </Alert>
+      </AuthLayout>
+    );
+
   return (
-    <main className="auth-shell">
-      <section className="auth-panel">
-        <div className="auth-brand">
-          <span aria-hidden="true">╂</span> VARDUM
-        </div>
-        <h1>Authorize the CLI</h1>
-        {authorized ? (
-          <div className="auth-success">
-            <div className="auth-success-icon" aria-hidden="true">
-              ✓
-            </div>
-            <p>CLI authorized</p>
-            <div className="auth-success-details">
-              <span>
-                Key for <strong>{label}</strong>
-              </span>
-              <span>
-                in workspace <strong>{authorized.workspaceName}</strong>
-              </span>
-              <code>
-                {authorized.key.slice(0, 12).replace(/.{4}/g, "$& ")}••••
-              </code>
-            </div>
-            <p className="muted">You can close this tab.</p>
-          </div>
-        ) : (
-          <>
-            <p className="muted">
-              <code>{label}</code> is asking for a key as{" "}
-              {session.data.user.email}. It will be able to do what your role
-              allows, and nothing more.
-            </p>
-            <form onSubmit={(event) => event.preventDefault()}>
-              <label>
-                Workspace
-                <select
-                  value={selected}
-                  onChange={(event) => setWorkspaceId(event.target.value)}
-                >
-                  {!selectedAvailable && (
-                    <option value={selected}>Select a workspace</option>
-                  )}
-                  {workspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.organizationName} / {workspace.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Access
-                <select
-                  value={access}
-                  onChange={(event) =>
-                    setAccess(event.target.value as "read" | "write")
-                  }
-                >
-                  <option value="write">Pull and push</option>
-                  <option value="read">Pull only</option>
-                </select>
-              </label>
-              <div className="auth-url">
-                <code>{target.origin}</code> will receive the key
-              </div>
-              {error && (
-                <p className="error-strip" role="alert">
-                  {error}
-                </p>
+    <AuthLayout
+      title="Authorize the CLI"
+      description={
+        <>
+          <code>{label}</code> wants a key for {session.data.user.email}.
+        </>
+      }
+    >
+      <form onSubmit={(event) => event.preventDefault()}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`${id}-workspace`}>Workspace</FieldLabel>
+            <NativeSelect
+              id={`${id}-workspace`}
+              value={selected}
+              onChange={(event) => setWorkspaceId(event.target.value)}
+            >
+              {!selectedAvailable && (
+                <NativeSelectOption value={selected}>Select a workspace</NativeSelectOption>
               )}
-              <button
-                className="primary-button"
-                type="button"
-                disabled={pending || !selectedAvailable}
-                onClick={() => void authorize()}
-              >
-                {pending ? "Authorizing…" : "Authorize"}
-              </button>
-            </form>
-          </>
-        )}
-      </section>
-    </main>
+              {organizations.map((organization) => (
+                <NativeSelectOptGroup key={organization.id} label={organization.name}>
+                  {organization.workspaces.map((workspace) => (
+                    <NativeSelectOption key={workspace.id} value={workspace.id}>
+                      {workspace.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelectOptGroup>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${id}-access`}>Access</FieldLabel>
+            <NativeSelect
+              id={`${id}-access`}
+              value={access}
+              onChange={(event) => setAccess(event.target.value as "read" | "write")}
+            >
+              <NativeSelectOption value="write">Pull and push</NativeSelectOption>
+              <NativeSelectOption value="read">Pull only</NativeSelectOption>
+            </NativeSelect>
+            <FieldDescription>
+              The key is sent to <code>{target.origin}</code> and is limited by your role.
+            </FieldDescription>
+          </Field>
+          {error && <FieldError>{error}</FieldError>}
+          <Button disabled={pending || !selectedAvailable} onClick={() => void authorize()}>
+            {pending ? <Spinner data-icon="inline-start" /> : <TerminalIcon data-icon="inline-start" />}
+            Authorize
+          </Button>
+        </FieldGroup>
+      </form>
+    </AuthLayout>
   );
 }

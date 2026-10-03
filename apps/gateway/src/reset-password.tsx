@@ -1,4 +1,15 @@
-import { useState, type SyntheticEvent } from "react";
+import { useId, useState, type SyntheticEvent } from "react";
+import { AuthLayout } from "@/components/auth-layout";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { authClient } from "./auth-client";
 
 export function ResetPassword({
@@ -8,10 +19,10 @@ export function ResetPassword({
   token: string;
   callbackError: string;
 }) {
+  const id = useId();
   const invalidLink = Boolean(callbackError || !token);
-  const [error, setError] = useState(
-    invalidLink ? "This reset link is invalid or has expired." : "",
-  );
+  const [error, setError] = useState("");
+  const [passwordMismatch, setPasswordMismatch] = useState(false);
   const [pending, setPending] = useState(false);
   const [complete, setComplete] = useState(false);
 
@@ -20,12 +31,9 @@ export function ResetPassword({
     const data = new FormData(event.currentTarget);
     const newPassword = String(data.get("newPassword"));
     setError("");
+    setPasswordMismatch(false);
     if (newPassword !== String(data.get("confirmPassword"))) {
-      setError("New passwords do not match");
-      return;
-    }
-    if (!token) {
-      setError("This reset link is invalid or has expired.");
+      setPasswordMismatch(true);
       return;
     }
 
@@ -39,59 +47,70 @@ export function ResetPassword({
     setComplete(true);
   }
 
+  const backToSignIn = (
+    <a href="/app" className={buttonVariants({ variant: "outline" })}>
+      Back to sign in
+    </a>
+  );
+
+  if (complete)
+    return (
+      <AuthLayout title="Password updated" description="Sign in with your new password.">
+        <div className="flex flex-col">{backToSignIn}</div>
+      </AuthLayout>
+    );
+
+  if (invalidLink)
+    return (
+      <AuthLayout
+        title="Link expired"
+        description="This reset link is invalid or has expired. Request a new one from the sign-in page."
+      >
+        <div className="flex flex-col">{backToSignIn}</div>
+      </AuthLayout>
+    );
+
   return (
-    <main className="auth-shell">
-      <section className="auth-panel">
-        <div className="auth-brand">
-          <span aria-hidden="true">╂</span> VARDUM
-        </div>
-        <h1>
-          {complete
-            ? "Password updated"
-            : invalidLink
-              ? "Reset link unavailable"
-              : "Choose a new password"}
-        </h1>
-        <p className="muted">
-          {complete
-            ? "You can now sign in with your new password."
-            : invalidLink
-              ? "Request a new link from the sign-in page."
-              : "Use at least eight characters."}
-        </p>
-        {!complete && !invalidLink && (
-          <form onSubmit={submit}>
-            <label>
-              New password
-              <input
-                name="newPassword"
-                type="password"
-                minLength={8}
-                autoComplete="new-password"
-                required
-              />
-            </label>
-            <label>
-              Confirm new password
-              <input
-                name="confirmPassword"
-                type="password"
-                minLength={8}
-                autoComplete="new-password"
-                required
-              />
-            </label>
-            {error && <p role="alert">{error}</p>}
-            <button className="primary-button" disabled={pending}>
-              {pending ? "Updating…" : "Set new password"}
-            </button>
-          </form>
-        )}
-        {invalidLink && <p role="alert">{error}</p>}
-        <a className="text-button auth-back-link" href="/app">
-          Back to sign in
-        </a>
-      </section>
-    </main>
+    <AuthLayout title="Choose a new password">
+      <form onSubmit={submit}>
+        <FieldGroup>
+          <Field data-invalid={passwordMismatch}>
+            <FieldLabel htmlFor={`${id}-new`}>New password</FieldLabel>
+            <Input
+              id={`${id}-new`}
+              name="newPassword"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+              aria-invalid={passwordMismatch}
+              aria-describedby={passwordMismatch ? `${id}-new-description ${id}-mismatch` : `${id}-new-description`}
+              onChange={() => setPasswordMismatch(false)}
+              required
+            />
+            <FieldDescription id={`${id}-new-description`}>At least 8 characters.</FieldDescription>
+          </Field>
+          <Field data-invalid={passwordMismatch}>
+            <FieldLabel htmlFor={`${id}-confirm`}>Confirm password</FieldLabel>
+            <Input
+              id={`${id}-confirm`}
+              name="confirmPassword"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+              aria-invalid={passwordMismatch}
+              aria-describedby={passwordMismatch ? `${id}-mismatch` : undefined}
+              onChange={() => setPasswordMismatch(false)}
+              required
+            />
+            {passwordMismatch && <FieldError id={`${id}-mismatch`}>Passwords do not match</FieldError>}
+          </Field>
+          {error && <FieldError>{error}</FieldError>}
+          <Button type="submit" disabled={pending}>
+            {pending && <Spinner data-icon="inline-start" />}
+            Set new password
+          </Button>
+        </FieldGroup>
+      </form>
+    </AuthLayout>
   );
 }
