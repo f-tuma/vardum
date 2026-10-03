@@ -11,6 +11,68 @@ and distribution blockers below are resolved. The public npm onboarding path
 failed before a user could start at the time of the initial review. Remediation
 steps below record subsequent fixes; step 5 closes the public npm distribution blocker.
 
+## Dependency refresh — 2026-10-03 (VARD-1)
+
+The dedicated fix on `codex/vard-1-security-refresh`, based on main
+`be4e3d3`, addresses the dependency advisories that stopped the September 30 CI
+run. The same dependency update was initially checked against the complete local
+server/UI stack based on `c6174f1`. A fresh audit found
+**17 entries (6 high, 11 moderate)** before the update, including new Fastify
+advisories. `pnpm audit --audit-level=moderate` now reports **zero**. The threshold,
+seven-day minimum release age and trust protections are unchanged; no advisory
+was ignored.
+
+| Dependency | Previous | Validated version |
+| --- | --- | --- |
+| Fastify | 5.12.1 | 5.12.5 |
+| Nodemailer | 9.1.1 | 10.0.10 |
+| ip-address (transitive) | 10.5.0 | 10.7.2 |
+| fast-uri (transitive) | 3.1.7 / 4.1.4 | 3.1.8 / 4.2.1 |
+
+Nodemailer requires a major upgrade for the current fixes. Its
+[Node 20 minimum](https://github.com/nodemailer/nodemailer/releases/tag/v10.0.0)
+fits our Node 22 runtime. A regression test included in this fix exercises the real
+`sendActionEmail` transport with an authenticated loopback SMTP receiver:
+verification, password reset, email change and invitation messages retain their
+sender/recipient envelopes, plain-text/HTML parts and escaped links; recipient
+rejection propagates to the caller. External provider TLS and account recovery
+acceptance remain VARD-13.
+
+Validation of the dedicated main-based fix passed:
+
+- Frozen-lockfile installation; **76 unit/release-script tests** (API 38,
+  CLI 20, gateway 11, MCP 2, release scripts 5); typecheck and build.
+- **41 PostgreSQL integration checks**, including parent/nested cases, in an
+  isolated Node 22 / PostgreSQL 15 container.
+- All three Compose configurations and independently installed candidate
+  CLI/MCP tarballs.
+- The production smoke with PostgreSQL 17 and real RustFS: signup, ingest,
+  private delivery, native AVIF/codecs, transforms/cache, installed CLI/MCP and
+  restricted runtime DB privileges. Its disposable stack was removed.
+
+Additional validation of the same dependency update on the pre-existing local
+server/UI stack (`c6174f1` plus the fix) passed 93 aggregate unit/release-script
+checks, 60 DB checks, lint, Prometheus rules and the extended production smoke.
+That smoke covers worker/storage/database outages, resource limits, upload
+cleanup and clean-stack backup/restore of 22 objects / 7,833,862 bytes. These
+features belong to the separate PR #3–#6 stack, not to this main-based fix.
+
+Published-package impact was checked separately through a clean npm installation
+of CLI **0.6.0**, MCP **0.2.0** and shared **0.2.0**. Both binaries run; the installed
+tree has zero audit findings. CLI/shared do not depend on the affected families.
+MCP resolves patched `fast-uri` and `ip-address` through its SDK dependency under
+the existing ranges. A package release is not required just for these fixes;
+existing MCP consumers with old lockfiles must refresh the affected transitive
+resolutions and rerun their audit. The server must be rebuilt and deployed to
+receive its fixes.
+
+This is local validation, not a new hosted CI result, merge, npm publication or
+production deployment. The repository is now
+[`f-tuma/vardum`](https://github.com/f-tuma/vardum); PRs #3–#6 remain open and the
+[latest PR #6 CI](https://github.com/f-tuma/vardum/actions/runs/36700954191)
+still records the pre-fix failure. VARD-1 remains open until the final committed
+changes pass hosted CI. The following sections retain historical measurements.
+
 ## Verified results
 
 | Check | Result | Meaning and limits |
