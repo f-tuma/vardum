@@ -48,6 +48,39 @@ export function signTransformation(
   return signature(workspaceSlug, key, canonicalizeTransformation(input));
 }
 
+/** Historical delivery signatures bind immutable identities, never current names. */
+export function signVersionTransformation(
+  workspaceId: string,
+  versionId: string,
+  input: Transformation,
+) {
+  return createHmac("sha256", config.TRANSFORM_SECRET)
+    .update(JSON.stringify([
+      "version-id-v1", workspaceId, versionId, canonicalizeTransformation(input),
+    ]))
+    .digest("base64url");
+}
+
+export function identityVersionUrl(
+  workspaceId: string,
+  versionId: string,
+  input: Transformation | null = null,
+) {
+  const path = `/w/__id/${encodeURIComponent(workspaceId)}/__v/${encodeURIComponent(versionId)}`;
+  return input
+    ? `${path}?${canonicalizeTransformation(input)}&sig=${signVersionTransformation(workspaceId, versionId, input)}`
+    : path;
+}
+
+export function verifyVersionTransformation(
+  workspaceId: string,
+  versionId: string,
+  input: Transformation,
+  supplied: string,
+) {
+  return equalSignature(signVersionTransformation(workspaceId, versionId, input), supplied);
+}
+
 export function originalAssetUrl(
   workspaceSlug: string,
   key: string,
@@ -101,6 +134,10 @@ export function verifyTransformation(
   supplied: string,
 ) {
   const expected = signTransformation(workspaceSlug, key, input);
+  return equalSignature(expected, supplied);
+}
+
+function equalSignature(expected: string, supplied: string) {
   const expectedBytes = Buffer.from(expected);
   const suppliedBytes = Buffer.from(supplied);
   return (

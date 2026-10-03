@@ -1,4 +1,5 @@
 import { uploadLimitFor } from "@vardum/shared";
+import { createHash } from "node:crypto";
 import type {
   SyncAsset,
   UploadLimits,
@@ -51,12 +52,20 @@ export class VardumClient {
     );
   }
 
-  manifest(config: VardConfig, requireAuthentication = false) {
+  manifest(config: VardConfig, requireAuthentication = false, identity = true) {
+    const query = identity ? "?delivery=version-id-v1" : "";
     if (this.apiKey || requireAuthentication)
       return this.request<Manifest>(
-        `/api/workspaces/${encodeURIComponent(config.workspace)}/vards/${encodeURIComponent(config.vard)}/manifest`,
+        `/api/workspaces/${encodeURIComponent(config.workspace)}/vards/${encodeURIComponent(config.vard)}/manifest${query}`,
       );
-    return this.request<Manifest>(`/v/${encodeURIComponent(config.vard)}`);
+    return this.request<Manifest>(`/v/${encodeURIComponent(config.vard)}${query}`);
+  }
+
+  resolveSnapshot(workspaceId: string, items: Array<{ id: string; versionId: string; transformation: import("@vardum/shared").Transformation | null }>) {
+    return this.request<{ delivery: "version-id-v1"; items: Array<{ id: string; versionId: string; downloadUrl: string }> }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/snapshot-delivery/resolve`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) },
+    );
   }
 
   async syncAssets(workspaceId: string, prefix = "") {
@@ -140,6 +149,29 @@ export class VardumClient {
   }
 
   async download(path: string) {
+    const response = await this.openDownload(path);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /** Migration verifies all bytes without buffering outputs or changing project files. */
+  async downloadChecksum(path: string) {
+    const response = await this.openDownload(path);
+    if (!response.body) throw new Error("Download returned an empty body");
+    const reader = response.body.getReader();
+    const hash = createHash("sha256");
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        hash.update(value);
+      }
+      return hash.digest("hex");
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private async openDownload(path: string) {
     const downloadUrl = safeDownloadUrl(path, this.server);
     const response = await fetch(downloadUrl, {
       redirect: "error",
@@ -149,7 +181,7 @@ export class VardumClient {
       throw new Error(
         `Download failed (${response.status} ${response.statusText})`,
       );
-    return new Uint8Array(await response.arrayBuffer());
+    return response;
   }
 
   private async request<T = unknown>(path: string, init: RequestInit = {}) {

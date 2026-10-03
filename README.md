@@ -153,9 +153,13 @@ A Vard is a project manifest assembled in the workspace UI. Each item maps an
 asset to a repository-relative output path and may follow latest, pin a version,
 or request a delivery transformation. Commit the generated `vardum.json`, then
 use `vardum pull` to explicitly refresh assets and the `.vardum.lock` snapshot.
-Commit both files; CI uses `vardum pull --frozen` with CLI 0.6.0 or newer
+Commit both files; CI uses `vardum pull --frozen` with a CLI that supports its lock schema
 to consume the locked file set without fetching the current Vard.
 CLI 0.6.0 is available on npm; see [release status](docs/npm-release.md).
+The unpublished CLI 0.7.0 candidate creates schema 3 identity URLs that survive
+source-key/move and workspace-slug changes. `vardum migrate-lock` explicitly
+upgrades schema 2 after verifying every retained output, without changing files,
+versions or hashes. Published CLI 0.6.0 retains its schema 2 behavior and limitations.
 Older CLI builds cannot safely maintain snapshots.
 Locked delivery still depends on version retention, valid signing and server
 availability. `vardum update` updates the CLI, not assets.

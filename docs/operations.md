@@ -685,10 +685,38 @@ pull drops stale tracking but leaves disk files; a later `--delete` cannot disco
 those leftovers, which require deliberate manual cleanup.
 
 Frozen reproduction still requires retained versions, valid signatures and working
-delivery URLs. Server/workspace-slug changes, signing-key rotation, expired
-signatures or changed transformation rendering can break snapshots. **Source-key
-rename can invalidate historical URLs despite retained bytes.** Rule/membership
-removal with retained valid source URLs supports frozen restore; normal move tests
-do not prove frozen rename support. There is no new retention guarantee or cleanup
-ledger. The isolated `test:private-delivery` suite above also exercises folder-rule
-migration, authorization/privacy, resolution and real normal/frozen CLI lifecycle.
+delivery URLs. Schema 2 URLs still depend on source keys and workspace slugs.
+The unpublished CLI 0.7.0 candidate creates schema 3 with opt-in
+`delivery=version-id-v1` manifests and `/w/__id/{workspaceId}/__v/{versionUUID}`
+URLs. These identities survive key renames/moves, slug changes and Vard deletion
+while source versions are retained. Default manifests stay unchanged for published
+CLI 0.6.0/MCP 0.2.0. There is no database migration for this delivery contract.
+
+`vardum migrate-lock` requires a workspace read key and explicitly resolves only
+the retained schema 2 version IDs and transformation parameters; it does not consult
+the current Vard, old keys/slugs or current-version pointers. It verifies all bytes
+before atomically rewriting the lock, preserving membership, paths, versions,
+fingerprints and checksums without modifying files. A failure leaves the old lock
+unchanged. The authenticated resolver is bounded to 1,000 outputs and cannot be
+used as an anonymous transformation signer. Frozen commands never perform migration,
+refresh signatures, fetch a current manifest or silently fall back to latest.
+
+Server-origin changes, signing-key rotation or changed transformation rendering can
+still break snapshots. Current transformation signatures have no expiry field;
+rotation invalidates signed transformed URLs, while originals do not use that secret.
+Retain signing configuration for historical builds; the schema 2 migration can
+explicitly re-sign old intent only after downloaded-byte verification. Schema 3 has
+no automatic signature refresh. Asset deletion cascades all version rows and queues
+original/derived-object cleanup; deleting retained rows or original objects also
+removes availability. There is no new ready-version deletion API, retention guarantee,
+archive or cleanup ledger. Keep original objects outside derived-only lifecycle rules.
+Current asset privacy is checked on every identity delivery, including HEAD and
+ranges. Previously cached public bytes and matching local files cannot be revoked.
+
+The isolated `test:private-delivery` suite exercises SQL renames/moves, old key/slug
+reuse, newer current versions, Vard deletion, absent local files, identity signature
+replay denials and schema 2 migration failures. To additionally exercise the actual
+published clients, provide `VARD14_RELEASED_CLIENTS` pointing to a private npm fixture
+containing the integrity-verified published CLI 0.6.0/MCP 0.2.0/shared 0.2.0 archives.
+Mount that fixture read-only alongside the repository in the isolated PG test container;
+the fixture tests do not connect to configured or production databases.

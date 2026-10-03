@@ -14,6 +14,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 const execFile = promisify(execFileCallback);
 const migrations = fileURLToPath(new URL("../drizzle", import.meta.url));
+const releasedClients = process.env.VARD14_RELEASED_CLIENTS;
 
 // Explicit integration command only. Never reads .env or connects to configured services.
 // Requires unprivileged execution and native PostgreSQL binaries in PG_BINDIR.
@@ -297,7 +298,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   await queue.startQueue();
   const { storage } = await import("../src/storage.js");
   destroyStorage = () => storage.destroy();
-  const { transformedVersionUrl } = await import("../src/transformation.js");
+  const { transformedVersionUrl, identityVersionUrl } = await import("../src/transformation.js");
   const app = await buildApp();
   closeApp = () => app.close();
   assert.equal(
@@ -420,6 +421,10 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     format: "png",
   });
   const shapes = [
+    { url: identityVersionUrl("ws", versionId), status: 200 },
+    { url: identityVersionUrl("ws", versionId).replace("/w/", "/%77/"), status: 200 },
+    { url: identityVersionUrl("ws", historicalVersion), status: 200 },
+    { url: identityVersionUrl("ws", versionId, { w: 8, format: "png" }), status: 200 },
     { url: immutable, status: 200 },
     { url: immutable.replace(versionId, historicalVersion), status: 200 },
     { url: `/w/demo/${privateKey}`, status: 302 },
@@ -1483,8 +1488,9 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
           join(project.path, ".vardum.lock"),
           "utf8",
         );
-        assert.ok(locked.includes(immutable));
-        assert.ok(locked.includes(signed));
+        assert.equal(JSON.parse(locked).schema, 3);
+        assert.ok(locked.includes(identityVersionUrl("ws", versionId)));
+        assert.ok(locked.includes(identityVersionUrl("ws", versionId, { w: 8, format: "png" })));
         const variant = await readFile(
           join(project.path, "assets/secret-small.png"),
         );
@@ -1729,15 +1735,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
             await readFile(join(deleting.path, "manual/secret.svg")),
             bytes,
           );
-          // No live Vard exists now: frozen cannot fetch a manifest and still restores old membership.
-          await sql("UPDATE asset SET key=$1 WHERE id=$2", [
-            first.key,
-            first.id,
-          ]);
-          await sql("UPDATE asset SET key=$1 WHERE id=$2", [
-            removed.key,
-            removed.id,
-          ]);
+          // Names remain moved: identity delivery restores the committed old paths without a Vard.
           await sql("DELETE FROM vard WHERE id=$1", [id]);
           await rm(join(frozen.path, "assets"), { recursive: true });
           await run(frozen, "pull", "--frozen");
@@ -1754,6 +1752,11 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
           );
         },
       );
+      await cliTest.test("immutable identity and exact schema 2 migration after source and workspace renames", async identityTest => {
+        const { checkFrozenIdentity } = await import("./frozen-identity.fixture.js");
+        await checkFrozenIdentity(identityTest, { root, app, admin: admin!, objects, keyHeaders, bytes, run, releasedClients,
+          storageReads: () => storageReads });
+      });
     },
   );
   await t.test("ingest recovery and retry under the production database role", async (recoveryTest) => {

@@ -7,6 +7,9 @@ import {
   transformedAssetUrl,
   transformedVersionUrl,
   verifyTransformation,
+  identityVersionUrl,
+  signVersionTransformation,
+  verifyVersionTransformation,
 } from "./transformation.js";
 
 test("transformations are canonical and signatures reject tampering", () => {
@@ -59,6 +62,20 @@ test("transformations are canonical and signatures reject tampering", () => {
     ),
     false,
   );
+});
+
+test("identity signatures bind workspace, version, canonical transform and signing domain", () => {
+  const first = "11111111-1111-4111-8111-111111111111";
+  const second = "22222222-2222-4222-8222-222222222222";
+  const transform = { w: 64, format: "png" as const };
+  const signed = signVersionTransformation("ws", first, transform);
+  assert.equal(verifyVersionTransformation("ws", first, { ...transform, fit: "inside", q: 80 }, signed), true);
+  assert.equal(verifyVersionTransformation("other", first, transform, signed), false);
+  assert.equal(verifyVersionTransformation("ws", second, transform, signed), false);
+  assert.equal(verifyVersionTransformation("ws", first, { ...transform, w: 65 }, signed), false);
+  assert.equal(verifyVersionTransformation("ws", first, transform, signTransformation("ws", first, transform)), false);
+  assert.equal(verifyTransformation("ws", first, transform, signed), false);
+  assert.equal(identityVersionUrl("ws", first), `/w/__id/ws/__v/${first}`);
 });
 
 test("fit and quality cannot create meaningless transformations", () => {
