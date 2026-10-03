@@ -12,6 +12,7 @@ test("copied setup preserves shell arguments and stops on a failed step", async 
   t.after(() => rm(root, { recursive: true, force: true }));
   const capture = join(root, "commands.jsonl");
   for (const name of ["npm", "npx"])
+    // oxlint-disable-next-line no-await-in-loop -- two tiny fixture files, order is irrelevant
     await writeFile(
       join(root, name),
       `#!/usr/bin/env node

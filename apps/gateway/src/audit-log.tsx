@@ -1,31 +1,50 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { listAuditEvents } from "./asset-api";
+import { ChevronLeftIcon, ChevronRightIcon, HistoryIcon, TriangleAlertIcon } from "lucide-react";
+import { cloneElement, useId, useState } from "react";
+import { AppHeader, Page, PageHeader, PageSkeleton } from "@/components/page";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
-  activityActor,
-  activityLabels,
-  activityTarget,
-  dateTime,
-} from "./workspace-overview";
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { dateTime, timeAgo } from "@/lib/format";
+import { listAuditEvents } from "./asset-api";
+import { workspaceCrumb, type WorkspaceRef } from "./workspace";
+import { activityActor, activityLabels, activityLink, activityTarget } from "./workspace-overview";
 
 const actorTypes = {
-  "": "Any actor",
+  "": "Anyone",
   user: "People",
   api_key: "API keys",
   system: "System",
 } as const;
 
-export function AuditLog({ workspaceId }: { workspaceId: string }) {
+export function AuditLog({ workspace }: { workspace: WorkspaceRef }) {
+  const id = useId();
   const [action, setAction] = useState("");
-  const [actorType, setActorType] = useState<keyof typeof actorTypes | "">("");
+  const [actorType, setActorType] = useState<keyof typeof actorTypes>("");
   // Keyset paging has no page numbers of its own, so the cursor of every page
   // reached so far is kept and Previous walks back down the list.
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const [page, setPage] = useState(0);
   const audit = useQuery({
-    queryKey: ["audit", workspaceId, action, actorType, cursors[page] ?? ""],
+    queryKey: ["audit", workspace.id, action, actorType, cursors[page] ?? ""],
     queryFn: () =>
-      listAuditEvents(workspaceId, {
+      listAuditEvents(workspace.id, {
         action: action || undefined,
         actorType: actorType || undefined,
         cursor: cursors[page],
@@ -43,120 +62,162 @@ export function AuditLog({ workspaceId }: { workspaceId: string }) {
 
   function goNext() {
     if (!nextCursor) return;
-    setCursors((current) =>
-      current.length > page + 1 ? current : [...current, nextCursor],
-    );
+    setCursors((current) => (current.length > page + 1 ? current : [...current, nextCursor]));
     setPage(page + 1);
   }
 
   return (
-    <section className="settings-panel">
-      <header className="outputs-header">
-        <h2>┌─ ACTIVITY</h2>
-        <span>
-          PAGE {page + 1} // {events.length} EVENTS
-        </span>
-      </header>
-
-      <div className="audit-filters">
-        <label>
-          Action
-          <select
-            value={action}
-            onChange={(event) => filter(() => setAction(event.target.value))}
-          >
-            <option value="">Any action</option>
-            {Object.entries(activityLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Actor
-          <select
-            value={actorType}
-            onChange={(event) =>
-              filter(() =>
-                setActorType(
-                  event.target.value as keyof typeof actorTypes | "",
-                ),
-              )
-            }
-          >
-            {Object.entries(actorTypes).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {(action || actorType) && (
-          <button
-            type="button"
-            onClick={() =>
-              filter(() => {
-                setAction("");
-                setActorType("");
-              })
-            }
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
-
-      {audit.isPending ? (
-        <p className="settings-state">Loading audit log…</p>
-      ) : audit.isError ? (
-        <p className="error-strip settings-inline-error" role="alert">
-          {audit.error.message}
-        </p>
-      ) : events.length ? (
-        <ul className="audit-list">
-          {events.map((event) => {
-            const target = activityTarget(event);
-            return (
-              <li key={event.id}>
-                <span className="audit-time">
-                  {dateTime.format(new Date(event.createdAt))}
-                </span>
-                <span className="audit-action">
-                  {activityLabels[event.action] ?? event.action}
-                </span>
-                <span className="audit-target">
-                  <strong>{target.subject}</strong>
-                  {target.detail && <small>{target.detail}</small>}
-                </span>
-                <span className="audit-actor">{activityActor(event)}</span>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <p className="settings-state">└─ No events match these filters</p>
-      )}
-
-      {(page > 0 || nextCursor) && (
-        <div className="audit-pagination">
-          <button
-            type="button"
-            disabled={page === 0 || audit.isFetching}
-            onClick={() => setPage(page - 1)}
-          >
-            ← Previous
-          </button>
-          <span>Page {page + 1}</span>
-          <button
-            type="button"
-            disabled={!nextCursor || audit.isFetching}
-            onClick={goNext}
-          >
-            Next →
-          </button>
+    <>
+      <AppHeader crumbs={[workspaceCrumb(workspace), { label: "Activity" }]} />
+      <Page id="main">
+        <PageHeader title="Activity" description="Everything that changed in this workspace." />
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-56">
+            <Field>
+              <FieldLabel htmlFor={`${id}-action`}>Action</FieldLabel>
+              <NativeSelect
+                id={`${id}-action`}
+                value={action}
+                onChange={(event) => filter(() => setAction(event.target.value))}
+              >
+                <NativeSelectOption value="">Any action</NativeSelectOption>
+                {Object.entries(activityLabels).map(([value, label]) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+          </div>
+          <div className="w-40">
+            <Field>
+              <FieldLabel htmlFor={`${id}-actor`}>By</FieldLabel>
+              <NativeSelect
+                id={`${id}-actor`}
+                value={actorType}
+                onChange={(event) =>
+                  filter(() => setActorType(event.target.value as keyof typeof actorTypes))
+                }
+              >
+                {Object.entries(actorTypes).map(([value, label]) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+          </div>
+          {(action || actorType) && (
+            <Button
+              variant="ghost"
+              onClick={() =>
+                filter(() => {
+                  setAction("");
+                  setActorType("");
+                })
+              }
+            >
+              Clear filters
+            </Button>
+          )}
         </div>
-      )}
-    </section>
+
+        {audit.isPending ? (
+          <PageSkeleton />
+        ) : audit.isError ? (
+          <Alert variant="destructive">
+            <TriangleAlertIcon />
+            <AlertTitle>Activity could not load</AlertTitle>
+            <AlertDescription>{audit.error.message}</AlertDescription>
+          </Alert>
+        ) : events.length ? (
+          <div className="rounded-xl border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Target</TableHead>
+                  <TableHead>By</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {events.map((event) => {
+                  const target = activityTarget(event);
+                  const link = activityLink(event, workspace.id);
+                  return (
+                    <TableRow key={event.id}>
+                      <TableCell>
+                        <time
+                          dateTime={event.createdAt}
+                          title={dateTime.format(new Date(event.createdAt))}
+                          className="whitespace-nowrap text-muted-foreground"
+                        >
+                          {timeAgo(event.createdAt)}
+                        </time>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">{activityLabels[event.action] ?? event.action}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex flex-col">
+                          {link
+                            ? cloneElement(link, { className: "w-fit underline decoration-muted-foreground/40 underline-offset-4 hover:decoration-foreground" }, target.subject)
+                            : <span>{target.subject}</span>}
+                          {target.detail && (
+                            <span className="font-mono text-xs text-muted-foreground">{target.detail}</span>
+                          )}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-muted-foreground" title={event.actor.email ?? undefined}>
+                          {activityActor(event)}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <Empty variant="outline">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <HistoryIcon />
+              </EmptyMedia>
+              <EmptyTitle>No activity</EmptyTitle>
+              <EmptyDescription>
+                {action || actorType ? "Nothing matches these filters." : "Nothing has happened yet."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+
+        {(page > 0 || nextCursor) && (
+          <div className="flex items-center justify-end gap-2">
+            <span className="text-sm text-muted-foreground">Page {page + 1}</span>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Previous page"
+              disabled={page === 0 || audit.isFetching}
+              onClick={() => setPage(page - 1)}
+            >
+              <ChevronLeftIcon />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Next page"
+              disabled={!nextCursor || audit.isFetching}
+              onClick={goNext}
+            >
+              <ChevronRightIcon />
+            </Button>
+          </div>
+        )}
+      </Page>
+    </>
   );
 }

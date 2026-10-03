@@ -38,6 +38,7 @@ jobs:
             - name: Check private delivery with the production database role
               run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:private-delivery
             - run: pnpm typecheck
+            - run: pnpm lint
             - run: pnpm build
             - name: Validate operational alert rules
               run: docker run --rm -v "$PWD/docker/monitoring:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996 test rules alerts.test.yml

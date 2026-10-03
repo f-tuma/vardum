@@ -1,180 +1,172 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { CircleCheckIcon, KeyRoundIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type SyntheticEvent } from "react";
+import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CopyIconButton } from "@/components/copy-button";
+import { AppHeader, Page, PageHeader } from "@/components/page";
+import { SettingsTabs } from "@/components/settings";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type SyntheticEvent,
-} from "react";
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { dateOnly, errorMessage, timeAgo } from "@/lib/format";
 import {
   configureWorkspaceDomain,
   createWorkspaceApiKey,
-  createWorkspaceInvitation,
   deleteWorkspace,
   deleteWorkspaceApiKey,
   getWorkspaceDomain,
   listWorkspaceApiKeys,
-  listWorkspaceInvitations,
-  listWorkspaceMembers,
   removeWorkspaceDomain,
-  resendWorkspaceInvitation,
-  revokeWorkspaceInvitation,
   updateWorkspace,
-  updateWorkspaceMemberRole,
   verifyWorkspaceDomain,
-  type WorkspaceDomain,
-  type WorkspaceInvitation,
-  type WorkspaceMember,
 } from "./asset-api";
-import { InfoTip } from "./info-tip";
-import { CopyButton, FilterInput, PageTabs, TabPanel } from "./ui-controls";
-import { ConfirmDialog } from "./confirm-dialog";
-import { FormDialog } from "./form-dialog";
-import { AuditLog } from "./audit-log";
+import { workspaceCrumb, type WorkspaceRef } from "./workspace";
 
-const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
-
-export function WorkspaceSettings({
-  workspaceId,
-  workspaceName,
-  workspaceSlug,
-}: {
-  workspaceId: string;
-  workspaceName: string;
-  workspaceSlug: string;
-}) {
+export function WorkspaceSettings({ workspace }: { workspace: WorkspaceRef }) {
   const { tab } = useSearch({ from: "/workspaces/$workspaceId/settings" });
   const navigate = useNavigate();
   return (
-    <main className="dashboard-main settings-page" id="settings">
-      <header className="settings-heading">
-        <h1>Workspace settings</h1>
-        <span>{workspaceName}</span>
-      </header>
-
-      <PageTabs
-        label="Workspace settings"
-        value={tab ?? "workspace-identity"}
-        onValueChange={(nextTab) =>
-          void navigate({
-            to: "/workspaces/$workspaceId/settings",
-            params: { workspaceId },
-            search: { tab: nextTab },
-            replace: true,
-          })
-        }
-        items={[
-          ["workspace-identity", "General"],
-          ["custom-domain", "Domain"],
-          ["api-keys", "API keys"],
-          ["activity", "Activity"],
-          ["danger-zone", "Danger zone"],
-        ]}
-      >
-        <TabPanel id="workspace-identity">
-          <GeneralSettings
-            workspaceId={workspaceId}
-            workspaceName={workspaceName}
-            workspaceSlug={workspaceSlug}
-          />
-        </TabPanel>
-        <TabPanel id="custom-domain" guide="workspace-domain">
-          <DomainSettings workspaceId={workspaceId} />
-        </TabPanel>
-        <TabPanel id="activity">
-          <AuditLog workspaceId={workspaceId} />
-        </TabPanel>
-        <TabPanel id="api-keys" guide="workspace-keys">
-          <ApiKeysSettings workspaceId={workspaceId} />
-        </TabPanel>
-        <TabPanel id="danger-zone">
-          <DangerZone
-            workspaceId={workspaceId}
-            workspaceName={workspaceName}
-            workspaceSlug={workspaceSlug}
-          />
-        </TabPanel>
-      </PageTabs>
-    </main>
+    <>
+      <AppHeader crumbs={[workspaceCrumb(workspace), { label: "Settings" }]} />
+      <Page id="main">
+        <PageHeader title="Workspace settings" />
+        <SettingsTabs
+          value={tab ?? "general"}
+          onValueChange={(next) =>
+            void navigate({
+              to: "/workspaces/$workspaceId/settings",
+              params: { workspaceId: workspace.id },
+              search: { tab: next },
+              replace: true,
+            })
+          }
+          tabs={[
+            { value: "general", label: "General", content: <GeneralSettings workspace={workspace} /> },
+            { value: "custom-domain", label: "Domain", content: <DomainSettings workspaceId={workspace.id} /> },
+            { value: "api-keys", label: "API keys", content: <ApiKeysSettings workspaceId={workspace.id} /> },
+            ...(workspace.canEdit
+              ? [{ value: "danger-zone", label: "Delete", content: <DangerZone workspace={workspace} /> }]
+              : []),
+          ]}
+        />
+      </Page>
+    </>
   );
 }
 
-function GeneralSettings({
-  workspaceId,
-  workspaceName,
-  workspaceSlug,
-}: {
-  workspaceId: string;
-  workspaceName: string;
-  workspaceSlug: string;
-}) {
+function GeneralSettings({ workspace }: { workspace: WorkspaceRef }) {
+  const id = useId();
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function save(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
-    setMessage("");
     setError("");
     const name = String(new FormData(event.currentTarget).get("name"));
     try {
-      await updateWorkspace(workspaceId, name);
+      await updateWorkspace(workspace.id, name);
       await queryClient.invalidateQueries({ queryKey: ["organizations"] });
-      setMessage("Workspace saved");
+      toast.success("Workspace saved");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Update failed");
+      setError(errorMessage(cause, "Update failed"));
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <section className="settings-panel" id="workspace-identity">
-      <header>
-        <h2 className="heading-with-tip">
-          ┌─ WORKSPACE IDENTITY
-          <InfoTip label="About workspace identity">
-            The name appears in the dashboard and workspace selector. The slug
-            is locked to keep asset URLs stable.
-          </InfoTip>
-        </h2>
-        <span>GENERAL</span>
-      </header>
-      <form onSubmit={save}>
-        <label>
-          Name
-          <input
-            name="name"
-            defaultValue={workspaceName}
-            minLength={1}
-            maxLength={80}
-            required
-          />
-        </label>
-        <label>
-          Slug
-          <input value={workspaceSlug} readOnly aria-readonly="true" />
-        </label>
-        <div className="settings-url">
-          <span>DELIVERY PATH</span>
-          <code>/w/{workspaceSlug}/&#123;key&#125;</code>
-        </div>
-        {error && (
-          <p className="error-strip" role="alert">
-            {error}
-          </p>
+    <form onSubmit={save}>
+      <Card>
+        <CardHeader>
+          <CardTitle>General</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
+              <Input
+                id={`${id}-name`}
+                name="name"
+                defaultValue={workspace.name}
+                minLength={1}
+                maxLength={80}
+                required
+                disabled={!workspace.canEdit}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${id}-slug`}>Slug</FieldLabel>
+              <Input id={`${id}-slug`} value={workspace.slug} readOnly />
+              <FieldDescription>
+                Fixed so asset URLs never change: <code>/w/{workspace.slug}/&#123;key&#125;</code>
+              </FieldDescription>
+            </Field>
+            {error && <FieldError>{error}</FieldError>}
+          </FieldGroup>
+        </CardContent>
+        {workspace.canEdit && (
+          <CardFooter>
+            <div className="flex w-full justify-end">
+              <Button type="submit" disabled={pending}>
+                {pending && <Spinner data-icon="inline-start" />}
+                Save
+              </Button>
+            </div>
+          </CardFooter>
         )}
-        <div className="settings-actions">
-          <span aria-live="polite">{message}</span>
-          <button className="primary-button" disabled={pending}>
-            {pending ? "Saving…" : "Save changes"}
-          </button>
-        </div>
-      </form>
-    </section>
+      </Card>
+    </form>
   );
 }
 
@@ -183,83 +175,62 @@ function GeneralSettings({
  * hides its CNAME behind flattened A records, so a missing CNAME is only worth
  * mentioning once ownership is proven.
  */
-function verificationMessage(result: {
-  status: string;
-  checks?: { txt: boolean; cname: boolean };
-}) {
+function verificationMessage(result: { status: string; checks?: { txt: boolean; cname: boolean } }) {
   if (result.status === "verified")
     return result.checks?.cname
       ? "Domain verified"
       : "Domain verified — CNAME not visible (normal behind Cloudflare)";
-  return "Waiting for the TXT record to propagate…";
+  return "TXT record not found yet";
 }
 
 function DomainSettings({ workspaceId }: { workspaceId: string }) {
+  const id = useId();
   const queryClient = useQueryClient();
   const [pendingAction, setPendingAction] = useState("");
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
   const autoVerifyingRef = useRef(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const domain = useQuery({
     queryKey: ["workspace-domain", workspaceId],
     queryFn: () => getWorkspaceDomain(workspaceId),
   });
+  const status = domain.data?.status;
 
-  async function refresh() {
-    await queryClient.invalidateQueries({
-      queryKey: ["workspace-domain", workspaceId],
-    });
-  }
+  const refresh = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["workspace-domain", workspaceId] }),
+    [queryClient, workspaceId],
+  );
 
-  // Auto-verify every 12s while domain is pending (DNS propagation)
-  const autoVerify = useCallback(async () => {
-    if (domain.data?.status !== "pending" || autoVerifyingRef.current) return;
-    autoVerifyingRef.current = true;
-    try {
-      const result = await verifyWorkspaceDomain(workspaceId);
-      setMessage(verificationMessage(result));
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-domain", workspaceId],
-      });
-    } catch {
-      // DNS timeouts happen, retry next interval
-    } finally {
-      autoVerifyingRef.current = false;
-    }
-  }, [domain.data?.status, workspaceId, queryClient, setMessage]);
-
+  // Re-check every 12 s while DNS propagates.
   useEffect(() => {
-    if (domain.data?.status !== "pending") {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      return;
+    if (status !== "pending") return;
+    async function autoVerify() {
+      if (autoVerifyingRef.current) return;
+      autoVerifyingRef.current = true;
+      try {
+        const result = await verifyWorkspaceDomain(workspaceId);
+        if (result.status === "verified") toast.success(verificationMessage(result));
+        await refresh();
+      } catch {
+        // DNS timeouts happen; the next interval retries.
+      } finally {
+        autoVerifyingRef.current = false;
+      }
     }
-    if (!intervalRef.current) {
-      intervalRef.current = setInterval(autoVerify, 12_000);
-      autoVerify(); // also try immediately
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    };
-  }, [domain.data?.status, autoVerify]);
+    void autoVerify();
+    const interval = window.setInterval(() => void autoVerify(), 12_000);
+    return () => window.clearInterval(interval);
+  }, [status, workspaceId, refresh]);
 
   async function configure(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setPendingAction("configure");
-    setMessage("");
     setError("");
     try {
-      await configureWorkspaceDomain(
-        workspaceId,
-        String(new FormData(event.currentTarget).get("domain")),
-      );
-      setMessage("Add the DNS records below, then verify the domain");
+      await configureWorkspaceDomain(workspaceId, String(new FormData(event.currentTarget).get("domain")));
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Domain update failed");
+      setError(errorMessage(cause, "Domain update failed"));
     } finally {
       setPendingAction("");
     }
@@ -267,703 +238,442 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
 
   async function verify() {
     setPendingAction("verify");
-    setMessage("");
     setError("");
     try {
       const result = await verifyWorkspaceDomain(workspaceId);
-      setMessage(verificationMessage(result));
+      if (result.status === "verified") toast.success(verificationMessage(result));
+      else toast.info(verificationMessage(result));
       await refresh();
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Domain verification failed",
-      );
+      setError(errorMessage(cause, "Domain verification failed"));
     } finally {
       setPendingAction("");
     }
   }
 
   async function remove() {
-    setError("");
-    try {
-      await removeWorkspaceDomain(workspaceId);
-      setMessage("Custom domain removed");
-      await refresh();
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Domain removal failed",
-      );
-    }
+    await removeWorkspaceDomain(workspaceId);
+    await refresh();
+    toast.success("Custom domain removed");
   }
 
-  const record: WorkspaceDomain | undefined = domain.data;
+  if (domain.isPending) return <Spinner />;
+  if (domain.isError)
+    return (
+      <Alert variant="destructive">
+        <TriangleAlertIcon />
+        <AlertTitle>Domain settings unavailable</AlertTitle>
+        <AlertDescription>{domain.error.message}</AlertDescription>
+      </Alert>
+    );
+  const record = domain.data;
+
   return (
-    <section className="settings-panel" id="custom-domain">
-      <header>
-        <h2 className="heading-with-tip">
-          ┌─ CUSTOM DOMAIN
-          <InfoTip label="About custom domains">
-            Serve assets on your own domain. Save a hostname, add the displayed
-            DNS records and verify ownership. HTTPS must be configured with your
-            hosting provider.
-          </InfoTip>
-        </h2>
-        <span>
-          {record?.status.toUpperCase() ?? "LOADING"}
-          {record?.status === "pending" ? " · POLLING" : ""}
-        </span>
-      </header>
-      {domain.isPending ? (
-        <p className="settings-state">Loading custom domain…</p>
-      ) : domain.isError ? (
-        <p className="error-strip settings-inline-error" role="alert">
-          {domain.error.message}
-        </p>
-      ) : (
-        <>
-          <form className="domain-form" onSubmit={configure}>
-            <label>
-              Domain
-              <input
-                key={record?.domain}
-                name="domain"
-                defaultValue={record?.domain ?? ""}
-                placeholder="assets.example.com"
-                autoComplete="off"
-                spellCheck={false}
-                required
-              />
-            </label>
-            <button
-              className="primary-button"
-              disabled={Boolean(pendingAction)}
-            >
-              {pendingAction === "configure" ? "Saving…" : "Save domain"}
-            </button>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Custom domain</CardTitle>
+          <CardDescription>Serve public assets from a hostname you own.</CardDescription>
+          {record.domain && (
+            <CardAction>
+              <Badge variant={record.status === "verified" ? "secondary" : "outline"}>
+                {record.status === "verified" ? (
+                  <CircleCheckIcon data-icon="inline-start" />
+                ) : (
+                  <Spinner data-icon="inline-start" />
+                )}
+                {record.status === "verified" ? "Verified" : "Waiting for DNS"}
+              </Badge>
+            </CardAction>
+          )}
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={configure}>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor={`${id}-domain`}>Hostname</FieldLabel>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <Input
+                      key={record.domain}
+                      id={`${id}-domain`}
+                      name="domain"
+                      defaultValue={record.domain ?? ""}
+                      placeholder="assets.example.com"
+                      autoComplete="off"
+                      spellCheck={false}
+                      required
+                    />
+                  </div>
+                  <Button type="submit" variant="outline" disabled={Boolean(pendingAction)}>
+                    {pendingAction === "configure" && <Spinner data-icon="inline-start" />}
+                    Save
+                  </Button>
+                </div>
+              </Field>
+              {error && <FieldError>{error}</FieldError>}
+            </FieldGroup>
           </form>
-          {record?.domain && record.verification && (
-            <div className="domain-setup">
-              <div>
-                <span>TXT</span>
-                <code>{record.verification.name}</code>
-                <code>{record.verification.value}</code>
-              </div>
-              <div>
-                <span>CNAME</span>
-                <code>{record.domain}</code>
-                <code>{record.target ?? "Not configured"}</code>
-              </div>
-              <div className="domain-delivery-example">
-                <span>DELIVERY</span>
-                <code>https://{record.domain}/w/&#123;key&#125;</code>
+        </CardContent>
+        {record.domain && record.verification && (
+          <CardContent>
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                Add these records at your DNS provider. HTTPS for the hostname is set up by
+                whoever runs this server.
+              </p>
+              <div className="rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Value</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <DnsRow type="TXT" name={record.verification.name} value={record.verification.value} />
+                    <DnsRow type="CNAME" name={record.domain} value={record.target ?? "Not configured"} />
+                  </TableBody>
+                </Table>
               </div>
             </div>
-          )}
-          {error && (
-            <p className="error-strip settings-inline-error" role="alert">
-              {error}
-            </p>
-          )}
-          {record?.domain && (
-            <div className="domain-actions">
-              {message && (
-                <p className="settings-message" role="status">
-                  {message}
-                </p>
-              )}
-              <button
-                type="button"
-                disabled={Boolean(pendingAction)}
-                onClick={() => void verify()}
-              >
-                {pendingAction === "verify" ? "Checking DNS…" : "Verify DNS"}
-              </button>
-              <button
-                className="danger-button"
-                type="button"
+          </CardContent>
+        )}
+        {record.domain && (
+          <CardFooter>
+            <div className="flex w-full justify-between gap-2">
+              <Button
+                variant="destructive"
                 disabled={Boolean(pendingAction)}
                 onClick={() => setRemoveOpen(true)}
               >
                 Remove
-              </button>
+              </Button>
+              <Button variant="outline" disabled={Boolean(pendingAction)} onClick={() => void verify()}>
+                {pendingAction === "verify" && <Spinner data-icon="inline-start" />}
+                Check DNS now
+              </Button>
             </div>
-          )}
-        </>
-      )}
+          </CardFooter>
+        )}
+      </Card>
       <ConfirmDialog
         open={removeOpen}
-        title={`Remove custom domain “${record?.domain ?? ""}”?`}
-        description="Delivery through this host will stop immediately. Canonical workspace URLs will keep working."
+        title={`Remove ${record.domain ?? "custom domain"}?`}
+        description="Delivery through this hostname stops immediately. Standard workspace URLs keep working."
         confirmLabel="Remove domain"
         onCancel={() => setRemoveOpen(false)}
         onConfirm={remove}
       />
-    </section>
+    </>
   );
 }
 
-export function OrganizationMembers({ workspaceId }: { workspaceId: string }) {
-  const [search, setSearch] = useState("");
-  const queryClient = useQueryClient();
-  const [pendingId, setPendingId] = useState("");
-  const [error, setError] = useState("");
-  const members = useQuery({
-    queryKey: ["workspace-members", workspaceId],
-    queryFn: () => listWorkspaceMembers(workspaceId),
-  });
-  const ownerCount =
-    members.data?.members.filter(({ role }) => role === "owner").length ?? 0;
-
-  async function changeRole(
-    member: WorkspaceMember,
-    role: WorkspaceMember["role"],
-  ) {
-    setPendingId(member.id);
-    setError("");
-    try {
-      await updateWorkspaceMemberRole(workspaceId, member.id, role);
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-members", workspaceId],
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Role update failed");
-    } finally {
-      setPendingId("");
-    }
-  }
-
+function DnsRow({ type, name, value }: { type: string; name: string; value: string }) {
   return (
-    <section className="settings-panel" id="members">
-      <header>
-        <h2>┌─ ORGANIZATION MEMBERS</h2>
-        <span>{members.data?.members.length ?? 0} USERS</span>
-      </header>
-      <div className="list-toolbar">
-        <FilterInput value={search} onChange={setSearch} label="Find members" />
-      </div>
-      {members.isPending ? (
-        <p className="settings-state">Loading members…</p>
-      ) : members.isError ? (
-        <p className="error-strip" role="alert">
-          {members.error.message}
-        </p>
-      ) : (
-        <ul className="member-list">
-          {members.data.members
-            .filter((member) =>
-              `${member.name} ${member.email}`
-                .toLowerCase()
-                .includes(search.trim().toLowerCase()),
-            )
-            .map((member) => {
-              const lastOwner = member.role === "owner" && ownerCount === 1;
-              return (
-                <li key={member.id}>
-                  <span className="avatar">
-                    {(member.name || member.email).slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="member-identity">
-                    <strong>{member.name}</strong>
-                    <small>{member.email}</small>
-                  </span>
-                  <select
-                    aria-label={`Role for ${member.email}`}
-                    value={member.role}
-                    disabled={pendingId === member.id || lastOwner}
-                    title={
-                      lastOwner
-                        ? "An organization needs at least one owner"
-                        : undefined
-                    }
-                    onChange={(event) =>
-                      void changeRole(
-                        member,
-                        event.target.value as WorkspaceMember["role"],
-                      )
-                    }
-                  >
-                    <option value="owner">Owner</option>
-                    <option value="editor">Editor</option>
-                    <option value="viewer">Viewer</option>
-                  </select>
-                </li>
-              );
-            })}
-        </ul>
-      )}
-      {members.data &&
-        !members.data.members.some((member) =>
-          `${member.name} ${member.email}`
-            .toLowerCase()
-            .includes(search.trim().toLowerCase()),
-        ) && <p className="settings-state">No matching members.</p>}
-      {error && (
-        <p className="error-strip settings-inline-error" role="alert">
-          {error}
-        </p>
-      )}
-    </section>
-  );
-}
-
-export function OrganizationInvitations({
-  workspaceId,
-}: {
-  workspaceId: string;
-}) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [pendingId, setPendingId] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [revokeTarget, setRevokeTarget] = useState<WorkspaceInvitation | null>(
-    null,
-  );
-  const invitations = useQuery({
-    queryKey: ["workspace-invitations", workspaceId],
-    queryFn: () => listWorkspaceInvitations(workspaceId),
-  });
-
-  async function invite(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pendingId) return;
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    setPendingId("create");
-    setError("");
-    setMessage("");
-    try {
-      const created = await createWorkspaceInvitation(workspaceId, {
-        email: String(form.get("email")),
-        role: String(form.get("role")) as WorkspaceInvitation["role"],
-      });
-      formElement.reset();
-      setOpen(false);
-      setMessage(
-        created.emailSent
-          ? "Invitation sent"
-          : "Invitation created, but the email could not be sent — use Resend",
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Invitation failed");
-    } finally {
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-invitations", workspaceId],
-      });
-      setPendingId("");
-    }
-  }
-
-  async function resend(record: WorkspaceInvitation) {
-    setPendingId(record.id);
-    setError("");
-    setMessage("");
-    try {
-      await resendWorkspaceInvitation(workspaceId, record.id);
-      setMessage(`Invitation resent to ${record.email}`);
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-invitations", workspaceId],
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Resend failed");
-    } finally {
-      setPendingId("");
-    }
-  }
-
-  async function revoke(record: WorkspaceInvitation) {
-    setError("");
-    setMessage("");
-    try {
-      await revokeWorkspaceInvitation(workspaceId, record.id);
-      setMessage(`Invitation to ${record.email} revoked`);
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-invitations", workspaceId],
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Revoke failed");
-    }
-  }
-
-  return (
-    <section className="settings-panel" id="invitations">
-      <header>
-        <h2>┌─ ORGANIZATION INVITATIONS</h2>
-        <button
-          type="button"
-          disabled={Boolean(pendingId)}
-          onClick={() => {
-            setError("");
-            setOpen(true);
-          }}
-        >
-          Invite member
-        </button>
-      </header>
-      <FormDialog
-        open={open}
-        title="Invite member"
-        pending={pendingId === "create"}
-        onClose={() => setOpen(false)}
-      >
-        <form className="creation-form" onSubmit={invite}>
-          <label>
-            Email
-            <input
-              name="email"
-              type="email"
-              autoComplete="email"
-              autoFocus
-              required
-            />
-          </label>
-          <label>
-            Role
-            <select name="role" defaultValue="viewer">
-              <option value="viewer">Viewer</option>
-              <option value="editor">Editor</option>
-              <option value="owner">Owner</option>
-            </select>
-          </label>
-          {error && (
-            <p className="error-strip" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="primary-button" disabled={Boolean(pendingId)}>
-            {pendingId === "create" ? "Sending…" : "Send invitation"}
-          </button>
-        </form>
-      </FormDialog>
-      {!open && error && (
-        <p className="error-strip settings-inline-error" role="alert">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p className="settings-message" role="status">
-          {message}
-        </p>
-      )}
-      {invitations.isPending ? (
-        <p className="settings-state">Loading invitations…</p>
-      ) : invitations.isError ? (
-        <p className="error-strip" role="alert">
-          {invitations.error.message}
-        </p>
-      ) : invitations.data.invitations.length ? (
-        <ul className="invitation-list">
-          {invitations.data.invitations.map((record) => (
-            <li key={record.id}>
-              <span className="member-identity">
-                <strong>{record.email}</strong>
-                <small>
-                  {record.role.toUpperCase()} // expires{" "}
-                  {dateTime.format(new Date(record.expiresAt))}
-                </small>
-              </span>
-              <div className="invitation-actions">
-                <button
-                  type="button"
-                  disabled={pendingId === record.id}
-                  onClick={() => void resend(record)}
-                >
-                  {pendingId === record.id ? "Sending…" : "Resend"}
-                </button>
-                <button
-                  className="danger-button"
-                  type="button"
-                  disabled={pendingId === record.id}
-                  onClick={() => setRevokeTarget(record)}
-                >
-                  Revoke
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="settings-state">└─ No pending invitations</p>
-      )}
-      <ConfirmDialog
-        open={Boolean(revokeTarget)}
-        title={`Revoke invitation to “${revokeTarget?.email ?? ""}”?`}
-        description="The invitation link will stop working immediately."
-        confirmLabel="Revoke invitation"
-        onCancel={() => setRevokeTarget(null)}
-        onConfirm={() =>
-          revokeTarget ? revoke(revokeTarget) : Promise.resolve()
-        }
-      />
-    </section>
+    <TableRow>
+      <TableCell>
+        <Badge variant="outline">{type}</Badge>
+      </TableCell>
+      <TableCell>
+        <span className="flex items-center gap-1 font-mono text-xs">
+          <span className="truncate">{name}</span>
+          <CopyIconButton text={name} label={`Copy ${type} name`} />
+        </span>
+      </TableCell>
+      <TableCell>
+        <span className="flex items-center gap-1 font-mono text-xs">
+          <span className="truncate">{value}</span>
+          <CopyIconButton text={value} label={`Copy ${type} value`} />
+        </span>
+      </TableCell>
+    </TableRow>
   );
 }
 
 function ApiKeysSettings({ workspaceId }: { workspaceId: string }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const [revokeTarget, setRevokeTarget] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
-  const [secret, setSecret] = useState<{
-    id: string;
-    name: string;
-    key: string;
-  } | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const keys = useQuery({
     queryKey: ["workspace-api-keys", workspaceId],
     queryFn: () => listWorkspaceApiKeys(workspaceId),
   });
 
+  async function revoke(keyId: string) {
+    await deleteWorkspaceApiKey(workspaceId, keyId);
+    await queryClient.invalidateQueries({ queryKey: ["workspace-api-keys", workspaceId] });
+    toast.success("API key revoked");
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>API keys</CardTitle>
+          <CardDescription>
+            For CI and scripts. Use one key per integration, set as <code>VARDUM_API_KEY</code>.
+          </CardDescription>
+          <CardAction>
+            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+              <PlusIcon data-icon="inline-start" />
+              New key
+            </Button>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {keys.isPending ? (
+            <Spinner />
+          ) : keys.isError ? (
+            <FieldError>{keys.error.message}</FieldError>
+          ) : keys.data.keys.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Access</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead>
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {keys.data.keys.map((key) => (
+                  <TableRow key={key.id}>
+                    <TableCell>
+                      <span className="flex flex-col">
+                        <span className="font-medium">{key.name ?? "Unnamed key"}</span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {key.start ?? "varda_"}••••
+                        </span>
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={key.access === "write" ? "secondary" : "outline"}>
+                        {key.access === "write" ? "Read + write" : "Read only"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{dateOnly.format(new Date(key.createdAt))}</TableCell>
+                    <TableCell>
+                      <span className="text-muted-foreground">
+                        {key.lastRequest ? timeAgo(key.lastRequest) : "Never"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setRevokeTarget({ id: key.id, name: key.name ?? "Unnamed key" })}
+                        >
+                          Revoke
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <KeyRoundIcon />
+                </EmptyMedia>
+                <EmptyTitle>No API keys</EmptyTitle>
+                <EmptyDescription>
+                  For local work, <code>vardum login</code> creates a key for you.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </CardContent>
+      </Card>
+      <NewApiKeyDialog open={open} workspaceId={workspaceId} onClose={() => setOpen(false)} />
+      <ConfirmDialog
+        open={Boolean(revokeTarget)}
+        title={`Revoke “${revokeTarget?.name ?? ""}”?`}
+        description="Requests using this key fail immediately."
+        confirmLabel="Revoke key"
+        onCancel={() => setRevokeTarget(null)}
+        onConfirm={() => (revokeTarget ? revoke(revokeTarget.id) : Promise.resolve())}
+      />
+    </>
+  );
+}
+
+function NewApiKeyDialog({
+  open,
+  workspaceId,
+  onClose,
+}: {
+  open: boolean;
+  workspaceId: string;
+  onClose: () => void;
+}) {
+  const id = useId();
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [secret, setSecret] = useState("");
+
   async function createKey(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
+    const form = new FormData(event.currentTarget);
     setPending(true);
     setError("");
-    setSecret(null);
     try {
       const created = await createWorkspaceApiKey(workspaceId, {
         name: String(form.get("name")),
         access: String(form.get("access")) as "read" | "write",
       });
-      setSecret({
-        id: created.id,
-        name: created.name ?? "API key",
-        key: created.key,
-      });
-      formElement.reset();
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-api-keys", workspaceId],
-      });
+      setSecret(created.key);
+      await queryClient.invalidateQueries({ queryKey: ["workspace-api-keys", workspaceId] });
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "API key creation failed",
-      );
+      setError(errorMessage(cause, "API key creation failed"));
     } finally {
       setPending(false);
     }
   }
 
-  async function revoke(keyId: string) {
-    setError("");
-    try {
-      await deleteWorkspaceApiKey(workspaceId, keyId);
-      if (secret?.id === keyId) setSecret(null);
-      await queryClient.invalidateQueries({
-        queryKey: ["workspace-api-keys", workspaceId],
-      });
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "API key revoke failed",
-      );
-    }
-  }
-
   return (
-    <section className="settings-panel" id="api-keys">
-      <header>
-        <h2 className="heading-with-tip">
-          ┌─ API KEYS
-          <InfoTip label="About API key access">
-            Use a separate key for each integration. Read only can fetch files;
-            read + write can also publish. Revoke a key to stop its requests.
-          </InfoTip>
-        </h2>
-        <button
-          type="button"
-          onClick={() => {
-            setError("");
-            setSecret(null);
-            setOpen(true);
-          }}
-        >
-          New API key
-        </button>
-      </header>
-      <FormDialog
-        open={open}
-        title={secret ? "API key created" : "New API key"}
-        pending={pending}
-        onClose={() => setOpen(false)}
-      >
-        {!secret && (
-          <form className="creation-form" onSubmit={createKey}>
-            <label>
-              Name
-              <input
-                name="name"
-                autoFocus
-                placeholder="e.g. Website production"
-                minLength={1}
-                maxLength={32}
-                required
-              />
-            </label>
-            <label>
-              Access
-              <select name="access" defaultValue="read">
-                <option value="read">Read only</option>
-                <option value="write">Read + write</option>
-              </select>
-            </label>
-            <button className="primary-button" disabled={pending}>
-              {pending ? "Creating…" : "Create key"}
-            </button>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next || pending) return;
+        setError("");
+        setSecret("");
+        onClose();
+      }}
+    >
+      <DialogContent>
+        {secret ? (
+          <FieldGroup>
+            <DialogHeader>
+              <DialogTitle>Copy your new key</DialogTitle>
+              <DialogDescription>It is shown only once. Store it in your secret manager.</DialogDescription>
+            </DialogHeader>
+            <InputGroup>
+              <InputGroupInput readOnly value={secret} aria-label="New API key" />
+              <InputGroupAddon align="inline-end">
+                <CopyIconButton text={secret} label="Copy key" />
+              </InputGroupAddon>
+            </InputGroup>
+            <DialogFooter>
+              <Button
+                onClick={() => {
+                  setSecret("");
+                  onClose();
+                }}
+              >
+                Done
+              </Button>
+            </DialogFooter>
+          </FieldGroup>
+        ) : (
+          <form onSubmit={createKey}>
+            <FieldGroup>
+              <DialogHeader>
+                <DialogTitle>New API key</DialogTitle>
+              </DialogHeader>
+              <Field>
+                <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
+                <Input
+                  id={`${id}-name`}
+                  name="name"
+                  placeholder="Website CI"
+                  minLength={1}
+                  maxLength={32}
+                  autoComplete="off"
+                  autoFocus
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`${id}-access`}>Access</FieldLabel>
+                <NativeSelect id={`${id}-access`} name="access" defaultValue="read">
+                  <NativeSelectOption value="read">Read only</NativeSelectOption>
+                  <NativeSelectOption value="write">Read + write</NativeSelectOption>
+                </NativeSelect>
+                <FieldDescription>
+                  Read only is enough for <code>vardum pull</code>. Write also allows upload,
+                  delete and publish.
+                </FieldDescription>
+              </Field>
+              {error && <FieldError>{error}</FieldError>}
+              <DialogFooter>
+                <Button type="submit" disabled={pending}>
+                  {pending && <Spinner data-icon="inline-start" />}
+                  Create key
+                </Button>
+              </DialogFooter>
+            </FieldGroup>
           </form>
         )}
-
-        {secret && (
-          <div className="api-key-secret" role="status">
-            <span>NEW KEY // COPY NOW</span>
-            <code>{secret.key}</code>
-            <CopyButton text={secret.key} label="Copy key" />
-            <small>This secret will not be shown again.</small>
-          </div>
-        )}
-        {error && (
-          <p className="error-strip settings-inline-error" role="alert">
-            {error}
-          </p>
-        )}
-      </FormDialog>
-      {!open && error && (
-        <p className="error-strip settings-inline-error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {keys.isPending ? (
-        <p className="settings-state">Loading API keys…</p>
-      ) : keys.isError ? (
-        <p className="error-strip" role="alert">
-          {keys.error.message}
-        </p>
-      ) : keys.data.keys.length ? (
-        <ul className="api-key-list">
-          {keys.data.keys.map((key) => (
-            <li key={key.id}>
-              <span>
-                <strong>{key.name ?? "Unnamed key"}</strong>
-                <small>
-                  {key.start ?? "varda_"}•••• // {key.access.toUpperCase()} //
-                  created {dateTime.format(new Date(key.createdAt))}
-                </small>
-              </span>
-              <button
-                className="danger-button"
-                type="button"
-                onClick={() =>
-                  setRevokeTarget({
-                    id: key.id,
-                    name: key.name ?? "Unnamed key",
-                  })
-                }
-              >
-                Revoke
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="settings-state">└─ No API keys</p>
-      )}
-      <ConfirmDialog
-        open={Boolean(revokeTarget)}
-        title={`Revoke API key “${revokeTarget?.name ?? ""}”?`}
-        description="Requests using this key will stop immediately. This cannot be undone."
-        confirmLabel="Revoke key"
-        onCancel={() => setRevokeTarget(null)}
-        onConfirm={() =>
-          revokeTarget ? revoke(revokeTarget.id) : Promise.resolve()
-        }
-      />
-    </section>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function DangerZone({
-  workspaceId,
-  workspaceName,
-  workspaceSlug,
-}: {
-  workspaceId: string;
-  workspaceName: string;
-  workspaceSlug: string;
-}) {
+function DangerZone({ workspace }: { workspace: WorkspaceRef }) {
+  const id = useId();
   const [confirmation, setConfirmation] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [error, setError] = useState("");
 
   async function removeWorkspace() {
-    setError("");
-    try {
-      await deleteWorkspace(workspaceId, confirmation);
-      window.location.assign("/");
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Workspace deletion failed",
-      );
-    }
+    await deleteWorkspace(workspace.id, confirmation);
+    window.location.assign("/");
   }
 
   return (
-    <section className="settings-panel danger-zone" id="danger-zone">
-      <header>
-        <h2>!! DANGER ZONE</h2>
-        <span>IRREVERSIBLE</span>
-      </header>
-      <form
-        className="danger-zone-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (confirmation === workspaceSlug) setDialogOpen(true);
-        }}
-      >
-        <div className="danger-zone-copy">
-          <strong>Delete {workspaceName}</strong>
-          <p>
-            Permanently delete every asset, version, folder, API key and
-            delivery record in this workspace. Organization members and
-            invitations remain.
-          </p>
-        </div>
-        <label>
-          <span>
-            Type <code>{workspaceSlug}</code> to confirm
-          </span>
-          <input
-            value={confirmation}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setConfirmation(event.target.value)}
-          />
-        </label>
-        {error && (
-          <p className="error-strip" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="settings-actions">
-          <button
-            className="danger-button"
-            disabled={confirmation !== workspaceSlug}
-          >
-            Delete workspace
-          </button>
-        </div>
-      </form>
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (confirmation === workspace.slug) setDialogOpen(true);
+      }}
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle>Delete workspace</CardTitle>
+          <CardDescription>
+            Permanently deletes every asset, version, folder, Vard, API key and delivery record.
+            Members and invitations belong to the organization and stay.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Field>
+            <FieldLabel htmlFor={`${id}-confirm`}>
+              Type <code>{workspace.slug}</code> to confirm
+            </FieldLabel>
+            <Input
+              id={`${id}-confirm`}
+              value={confirmation}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setConfirmation(event.target.value)}
+            />
+          </Field>
+        </CardContent>
+        <CardFooter>
+          <div className="flex w-full justify-end">
+            <Button type="submit" variant="destructive" disabled={confirmation !== workspace.slug}>
+              Delete workspace
+            </Button>
+          </div>
+        </CardFooter>
+      </Card>
       <ConfirmDialog
         open={dialogOpen}
-        title={`Delete workspace “${workspaceName}”?`}
-        description="All workspace data and stored files will be permanently deleted. This cannot be undone."
+        title={`Delete “${workspace.name}”?`}
+        description="All workspace data and stored files are deleted. This cannot be undone."
         confirmLabel="Delete workspace"
         onCancel={() => setDialogOpen(false)}
         onConfirm={removeWorkspace}
       />
-    </section>
+    </form>
   );
 }

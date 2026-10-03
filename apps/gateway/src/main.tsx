@@ -13,7 +13,10 @@ import { AcceptInvitation } from "./accept-invitation";
 import { App } from "./app";
 import { CliLogin } from "./cli-login";
 import { ResetPassword } from "./reset-password";
-import "./style.css";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeProvider } from "next-themes";
+import "./index.css";
 
 const rootRoute = createRootRoute({ component: Outlet });
 const indexRoute = createRoute({
@@ -64,6 +67,14 @@ const accountRoute = createRoute({
 const organizationSettingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/organizations/$organizationId/settings",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: string; create?: boolean } => ({
+    ...(typeof search.tab === "string" && search.tab
+      ? { tab: search.tab }
+      : {}),
+    ...(search.create === true ? { create: true } : {}),
+  }),
   component: OrganizationSettingsPage,
 });
 const workspaceOverviewRoute = createRoute({
@@ -81,14 +92,18 @@ const vardEditorRoute = createRoute({
   path: "/workspaces/$workspaceId/vards/$vardId",
   component: VardEditorPage,
 });
+const workspaceActivityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/activity",
+  component: WorkspaceActivityPage,
+});
 const workspaceAuditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/audit",
   beforeLoad: ({ params }) => {
     throw redirect({
-      to: "/workspaces/$workspaceId/settings",
+      to: "/workspaces/$workspaceId/activity",
       params: { workspaceId: params.workspaceId },
-      search: { tab: "activity" },
       replace: true,
     });
   },
@@ -96,11 +111,17 @@ const workspaceAuditRoute = createRoute({
 const workspaceSettingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/settings",
-  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
-    ...(typeof search.tab === "string" && search.tab
-      ? { tab: search.tab }
-      : {}),
-  }),
+  validateSearch: (search: Record<string, unknown>): { tab?: string } =>
+    typeof search.tab === "string" && search.tab ? { tab: search.tab } : {},
+  // Activity used to be a settings tab; old links still land on it.
+  beforeLoad: ({ params, search }) => {
+    if (search.tab === "activity")
+      throw redirect({
+        to: "/workspaces/$workspaceId/activity",
+        params: { workspaceId: params.workspaceId },
+        replace: true,
+      });
+  },
   component: WorkspaceSettingsPage,
 });
 const workspaceAssetsRoute = createRoute({
@@ -137,6 +158,7 @@ const router = createRouter({
     workspaceOverviewRoute,
     workspaceVardsRoute,
     vardEditorRoute,
+    workspaceActivityRoute,
     workspaceAuditRoute,
     workspaceSettingsRoute,
     workspaceAssetsRoute,
@@ -189,6 +211,11 @@ function VardEditorPage() {
   return <App routeWorkspaceId={workspaceId} vardId={vardId} view="vards" />;
 }
 
+function WorkspaceActivityPage() {
+  const { workspaceId } = workspaceActivityRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="activity" />;
+}
+
 function WorkspaceSettingsPage() {
   const { workspaceId } = workspaceSettingsRoute.useParams();
   return <App routeWorkspaceId={workspaceId} view="settings" />;
@@ -236,13 +263,18 @@ if (import.meta.hot) import.meta.hot.data.reactRoot = reactRoot;
 
 reactRoot.render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-      {DevAgentation && (
-        <Suspense fallback={null}>
-          <DevAgentation />
-        </Suspense>
-      )}
-    </QueryClientProvider>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <RouterProvider router={router} />
+          <Toaster richColors closeButton />
+        </TooltipProvider>
+        {DevAgentation && (
+          <Suspense fallback={null}>
+            <DevAgentation />
+          </Suspense>
+        )}
+      </QueryClientProvider>
+    </ThemeProvider>
   </StrictMode>,
 );
