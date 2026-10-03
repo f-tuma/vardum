@@ -11,7 +11,7 @@ run by hand. Create a workspace API key in **Settings // API keys** first; the
 key is restricted to that workspace and its selected read/write permissions.
 Copy the workspace ID from Settings → General for tool calls.
 
-This README targets MCP **0.2.0**; see [release status and compatibility](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md).
+This README targets published MCP **0.2.0**; see [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
 The published 0.1.0 artifact has a broken workspace dependency.
 
 Claude Code:
@@ -123,5 +123,5 @@ the committed snapshot without live resolution. There is no background sync.
 Removing rules leaves source assets/manual mappings intact. Choose `--delete` on
 the membership-updating pull: a normal no-delete pull keeps stale disk files but
 drops their tracking, so a later `--delete` cannot remove them; deliberate manual
-cleanup is then required. See [CLI snapshot limitations](https://github.com/frgtn-dot-dev/vardum/tree/main/apps/cli#reproducible-asset-consumption)
-and [operations](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/operations.md#folder-rule-upgrade) before upgrading or rolling back.
+cleanup is then required. See [CLI snapshot limitations](https://github.com/f-tuma/vardum/tree/main/apps/cli#reproducible-asset-consumption)
+and [operations](https://github.com/f-tuma/vardum/blob/main/docs/operations.md#folder-rule-upgrade) before upgrading or rolling back.

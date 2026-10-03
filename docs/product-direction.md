@@ -5,9 +5,10 @@ Status: agreed direction, not a statement of shipped capabilities.
 > Manage assets once. Deliver the right variants to connected projects, on each
 > project's release schedule.
 
-Varda is an open-source, developer-first asset manager for small teams and
-agencies. It connects a shared visual library to real project files, repeatable
-exports, and reproducible builds. Over time, it will also help teams check where
+Varda is a developer-first asset manager for small teams and agencies, with a
+commitment to MIT open-source licensing. The source repository is currently
+private; public npm packages are available. It connects a shared visual library
+to real project files, repeatable exports, and reproducible builds. Over time, it will also help teams check where
 outdated assets are still in use.
 
 The software is released under the [MIT License](../LICENSE). All public-facing
@@ -136,6 +137,13 @@ implementation accepts images and videos. Choose the first additional formats
 from real workflows rather than promising previews or transformations for every
 file.
 
+Implementation status reviewed 2026-10-03 (frgtn.VARD/VARD-20): published CLI
+0.6.0, MCP 0.2.0 and shared 0.2.0 provide the schema 2 client baseline. Schema 3
+and the next client versions are unmerged, unpublished VARD-14 work; the provisional
+VARD-6 server candidate and runtime/security acceptance remain open. See
+[current readiness status](production-readiness-2026-09-20.md#current-status) and
+[release compatibility](npm-release.md#compatibility).
+
 The repository already has much of the foundation: asset versions, Vards, image
 transformations, CLI sync, API/MCP access, and S3-compatible deployment. The CLI
 now provides schema 2 snapshots and `pull --frozen` for locked membership, paths,
@@ -153,7 +161,8 @@ the updating pull for tracked local cleanup; a no-delete update loses stale trac
 See the [workflow and limits](../README.md#recursive-folder-inclusion) and
 [migration constraints](operations.md#folder-rule-upgrade).
 These bounded delivery and folder slices do not complete the broader milestone,
-templates, or real Musubi acceptance scenario above. Browser visual acceptance and
+templates, or real Musubi acceptance scenario above. Source browser checks and
+public-npm onboarding automation have passed, but new human first-use and
 real-project adoption still need verification; there is no background watcher.
 
 Success means the second brand update avoids repeated requirements research,
