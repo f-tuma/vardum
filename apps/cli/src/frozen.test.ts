@@ -36,7 +36,7 @@ function item(
     transformation: query ? { w: 64, format: "png" } : null,
     versionId,
     fingerprint: `${versionId}:${query}`,
-    downloadUrl: `/w/demo/__v/${versionId}/${id}.png${query}`,
+    downloadUrl: `/w/__id/workspace/__v/${versionId}${query}`,
     sourceChecksum: null,
     mimeType: "image/png",
     size: null,
@@ -59,19 +59,24 @@ async function fixture(t: test.TestContext) {
     files: new Map<string, string>(),
     redirect: "",
     uploaded: "edited",
+    identitySupport: true,
   };
   state.files.set(state.items[0]!.downloadUrl!, "original transformed bytes");
   const server = createServer(async (req, res) => {
     const url = req.url!;
     requests.push({ url, key: req.headers["x-api-key"] as string | undefined });
     res.setHeader("content-type", "application/json");
-    if (url.endsWith("/manifest") || url === "/v/vard") {
+    if (url.split("?")[0]!.endsWith("/manifest") || url.split("?")[0] === "/v/vard") {
+      const identity = url.includes("delivery=version-id-v1");
       res.end(
         JSON.stringify({
           schema: 1,
           id: "vard",
           workspaceId: "workspace",
-          items: state.items,
+          ...(identity && state.identitySupport ? { delivery: "version-id-v1" } : {}),
+          items: identity ? state.items : state.items.map(item => ({ ...item,
+            downloadUrl: `/w/demo/__v/${item.versionId}/${item.key}${new URL(item.downloadUrl!, "http://fixture").search}`,
+          })),
         }),
       );
     } else if (url === "/api/upload-limits") {
@@ -96,8 +101,8 @@ async function fixture(t: test.TestContext) {
     } else if (state.redirect) {
       res.writeHead(302, { location: state.redirect });
       res.end();
-    } else if (state.files.has(url)) {
-      res.end(state.files.get(url));
+    } else if (state.files.has(url.replace(/^\/w\/demo\/__v\/([^/]+)\/[^?]+/, "/w/__id/workspace/__v/$1"))) {
+      res.end(state.files.get(url.replace(/^\/w\/demo\/__v\/([^/]+)\/[^?]+/, "/w/__id/workspace/__v/$1")));
     } else {
       res.statusCode = 404;
       res.end("missing");
@@ -184,7 +189,7 @@ test("pull snapshots exact outputs; frozen/sync restore old membership, paths an
   assert.equal((await f.run("pull")).code, 0);
   const text = await f.lockText();
   const locked = await f.lock();
-  assert.equal(locked.schema, 2);
+  assert.equal(locked.schema, 3);
   assert.equal(locked.server, f.origin);
   assert.equal(locked.workspace, "workspace");
   assert.equal(
@@ -258,14 +263,17 @@ test("frozen requires a validated bound snapshot; ordinary pull upgrades schema 
   assert.match((await f.run("pull", "--frozen")).data.error, /schema 2/);
   assert.equal(f.requests.length, 0);
   assert.equal((await f.run("pull")).code, 0);
-  assert.equal((await f.lock()).schema, 2);
+  assert.equal((await f.lock()).schema, 3);
   const cases: Array<[string, any]> = [
-    ["unsupported", { ...snapshot, schema: 3 }],
+    ["unsupported", { ...snapshot, schema: 4 }],
     ["null", null],
     ["array", []],
     ["wrong server", { ...snapshot, server: "https://other.invalid" }],
     ["wrong workspace", { ...snapshot, workspace: "other" }],
     ["wrong vard", { ...snapshot, vard: "other" }],
+    ["missing delivery marker", { ...snapshot, delivery: undefined }],
+    ["wrong identity workspace", { ...snapshot, items: { one: { ...snapshot.items.one, downloadUrl: snapshot.items.one.downloadUrl.replace("/__id/workspace/", "/__id/foreign/") } } }],
+    ["duplicate transformation query", { ...snapshot, items: { one: { ...snapshot.items.one, downloadUrl: `${f.origin}/w/__id/workspace/__v/${v1}?w=1&w=2&sig=invalid` } } }],
     ["missing items", { ...snapshot, items: null }],
     ...["checksum", "downloadUrl", "fingerprint", "versionId"].map(
       (field): [string, any] => [
@@ -488,7 +496,7 @@ test("mapped push advances snapshot URL/version/checksum together; legacy push r
   assert.equal(locked.items.one.versionId, v2);
   assert.equal(
     locked.items.one.downloadUrl,
-    `${f.origin}/w/demo/__v/${v2}/one.png`,
+    `${f.origin}/w/__id/workspace/__v/${v2}`,
   );
   assert.equal(locked.items.one.checksum, checksum(Buffer.from("edited")));
   await rm(join(f.project, "assets"), { recursive: true });
@@ -522,4 +530,36 @@ test("mapped push advances snapshot URL/version/checksum together; legacy push r
   assert.match(failed.data.error, /checksum mismatch/);
   assert.equal(failed.data.actions[0].applied, true);
   assert.equal(await f.lockText(), beforeFailure);
+});
+
+test("normal pull fails before writes when identity delivery is unsupported; schema 2 frozen and push keep legacy URLs", async t => {
+  const f = await fixture(t);
+  f.state.items = [item("one", v1, "assets/logo.png", "")];
+  f.state.files.set(f.state.items[0]!.downloadUrl!, "original");
+  await f.run("pull");
+  const original = await f.lockText();
+  f.state.identitySupport = false;
+  f.requests.length = 0;
+  const unsupported = await f.run("pull", "--force");
+  assert.match(unsupported.data.error, /does not support version-id-v1/);
+  assert.equal(await f.lockText(), original);
+  assert.equal(await readFile(join(f.project, "assets/logo.png"), "utf8"), "original");
+  assert.equal(f.requests.length, 1);
+  const old = await f.lock();
+  old.schema = 2;
+  delete old.delivery;
+  old.items.one.downloadUrl = `${f.origin}/w/demo/__v/${v1}/one.png`;
+  await writeFile(f.lockPath, JSON.stringify(old));
+  const legacyText = await f.lockText();
+  await rm(join(f.project, "assets"), { recursive: true });
+  assert.equal((await f.run("pull", "--frozen")).code, 0);
+  assert.equal(await f.lockText(), legacyText);
+  await writeFile(join(f.project, "assets/logo.png"), "edited");
+  f.requests.length = 0;
+  assert.equal((await f.run("push")).code, 0);
+  const pushed = await f.lock();
+  assert.equal(pushed.schema, 2);
+  assert.equal(pushed.items.one.downloadUrl, `${f.origin}/w/demo/__v/${v2}/one.png`);
+  assert.ok(f.requests.some(request => request.url.endsWith("/manifest")));
+  assert.ok(f.requests.every(request => !request.url.includes("delivery=version-id-v1")));
 });

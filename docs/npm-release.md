@@ -20,6 +20,19 @@ immutable. Install the new versions below.
 
 ## Compatibility
 
+The VARD-14 source candidate is **unpublished**: CLI 0.7.0, shared 0.3.0 and
+MCP 0.3.0. CLI 0.7.0 requires a server supporting the explicit
+`delivery=version-id-v1` manifest contract for normal pull and schema 3 creation.
+Its frozen reader also supports schema 2 unchanged; `migrate-lock` is an explicit
+authenticated upgrade with byte verification. CLI 0.6.0 does not understand schema
+3 and does not gain rename-safe delivery automatically. Server manifest defaults
+remain compatible with published CLI 0.6.0/MCP 0.2.0. MCP 0.3.0 retains that default
+contract; its new package version accounts for the shared 0.3.0 dependency in its
+archive. All three candidates need a new tested archive set before any release;
+never publish changed bytes under the already released versions. The first-project
+example remains pinned to the published CLI 0.6.0. No publication or tag is implied
+by these source versions.
+
 | Component | Released version | Required counterpart |
 | --- | --- | --- |
 | `@vardum/cli` | 0.6.0, Node ≥22 | Matching server release; minimum CLI for schema 2 frozen snapshots |

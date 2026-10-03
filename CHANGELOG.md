@@ -6,6 +6,14 @@ All notable changes to Vardum are documented here.
 
 ### Added
 
+- Opt-in version identity delivery, version-bound transformation signatures and
+  schema 3 frozen snapshots that survive source-key moves and workspace slug changes.
+  Explicit authenticated `vardum migrate-lock` verifies every schema 2 output before
+  upgrading its URLs without changing files, versions or checksums. Default manifests
+  and released CLI 0.6.0/MCP 0.2.0 behavior remain compatible. The CLI 0.7.0,
+  shared 0.3.0 and MCP 0.3.0 source candidates are unpublished; no retention guarantee
+  or new database migration is introduced.
+
 - Workspace original-storage reservations and unfinished-upload limits, bounded
   API/delivery admission, shared transform capacity and Compose CPU/memory limits.
   Expired unfinished uploads are audited and cleaned by a monitored worker queue;

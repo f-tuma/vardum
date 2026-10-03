@@ -1,5 +1,5 @@
 import { videoMimeSet } from "@vardum/shared";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -20,8 +20,11 @@ import { getObject } from "./storage.js";
 import {
   canonicalizeTransformation,
   deliveryQuerySchema,
+  identityVersionUrl,
+  transformationSchema,
   type Transformation,
   verifyTransformation,
+  verifyVersionTransformation,
 } from "./transformation.js";
 
 const stableParams = z.object({
@@ -31,11 +34,67 @@ const stableParams = z.object({
 const rootCustomParams = z.object({ assetKey });
 const immutableParams = stableParams.extend({ versionId: z.uuid() });
 const customImmutableParams = z.object({ versionId: z.uuid(), "*": assetKey });
+const identityParams = z.object({ workspaceId: z.string().min(1), versionId: z.uuid() });
+const resolveBody = z.object({
+  items: z.array(z.object({
+    id: z.string().min(1).max(500),
+    versionId: z.uuid(),
+    transformation: transformationSchema.nullable(),
+  }).strict()).max(1000),
+}).strict().refine(({ items }) => new Set(items.map(item => item.id)).size === items.length, {
+  message: "Duplicate snapshot item IDs",
+});
 type Workspace = { id: string; slug: string };
 type SignedTransformation = Transformation & { sig: string };
 
 export function registerDeliveryRoutes(app: FastifyInstance) {
   const delivery = app.withTypeProvider<ZodTypeProvider>();
+
+  delivery.get(
+    "/w/__id/:workspaceId/__v/:versionId",
+    { schema: { params: identityParams, querystring: deliveryQuerySchema } },
+    async (request, reply) => {
+      const { workspaceId, versionId } = request.params;
+      const transformation = signedTransformation(request.query);
+      if (transformation && !verifyVersionTransformation(workspaceId, versionId, transformation, transformation.sig))
+        return reply.code(403).send({ error: "Invalid transformation signature" });
+      return deliverVersion({ id: workspaceId }, null, versionId, transformation, request, reply);
+    },
+  );
+
+  // Explicit migration can recover retained identities without a live Vard or old names.
+  // Read authorization is required even for public versions; this is not an anonymous signer.
+  delivery.post(
+    "/api/workspaces/:workspaceId/snapshot-delivery/resolve",
+    { schema: { params: z.object({ workspaceId: z.string().min(1) }), body: resolveBody } },
+    async (request, reply) => {
+      const { workspaceId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, ["read"]);
+      if (!("principal" in authorization))
+        return reply.code(authorization.statusCode).send({ error: authorization.error });
+      const ids = [...new Set(request.body.items.map(item => item.versionId))];
+      const versions = ids.length ? await inWorkspace(workspaceId, transaction => transaction
+        .select({ id: assetVersion.id, mimeType: assetVersion.mimeType })
+        .from(assetVersion)
+        .innerJoin(asset, eq(asset.id, assetVersion.assetId))
+        .where(and(
+          eq(assetVersion.workspaceId, workspaceId), eq(asset.workspaceId, workspaceId),
+          eq(assetVersion.status, "ready"), inArray(assetVersion.id, ids),
+        ))) : [];
+      const byId = new Map(versions.map(version => [version.id, version]));
+      if (request.body.items.some(item => !byId.has(item.versionId)))
+        return reply.code(404).send({ error: "Snapshot version unavailable" });
+      if (request.body.items.some(item => item.transformation && videoMimeSet.has(byId.get(item.versionId)!.mimeType)))
+        return reply.code(415).send({ error: "Video assets cannot be transformed" });
+      return {
+        delivery: "version-id-v1" as const,
+        items: request.body.items.map(item => ({
+          id: item.id, versionId: item.versionId,
+          downloadUrl: identityVersionUrl(workspaceId, item.versionId, item.transformation),
+        })),
+      };
+    },
+  );
 
   delivery.get(
     "/w/__v/:versionId/*",
@@ -216,8 +275,8 @@ async function redirectCurrent(
 }
 
 async function deliverVersion(
-  workspace: Workspace,
-  key: string,
+  workspace: Pick<Workspace, "id">,
+  key: string | null,
   versionId: string,
   transformation: SignedTransformation | null,
   request: FastifyRequest,
@@ -240,9 +299,10 @@ async function deliverVersion(
       .where(
         and(
           eq(assetVersion.workspaceId, workspace.id),
+          eq(asset.workspaceId, workspace.id),
           eq(assetVersion.id, versionId),
           eq(assetVersion.status, "ready"),
-          eq(asset.key, key),
+          ...(key === null ? [] : [eq(asset.key, key)]),
         ),
       ),
   );

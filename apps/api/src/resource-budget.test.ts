@@ -61,6 +61,11 @@ test("request admission retains streaming slots and keeps health available", asy
 
 const deliveryRoutes = [
   {
+    route: "/w/__id/:workspaceId/__v/:versionId",
+    plain: "/w/__id/ws/__v/version",
+    encoded: "/%77/__id/ws/__v/version",
+  },
+  {
     route: "/w/:workspaceSlug/*",
     plain: "/w/demo/fast",
     encoded: "/%77/demo/fast",

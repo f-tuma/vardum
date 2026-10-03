@@ -32,6 +32,9 @@ import {
   writeLock,
   validateOutputPaths,
   validateSnapshotUrl,
+  validateLock,
+  snapshotTransformation,
+  canonicalSnapshotTransformation,
   type Lockfile,
 } from "./sync.js";
 
@@ -45,7 +48,7 @@ type Options = {
   positionals: string[];
 };
 type Action = {
-  action: "pull" | "push" | "delete" | "create";
+  action: "pull" | "push" | "delete" | "create" | "migrate";
   path: string;
   applied: boolean;
   conflict?: boolean;
@@ -93,6 +96,7 @@ try {
     else if (command === "whoami") await whoami(options);
     else if (command === "status") await pull({ ...options, dryRun: true });
     else if (command === "pull" || command === "sync") await pull(options);
+    else if (command === "migrate-lock") await migrateLock(options);
     else if (command === "push") await push(options);
     else if (command === "push-folder") await pushFolder(options);
     else if (command === "pull-asset") await pullAsset(options);
@@ -323,10 +327,10 @@ async function pull(options: Options) {
   const context = await loadContext();
   const lockPath = await safeLockPath(context.directory);
   const previous = await readLock(lockPath, context.config);
-  const snapshot = previous?.schema === 2 ? previous : null;
+  const snapshot = previous && previous.schema !== 1 ? previous : null;
   if (options.frozen && !snapshot)
     throw new Error(
-      "Frozen pull requires a complete schema 2 .vardum.lock; run vardum pull to refresh, then commit the snapshot",
+      "Frozen pull requires a complete schema 2 or 3 .vardum.lock; run vardum pull to refresh, then commit the snapshot",
     );
   let items: Array<
     Pick<
@@ -344,10 +348,12 @@ async function pull(options: Options) {
     }));
   } else {
     const manifest = await context.client.manifest(context.config);
-    assertManifest(manifest, context.config);
+    assertManifest(manifest, context.config, true);
     items = manifest.items;
   }
   validateOutputPaths(items.map((item) => item.outputPath));
+  const identityWorkspace = !options.frozen || snapshot?.schema === 3
+    ? context.config.workspace : undefined;
   const ids = items.map((item) => item.id);
   if (
     new Set(ids).size !== ids.length ||
@@ -369,6 +375,7 @@ async function pull(options: Options) {
       item.downloadUrl,
       item.versionId,
       context.config.server,
+      identityWorkspace,
     );
     const target = await safeTarget(context.directory, item.outputPath);
     const localChecksum = await checksumFile(target);
@@ -410,7 +417,8 @@ async function pull(options: Options) {
   }
 
   const next: Lockfile = {
-    schema: 2,
+    schema: 3,
+    delivery: "version-id-v1",
     server: context.config.server,
     workspace: context.config.workspace,
     vard: context.config.vard,
@@ -454,6 +462,7 @@ async function pull(options: Options) {
         plan.item.downloadUrl!,
         plan.item.versionId!,
         context.config.server,
+        identityWorkspace,
       ),
       checksum: localChecksum!,
     };
@@ -479,15 +488,62 @@ async function pull(options: Options) {
   );
 }
 
+async function migrateLock(options: Options) {
+  if (options.delete || options.force || options.values.size || options.positionals.length)
+    throw new Error("migrate-lock accepts only --dry-run and --json; checked-in configuration is authoritative");
+  const context = await loadContext();
+  const lockPath = await safeLockPath(context.directory);
+  const original = await readFile(lockPath, "utf8");
+  const previous = validateLock(JSON.parse(original), context.config);
+  if (previous.schema !== 2)
+    throw new Error("migrate-lock requires a schema 2 snapshot; schema 1 needs an intentional normal pull, schema 3 already uses identity delivery");
+  if (!context.client.authenticated)
+    throw new Error("Migrating a snapshot needs a workspace read key: run vardum login, or set VARDUM_API_KEY");
+  const entries = Object.entries(previous.items);
+  if (entries.length > 1000) throw new Error("Snapshot migration supports at most 1000 outputs");
+  const items = entries.map(([id, item]) => ({
+    id, versionId: item.versionId,
+    transformation: snapshotTransformation(new URL(validateSnapshotUrl(item.downloadUrl, item.versionId, context.config.server))),
+  }));
+  const entry = report("migrate", ".vardum.lock", options);
+  if (options.dryRun) return summary(options, 1);
+  const resolved = await context.client.resolveSnapshot(context.config.workspace, items);
+  if (resolved?.delivery !== "version-id-v1" || !Array.isArray(resolved.items) || resolved.items.length !== entries.length)
+    throw new Error("Server returned an unsupported snapshot migration response");
+  const next: Lockfile = { ...previous, schema: 3, delivery: "version-id-v1", items: Object.create(null) };
+  const transformations = new Map(items.map(item => [item.id, canonicalSnapshotTransformation(item.transformation)]));
+  for (const item of resolved.items) {
+    const old = item && typeof item.id === "string" && Object.hasOwn(previous.items, item.id) ? previous.items[item.id] : undefined;
+    if (!old || Object.hasOwn(next.items, item.id) || item.versionId !== old.versionId || typeof item.downloadUrl !== "string")
+      throw new Error("Server returned different or duplicate snapshot identities");
+    const downloadUrl = validateSnapshotUrl(item.downloadUrl, old.versionId, context.config.server, context.config.workspace);
+    if (canonicalSnapshotTransformation(snapshotTransformation(new URL(downloadUrl))) !== transformations.get(item.id))
+      throw new Error("Server returned different snapshot transformations");
+    next.items[item.id] = { ...old, downloadUrl };
+  }
+  validateLock(next, context.config);
+  for (const [, item] of entries) await safeTarget(context.directory, item.path);
+  for (const [id, item] of Object.entries(next.items)) {
+    if (await context.client.downloadChecksum(item.downloadUrl) !== previous.items[id]!.checksum)
+      throw new Error(`Locked checksum mismatch: ${item.path}; migration left files and lock unchanged`);
+  }
+  if (await readFile(lockPath, "utf8") !== original)
+    throw new Error(".vardum.lock changed during migration; refusing to overwrite it");
+  await writeLock(lockPath, next, context.config);
+  entry.applied = true;
+  summary(options, 1);
+}
+
 async function push(options: Options) {
   const context = await loadContext();
   requireApiKey(context.client);
-  let manifest = await context.client.manifest(context.config, true);
-  assertManifest(manifest, context.config);
   const lockPath = await safeLockPath(context.directory);
   const lock = await readLock(lockPath, context.config);
-  if (!lock || lock.vard !== manifest.id)
+  if (!lock)
     throw new Error("Run vardum pull before pushing mapped outputs");
+  const identity = lock.schema === 3;
+  let manifest = await context.client.manifest(context.config, true, identity);
+  assertManifest(manifest, context.config, identity);
 
   validateOutputPaths(manifest.items.map((item) => item.outputPath));
   const writable = manifest.items.filter((item) => item.writable);
@@ -530,9 +586,10 @@ async function push(options: Options) {
       context.config,
       item.id,
       previousVersion,
+      identity,
     );
     const updated = manifest.items.find(({ id }) => id === item.id);
-    assertManifest(manifest, context.config);
+    assertManifest(manifest, context.config, identity);
     if (
       !updated?.versionId ||
       !updated.fingerprint ||
@@ -542,11 +599,12 @@ async function push(options: Options) {
       throw new Error(
         `Uploaded output did not become ready: ${item.outputPath}`,
       );
-    if (lock.schema === 2) {
+    if (lock.schema !== 1) {
       validateSnapshotUrl(
         updated.downloadUrl,
         updated.versionId,
         context.config.server,
+        identity ? context.config.workspace : undefined,
       );
       const downloaded = await context.client.download(updated.downloadUrl);
       if (checksum(downloaded) !== localChecksum)
@@ -558,12 +616,13 @@ async function push(options: Options) {
       path: item.outputPath,
       versionId: updated.versionId,
       fingerprint: updated.fingerprint,
-      ...(lock.schema === 2
+      ...(lock.schema !== 1
         ? {
             downloadUrl: validateSnapshotUrl(
               updated.downloadUrl,
               updated.versionId,
               context.config.server,
+              identity ? context.config.workspace : undefined,
             ),
           }
         : {}),
@@ -833,11 +892,13 @@ function validateConfig(value: unknown): VardConfig {
   };
 }
 
-function assertManifest(manifest: Manifest, config: VardConfig) {
+function assertManifest(manifest: Manifest, config: VardConfig, identity = false) {
   if (manifest.schema !== 1 || manifest.id !== config.vard)
     throw new Error("Server returned a different or unsupported Vard manifest");
   if (manifest.workspaceId !== config.workspace)
     throw new Error("Vard does not belong to the configured workspace");
+  if (identity && manifest.delivery !== "version-id-v1")
+    throw new Error("Server does not support version-id-v1 delivery; upgrade the server before creating schema 3 snapshots");
 }
 
 /** Waits for every uploaded version to turn ready, one listing per round. */
@@ -882,9 +943,10 @@ async function waitForManifestVersion(
   config: VardConfig,
   itemId: string,
   previousVersion: string,
+  identity = true,
 ) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    const manifest = await client.manifest(config, true);
+    const manifest = await client.manifest(config, true, identity);
     const item = manifest.items.find(({ id }) => id === itemId);
     if (item?.versionId && item.versionId !== previousVersion) return manifest;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
@@ -995,6 +1057,7 @@ Usage:
   vardum status [--frozen | --delete]
   vardum sync [--frozen | --delete] [--dry-run] [--force]
   vardum pull [--frozen | --delete] [--dry-run] [--force]
+  vardum migrate-lock [--dry-run] [--json]
   vardum push [--dry-run] [--force]
   vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
   vardum push-folder <directory> [prefix] [--dry-run] [--delete]
@@ -1010,13 +1073,15 @@ Authentication:
 Safety:
   status is pull without writing anything, and reports local conflicts
   instead of refusing to run.
-  Normal pull explicitly refreshes assets and the schema 2 .vardum.lock snapshot.
+  Normal pull explicitly refreshes assets and creates a schema 3 identity snapshot.
   Commit vardum.json and .vardum.lock; CI uses pull --frozen to consume it
   without fetching the current manifest or changing the lock. Matching files
   need no download; downloaded SHA-256 is verified before replacement.
   --frozen refuses missing/legacy locks (run normal pull to refresh) and cannot
   use --delete. --force allows local replacement, never checksum bypass.
-  Use a schema-2-capable CLI build; older CLIs cannot maintain snapshots.
+  Schema 2 frozen locks remain supported with their source-name limitations.
+  migrate-lock explicitly upgrades schema 2 identities without changing files,
+  versions or hashes; every remote output is verified before the lock changes.
   Frozen delivery still needs retained versions, valid signatures and an
   available same-origin server; redirects are refused. No latest fallback.
   --delete removes only files/assets tracked by a previous CLI run, and

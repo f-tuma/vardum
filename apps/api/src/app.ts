@@ -55,7 +55,8 @@ export async function buildApp() {
   // Default sensitive routes to non-cacheable, including validation and storage errors.
   // Only successful public file delivery explicitly opts into caching.
   app.addHook("onSend", async (request, reply, payload) => {
-    const path = request.url.split("?")[0]!;
+    // Match admission's route classification, including encoded static aliases and HEAD.
+    const path = request.routeOptions.url ?? request.url.split("?")[0]!;
     const delivery = path.startsWith("/w/") || path.startsWith("/assets/");
     const sensitive =
       delivery || path.startsWith("/v/") || path.startsWith("/api/workspaces/");

@@ -16,6 +16,7 @@ import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
 import {
   canonicalizeTransformation,
+  identityVersionUrl,
   transformationSchema,
   transformedVersionUrl,
 } from "./transformation.js";
@@ -32,6 +33,7 @@ import {
 const workspaceParams = z.object({ workspaceId: z.string().min(1) });
 const vardParams = workspaceParams.extend({ vardId: z.uuid() });
 const publicVardParams = z.object({ vardId: z.uuid() });
+const manifestQuery = z.object({ delivery: z.literal("version-id-v1").optional() }).strict();
 const name = z.string().trim().min(1).max(80);
 const prefix = z
   .string()
@@ -470,7 +472,7 @@ export function registerVardRoutes(app: FastifyInstance) {
 
   api.get(
     "/api/workspaces/:workspaceId/vards/:vardId/manifest",
-    { schema: { params: vardParams } },
+    { schema: { params: vardParams, querystring: manifestQuery } },
     async (request, reply) => {
       const { workspaceId, vardId } = request.params;
       const authorization = await authorizeAsset(request, workspaceId, [
@@ -480,7 +482,7 @@ export function registerVardRoutes(app: FastifyInstance) {
         return reply
           .code(authorization.statusCode)
           .send({ error: authorization.error });
-      const manifest = await buildVardPayload(workspaceId, vardId);
+      const manifest = await buildVardPayload(workspaceId, vardId, { delivery: request.query.delivery });
       return manifest
         ? manifest
         : reply.code(404).send({ error: "Vard not found" });
@@ -489,7 +491,7 @@ export function registerVardRoutes(app: FastifyInstance) {
 
   api.get(
     "/v/:vardId",
-    { schema: { params: publicVardParams } },
+    { schema: { params: publicVardParams, querystring: manifestQuery } },
     async (request, reply) => {
       const [record] = await db
         .select({ workspaceId: vard.workspaceId })
@@ -504,7 +506,7 @@ export function registerVardRoutes(app: FastifyInstance) {
       const manifest = await buildVardPayload(
         record.workspaceId,
         request.params.vardId,
-        { anonymous: !("principal" in authorization) },
+        { anonymous: !("principal" in authorization), delivery: request.query.delivery },
       );
       return manifest
         ? manifest
@@ -519,9 +521,11 @@ async function buildVardPayload(
   {
     anonymous = false,
     resolveFolders = true,
+    delivery,
   }: {
     anonymous?: boolean;
     resolveFolders?: boolean;
+    delivery?: "version-id-v1";
   } = {},
 ) {
   return inWorkspace(workspaceId, async (transaction) => {
@@ -637,6 +641,7 @@ async function buildVardPayload(
 
     return {
       schema: 1 as const,
+      ...(delivery ? { delivery } : {}),
       id: record.id,
       workspaceId,
       name: record.name,
@@ -669,7 +674,9 @@ async function buildVardPayload(
               : null,
           downloadUrl:
             version?.status === "ready"
-              ? transformation
+              ? delivery === "version-id-v1"
+                ? identityVersionUrl(workspaceId, version.id, transformation)
+                : transformation
                 ? transformedVersionUrl(
                     record.workspaceSlug,
                     item.key,

@@ -140,10 +140,11 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 
 ## Reproducible asset consumption
 
-**Minimum compatible CLI: 0.6.0**, with the matching server from the
+**Schema 3 candidate CLI: 0.7.0, unpublished.** The published CLI 0.6.0 supports
+schema 2 snapshots and retains their source-name limitations. Use the server from the
 [compatibility table](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md#compatibility).
 Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. The repository's version bump alone
+cannot safely maintain schema 2 or 3 snapshots. The repository's version bump alone
 does not mean the candidate is already available on npm.
 
 1. Run **`vardum pull`** to intentionally resolve the current Vard and refresh
@@ -156,7 +157,8 @@ does not mean the candidate is already available on npm.
    pull again and review the changed snapshot. **`vardum update` updates the CLI
    executable, not asset dependencies.**
 
-Schema 2 binds the normalized server URL, workspace and Vard IDs. Its `items`
+Schema 3 binds the normalized server URL, workspace and Vard IDs and declares
+`delivery: "version-id-v1"`. Its `items`
 map records exact membership, repository-relative output paths, version IDs,
 fingerprints, fully resolved immutable download URLs (including signed
 transformation queries), and SHA-256 hashes of downloaded bytes. The snapshot
@@ -164,6 +166,13 @@ is not a cache or an archive. Treat it as trusted, reviewable project input:
 checksums detect changed delivery bytes, not a malicious commit that changes
 both the URL and checksum. Signed URLs may be sensitive; review repository
 visibility before committing them. API keys are never stored in the snapshot.
+
+Normal pull explicitly requests identity delivery from the server. It fails
+before writes if the server does not support it. Identity URLs use the workspace
+ID and retained version UUID; asset key renames, moves and workspace slug changes
+do not change them. Transformed signatures bind those identities and canonical
+parameters. Manifest requests without this opt-in still return legacy URLs for
+published CLI 0.6.0 and MCP 0.2.0.
 
 Frozen pull does not fetch the current Vard manifest and never rewrites the
 lock. It restores missing files from locked URLs even when the current Vard has
@@ -185,19 +194,39 @@ A missing or schema 1 lock is not a frozen snapshot. Run normal `vardum pull`
 to create/upgrade it, then review and commit. Malformed, unsupported or
 context-mismatched locks fail closed even on normal pull; restore a valid lock
 from version control before refreshing (do not discard conflict history
-blindly). Mapped push keeps schema 2 URLs, versions and verified checksums in
+blindly). Mapped push keeps schema 2 or 3 URLs, versions and verified checksums in
 step; legacy mapped push retains schema 1 until a normal pull upgrades it.
 
+To migrate an existing schema 2 snapshot without adopting the current manifest,
+run **`vardum migrate-lock --json`** with a workspace read key, then review and
+commit the lock. This explicitly resolves retained version IDs and the old
+transformation parameters, even after key/slug changes or Vard deletion. It
+ignores obsolete signatures, authorizes the workspace, downloads and hashes every
+replacement URL, and only then atomically writes schema 3. Membership, paths,
+versions, fingerprints and hashes are preserved; project files are untouched.
+Any authorization, storage, signature, response or checksum failure leaves the
+old lock unchanged. At most 1,000 outputs are accepted. `--dry-run` validates local
+input only; it does not check remote availability. Context overrides, `--force`,
+`--delete` and `--frozen` are refused. Schema 1 lacks the required URL/transform
+snapshot; upgrade it through a deliberate normal pull instead. Schema 3 does not
+use this migration command to refresh signing credentials.
+
 Reproduction requires the locked versions to remain stored and reachable.
-Deleting assets/versions, renaming a source key, changing the server URL or workspace slug, rotating
-transformation signing keys, expired signatures, or changes to transformation
+Deleting assets/versions, changing the server URL, rotating
+transformation signing keys, or changes to transformation
 rendering can make an old snapshot unavailable or fail its checksum. Frozen
 pull reports that failure rather than refreshing signatures or changing bytes.
 All downloads must stay on the configured server origin, and redirects are
 refused to prevent API-key forwarding. There is no offline cache or new
-retention guarantee. **Source-key rename can invalidate historical URLs despite
-retained bytes.** Frozen restore after rule/membership removal with valid source
-URLs does not prove frozen rename support. Private locked originals and variants require a workspace
+retention guarantee. Asset deletion cascades its version rows and queues cleanup
+of original and derived objects. Removing retained version rows or objects makes
+their locked delivery unavailable; there is no archive or new version-deletion
+API. Signatures currently have no expiration field. Signing-key rotation breaks
+signed transformed snapshots, while original URLs are unaffected by that secret;
+frozen pull never re-signs them. Retain the original signing configuration or
+deliberately adopt a new snapshot. **Schema 2 source-key rename and workspace slug
+changes can still invalidate historical URLs despite retained bytes.** Its frozen
+support remains available without automatic migration. Private locked originals and variants require a workspace
 key with `read` permission, even without a live manifest; use `VARDUM_API_KEY`
 in CI. Visibility changes leave locked version URLs and checksums unchanged.
 Existing matching local files need no network access and cannot be revoked.

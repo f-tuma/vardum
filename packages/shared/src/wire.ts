@@ -29,6 +29,8 @@ export type VardItem = {
 
 export type VardManifest = {
  schema: 1;
+ /** Present only when immutable identity delivery was explicitly requested. */
+ delivery?: "version-id-v1";
  id: string;
  workspaceId: string;
  name: string;

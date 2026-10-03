@@ -302,7 +302,37 @@ export async function checkInstalledPackages({
       assert.equal(JSON.parse((await command("pull")).stdout).changed, 4);
       const lockPath = join(project, ".vardum.lock");
       const originalLock = await readFile(lockPath, "utf8");
-      assert.equal(JSON.parse(originalLock).schema, 2);
+      const snapshot = JSON.parse(originalLock);
+      // Exercise both the published name-based baseline and the new identity
+      // candidate explicitly; a future format change must update this contract.
+      const expectedSchema = { "0.6.0": 2, "0.7.0": 3 }[cli.version];
+      assert.ok(
+        expectedSchema,
+        `Unspecified snapshot contract for CLI ${cli.version}`,
+      );
+      assert.equal(snapshot.schema, expectedSchema);
+      assert.equal(snapshot.server, base);
+      assert.equal(snapshot.workspace, workspaceId);
+      assert.equal(snapshot.vard, vard.id);
+      if (expectedSchema === 3) {
+        assert.equal(snapshot.delivery, "version-id-v1");
+        for (const item of Object.values(snapshot.items)) {
+          const url = new URL(item.downloadUrl);
+          assert.equal(url.origin, new URL(base).origin);
+          assert.equal(
+            url.pathname,
+            `/w/__id/${workspaceId}/__v/${item.versionId}`,
+          );
+        }
+      } else {
+        assert.equal(snapshot.delivery, undefined);
+        for (const item of Object.values(snapshot.items)) {
+          const url = new URL(item.downloadUrl);
+          assert.equal(url.origin, new URL(base).origin);
+          assert.match(url.pathname, new RegExp(`/__v/${item.versionId}/`));
+          assert.ok(!url.pathname.startsWith("/w/__id/"));
+        }
+      }
       assert.ok(
         !originalLock.includes(cliKey) && !originalLock.includes(writeKey),
       );
