@@ -62,6 +62,12 @@ server {
     try_files $uri /index.html;
   }
 
+  # SPA try_files internally redirects to /index.html. Keep that target static
+  # instead of allowing the catch-all marketing proxy to receive the redirect.
+  location = /index.html {
+    try_files $uri =404;
+  }
+
   location = /favicon.svg {
     try_files $uri =404;
   }

@@ -53,7 +53,21 @@ jobs:
               run: node scripts/release-packages.mjs pack artifacts/npm
             - run: bash scripts/smoke-publish.sh artifacts/npm
             - name: Exercise installed packages, production services and backup restore
+              env:
+                  SMOKE_IMAGE_REPORT_DIR: ${{ runner.temp }}/vardum-runtime-images
               run: SMOKE_RELEASE_DIR="$PWD/artifacts/npm" bash scripts/smoke-production.sh
+            - name: Retain runtime image findings and checksums
+              if: always()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: runtime-image-evidence
+                  retention-days: 7
+                  if-no-files-found: warn
+                  path: |
+                      ${{ runner.temp }}/vardum-runtime-images/*.json
+                      ${{ runner.temp }}/vardum-runtime-images/*.txt
+                      ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.json
+                      ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.txt
             - name: Preserve the exact tested archives
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:

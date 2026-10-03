@@ -358,6 +358,17 @@ curl --fail "$APP_URL/ready"
 Database migrations are forward-only. To roll back across a migration, check
 out the previous release and restore the backup made before upgrading.
 
+## Runtime image security checks
+
+Before a release, verify the actual API, worker and gateway image identities,
+effective gateway configuration, native codec versions and complete vulnerability
+reports using the [runtime image security procedure](runtime-image-security.md).
+The production smoke runs these checks on the disposable deployed stack. CI keeps
+reports and hashes for seven days; the local image exports and scanner database
+must be retained separately for offline replay. A successful scan is not approval
+of its findings: assess current vendor advisories and unresolved runtime exposure
+before promoting the artifact.
+
 ## Runtime database role upgrade
 
 The production and both Dokploy templates keep the existing `varda` database
