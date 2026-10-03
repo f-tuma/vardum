@@ -6,8 +6,11 @@ See the [product direction](docs/product-direction.md) for the target users,
 core workflow, first milestone, and planned templates and usage monitoring.
 That document describes intended behavior, not a list of shipped features.
 
-The [production readiness review dated 2026-09-20](docs/production-readiness-2026-09-20.md)
-records verified behavior, release blockers and the remaining acceptance work.
+See [current readiness status](docs/production-readiness-2026-09-20.md#current-status)
+(reviewed 2026-10-03) for published clients and open server/runtime acceptance.
+The same document preserves the initial September 20 audit and dated remediation
+evidence. Published CLI 0.6.0 uses schema 2; schema 3 and the next client/server
+candidates remain unreleased.
 
 ## Development
 
@@ -197,7 +200,7 @@ membership-updating pull** to remove stale tracked local files. A normal pull
 without deletion drops stale tracking but leaves those files on disk; a later
 `--delete` cannot discover them, so deliberate manual cleanup is required.
 
-This requires the matching folder-aware API/gateway and MCP 0.2.0 candidate;
+This requires the matching folder-aware API/gateway and published MCP 0.2.0;
 see [release status](docs/npm-release.md), [MCP rule operations](apps/mcp/README.md#folder-rules) and
 [migration/rollback guidance](docs/operations.md#folder-rule-upgrade).
 
@@ -261,7 +264,8 @@ candidate CLI and MCP independently, then publishes shared → CLI → MCP. It c
 registry integrity and fresh installs again after publication.
 
 See [the release procedure and compatibility table](docs/npm-release.md) for
-candidate versions, exact commands, partial-release recovery and npm setup.
+published versions, candidate gates, exact commands, partial-release recovery
+and npm setup.
 Publishing remains an explicit action; preparing or testing archives does not
 publish them. Packages use the public npmjs registry.
 

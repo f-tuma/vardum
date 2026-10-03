@@ -8,10 +8,10 @@ repository to create `vardum.json`.
 
 For a runnable three-file example, follow [First project](../../examples/first-project/README.md).
 
-Use Node.js 22 or newer. These commands target CLI **0.6.0** and the matching
-server release; see [release status and compatibility](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md)
-for candidate availability. Published CLI 0.5.0 has a broken workspace dependency
-and does not support frozen snapshots.
+Use Node.js 22 or newer. These commands target published CLI **0.6.0** and the
+matching server API contract; see [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
+Published CLI 0.5.0 has a broken workspace dependency and does not support frozen
+snapshots.
 
 1. In the web app, upload an image, create a Vard and add an output such as
    `public/logo.svg`. Keep its CLI config tab open for the server URL, workspace
@@ -42,7 +42,7 @@ and does not support frozen snapshots.
    A normal `pull` intentionally adopts remote changes; frozen pull restores
    the reviewed snapshot. `vardum push` only updates mappings marked Writable.
 
-For a source checkout before publication, run
+For a source checkout, run
 `pnpm --filter "@vardum/cli..." build` and use `node /absolute/path/to/vardum/apps/cli/dist/index.js`
 in place of `npx vardum` from the target project.
 
@@ -141,10 +141,10 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 ## Reproducible asset consumption
 
 **Minimum compatible CLI: 0.6.0**, with the matching server from the
-[compatibility table](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md#compatibility).
+[compatibility table](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md#compatibility).
 Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. The repository's version bump alone
-does not mean the candidate is already available on npm.
+cannot safely maintain schema 2 snapshots. CLI 0.6.0 is published; a source
+version bump or passing candidate checks does not publish its successor.
 
 1. Run **`vardum pull`** to intentionally resolve the current Vard and refresh
    its files and snapshot. Use `--delete` explicitly if obsolete tracked outputs
@@ -211,4 +211,4 @@ visibility in the app or through MCP `set_asset_visibility` (publication require
 New workspace API/CLI keys have a finite 10,000-request/60-second allowance;
 private file requests now consume it. Existing custom key limits still apply.
 This allowance is not a throughput guarantee; see the
-[upgrade notes](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/operations.md#asset-visibility-upgrade) for legacy keys.
+[upgrade notes](https://github.com/f-tuma/vardum/blob/main/docs/operations.md#asset-visibility-upgrade) for legacy keys.
