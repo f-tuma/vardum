@@ -6,6 +6,11 @@ All notable changes to Vardum are documented here.
 
 ### Added
 
+- Verified PostgreSQL/object-store backup bundles with SHA-256 checksums and
+  content metadata, plus restore into an empty target with runtime grants
+  reapplied. Production CI/release smoke now rehearses recovery in a second
+  disposable stack, including auth, durable ingest and frozen CLI pulls. See
+  `node scripts/backup.mjs --help` and `docs/operations.md`.
 - Worker heartbeats, container health checks and token-protected operational
   health/Prometheus endpoints for database, storage and queue status. Includes
   tested alert rules and setup instructions; requires migration

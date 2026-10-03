@@ -5,3 +5,7 @@ dist/
 *.tsbuildinfo
 QA.local.md
 artifacts/npm/
+backups/
+.env.*
+!.env.example
+!.env.*.example

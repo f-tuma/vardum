@@ -42,7 +42,7 @@ jobs:
             - name: Prepare immutable package candidates
               run: node scripts/release-packages.mjs pack artifacts/npm
             - run: bash scripts/smoke-publish.sh artifacts/npm
-            - name: Exercise installed CLI and every MCP tool against production services
+            - name: Exercise installed packages, production services and backup restore
               run: SMOKE_RELEASE_DIR="$PWD/artifacts/npm" bash scripts/smoke-production.sh
             - name: Preserve the exact tested archives
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

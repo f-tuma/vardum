@@ -37,6 +37,9 @@ cleanup() {
     "${compose[@]}" ps -a
     "${compose[@]}" logs --no-color
   fi
+  # Also own the recovery drill's independent target if its Node process exits early.
+  docker compose -p "${project}-restore" --profile rustfs -f compose.production.yml \
+    down -v --remove-orphans >/dev/null 2>&1 || true
   "${storage[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ -n "$temporary_release" ]]; then rm -rf "$temporary_release"; fi
   exit "$status"

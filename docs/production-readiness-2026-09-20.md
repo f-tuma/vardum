@@ -395,6 +395,58 @@ the missing worker/queue visibility gap in source. Deployment, alert routing,
 never-finalized upload cleanup, matched backup/restore rehearsal, resource budgets
 and first-user acceptance remain operational/release work.
 
+### Step 8 — matched backup and clean-stack restore (2026-09-21)
+
+Implemented the maintenance backup/verify/restore tool in `scripts/backup.mjs`.
+The previous instructions copied objects with `aws s3 sync` and restored over
+an existing schema; they neither verified the matched bundle nor retained all
+content metadata. The new format stores a custom PostgreSQL dump, required original
+references, streamed object bytes, metadata and SHA-256 checksums. The complete
+manifest is written last. Missing/corrupt originals for ready or processing
+versions prevent completion, and files named by S3 keys cannot escape the bundle.
+
+Restore requires stopped application services, an empty database and an empty
+bucket. It validates every local byte and the archive before destination writes,
+restores the database transactionally without source owner/ACL assignments,
+re-reads uploaded objects to verify their bytes and metadata, then provisions the
+restricted runtime role/grants through the normal migrator. It never wipes a
+destination or automatically starts a partially restored application. Expiring
+worker heartbeat rows are omitted while durable queue jobs are retained.
+
+Validation:
+
+- **86 unit tests**, workspace typecheck/build and script syntax checks passed.
+  New cases cover byte corruption, missing/symlinked/path-traversing entries,
+  empty objects, duplicate keys, changing buckets, occupied targets and missing
+  or mismatched database-referenced originals.
+- The production smoke creates a backup of a real PostgreSQL 17/RustFS stack
+  and restores into a second project with independent empty volumes. It compares
+  application row counts, version/current pointers and object bytes/metadata;
+  validates sessions, password login, private anonymous denial, API key scope,
+  pre-backup signed transforms, saved Vards and byte-identical frozen pulls with
+  the installed npm CLI. A pre-backup queued upload must complete in the new worker.
+- The drill rejects a corrupt backup and refuses an occupied bucket/database
+  without overwriting their contents. Both projects are cleaned up. The same
+  drill is required by CI and the npm release validation gate.
+
+A local run used 10 objects (1,460 object bytes and approximately 106 KiB of
+database archive): backup took 1.8 seconds and fresh-target recovery/acceptance,
+including refusal checks, took 35.6 seconds. This measures the small functional
+fixture, not production recovery time.
+
+No live production deployment, new npm release, scheduled backup or off-host copy
+was created. Existing development data was retained. This closes the missing
+matched restore rehearsal for the production template, not a universal disaster
+recovery guarantee. Operators still need encrypted off-host retention, recoverable
+secrets, a provider/Dokploy-specific rehearsal and production-scale RPO/RTO tests.
+The tool covers current object bytes/content metadata, not bucket policies, tags,
+provider version history, KMS configuration or infrastructure. It requires a write
+freeze and is limited to 5 GiB per object; larger workloads need a provider-native
+strategy. See [backup/restore instructions](operations.md#backup).
+
+Resource budgets, never-finalized upload cleanup, first-user acceptance and an
+actual production-size upgrade/rollback rehearsal remain separate work.
+
 ## Release blockers
 
 ### 1. Public npm CLI and MCP artifacts have unresolved workspace dependencies
@@ -532,9 +584,11 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
   general delivery/transform admission limit or global transform concurrency cap
   was found. The in-process variant map only deduplicates identical work. Establish
   load limits and measure memory/latency before an untrusted multi-tenant service.
-- **Recovery:** backup/restore procedures exist, but this review did not execute
-  a matched database-and-object restore, upgrade/rollback rehearsal, or disaster
-  recovery timing. Schedule and test those against the release candidate.
+- **Recovery (matched restore covered in step 8):** the production-template drill
+  now restores verified database/object bundles into a clean stack and exercises
+  auth, delivery, CLI and queued work. Encrypted off-host retention, real-data
+  recovery timing, provider-specific failover and upgrade/rollback rehearsals
+  still need deployment-level validation.
 - **Frozen delivery lifetime:** snapshots lock membership and verified bytes, but
   are not an archive. URLs still depend on the current source key, workspace slug,
   signing configuration, retained versions and reachable server. Source-key changes

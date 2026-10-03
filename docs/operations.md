@@ -4,7 +4,8 @@ These commands assume the production Compose stack and `.env.production` from
 the repository root. Keep that environment file outside public backups: it
 contains the secrets needed to keep sessions and signed delivery URLs valid.
 
-Load the deployment values and set the Compose shortcut once per shell:
+For operations on the existing deployment, load its values and set the Compose
+shortcut once per shell. Restore uses a separate, fresh shell as described below.
 
 ```sh
 set -a
@@ -51,51 +52,155 @@ configurations without contacting a mail provider or the deployed database.
 
 ## Backup
 
-Stop API writes, then export PostgreSQL and mirror the bucket. PostgreSQL stays
-available to the backup commands.
+`node scripts/backup.mjs` creates and verifies a matched PostgreSQL + object-store
+backup. It requires Node 22+, a Unix host with Docker Compose, and API images built
+from this revision. It uses the deployment's configured S3 endpoint, so the same
+exporter handles bundled RustFS and an external S3-compatible bucket. Always name
+the existing Compose project explicitly (`docker compose ls`); do not guess it.
+For Dokploy, also pass `--compose-file compose.dokploy.yml` (or the dev template)
+and its environment file/project name. Dokploy/external providers need their own
+restore rehearsal before relying on them; the automated drill tests the production
+template with PostgreSQL 17 and RustFS.
 
-The `aws s3 sync` commands below address the bundled RustFS from
-`--profile rustfs`. With an external bucket, replace them with your provider's
-own mirroring — the important part is that a database dump without the objects
-is not a backup.
+Schedule a maintenance window. Block direct/public S3 uploads and any other bucket
+writers, including still-valid presigned uploads, and pause external schedulers or
+replicas outside this Compose project. The command stops every gateway/API/worker
+replica in the selected project before dumping. It **leaves them stopped on both
+success and failure**. PostgreSQL and storage stay available to the exporter.
+The before/after bucket inventories must agree; a concurrent change fails the
+export rather than accepting a mixed snapshot. This is a maintenance backup,
+not a zero-downtime database/object snapshot.
 
 ```sh
-stamp=$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p "backups/$stamp"
-compose stop api worker
-compose exec -T postgres pg_dump -U varda -d varda -Fc \
-  > "backups/$stamp/postgres.dump"
-compose --profile rustfs run --rm --no-deps -v "$PWD/backups/$stamp:/backup" \
-  --entrypoint /bin/sh rustfs-init -ec \
-  'aws --endpoint-url http://rustfs:9000 s3 sync "s3://$S3_BUCKET" /backup/objects'
-compose up -d --wait
+deployment_project=vardum  # replace with the existing deployment's project name
+backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+node scripts/backup.mjs create --project "$deployment_project" \
+  --env-file .env.production --directory "$backup_dir"
+node scripts/backup.mjs verify --project "$deployment_project" \
+  --env-file .env.production --directory "$backup_dir"
+# Resume only after a successful backup, or after investigating a failure.
+docker compose --env-file .env.production -p "$deployment_project" \
+  -f compose.production.yml up -d --wait api worker gateway
 ```
 
-Also store an encrypted copy of `.env.production`. A backup without the object
-bucket is incomplete; the database stores metadata, not image contents.
+A bundle has four parts:
+
+- `postgres.dump`: custom-format dump, including users, sessions, keys, Vards,
+  histories, audit/delivery records and durable queue jobs. Expiring worker
+  heartbeat **rows** are omitted; their table remains.
+- `references.json`: ready/processing versions' required original keys, sizes and
+  available checksums. Missing originals or bytes inconsistent with the database
+  fail the backup instead of producing a complete-looking but unusable bundle.
+- `objects/`: streamed original and derived bytes under opaque filenames, including
+  empty objects. S3 keys are stored in the manifest, never interpreted as local paths.
+- `backup.json`: written last, with database/object SHA-256 checksums, sizes,
+  object keys, content headers/custom metadata, migration hashes, PostgreSQL version
+  and the source API image ID. Incomplete exports have no valid completion manifest.
+
+The directory is created with mode 0700 and files with mode 0600. It must be a new
+path; the command never reuses an existing backup directory. Verification checks
+archive structure, every byte and original-file references, and rejects missing
+files, duplicate keys and symlinks. SHA-256 detects corruption; it is not
+authentication against someone who
+can rewrite the manifest. Restore only a trusted, protected backup: a PostgreSQL
+archive can contain executable database definitions.
+
+Keep the **whole bundle** and an encrypted copy of the deployment environment in
+an access-controlled, encrypted off-host backup store. The tool does not copy
+secrets, encrypt, schedule, expire or remotely replicate backups. Back up the exact
+application revision/image references too. Preserve `BETTER_AUTH_SECRET` and
+`TRANSFORM_SECRET`; the latter is needed for existing signed/frozen URLs. The
+bundled image ID is provenance, not a portable registry reference. `backups/` and
+production environment files are ignored by Git; backups are excluded from the
+Docker build context. Use a dedicated bucket: every current object is exported.
+
+This format preserves current object bytes and content metadata (including MIME
+type, cache headers and custom metadata), not provider version IDs/history, delete
+markers, tags, ACLs, lifecycle/replication rules, bucket policy or encryption/KMS
+configuration. Recreate provider configuration separately and keep restored buckets
+private. Objects larger than 5 GiB need a provider-native backup/restore method.
+The exporter streams bytes but retains the object inventory in memory; its commands
+have a 30-minute limit. Measure runtime/capacity on your real data before scheduling
+this path for a large installation.
 
 ## Restore
 
-Restore into an empty stack or accept that `pg_restore --clean` replaces the
-current database objects. Keep API and worker stopped until both stores match.
+Use a **new Compose project, empty PostgreSQL database and empty dedicated bucket**.
+The tool never drops a database, cleans a bucket or offers a force-overwrite mode.
+It checks the complete bundle, then both destinations, before restoring anything.
+Keep application services and all external writers stopped until acceptance passes.
+If a restore fails halfway, keep that target isolated and retry into another fresh
+target; do not start a partially restored instance.
+
+Prepare `.env.restore` from the backed-up secrets with separate target storage,
+ports and credentials, and the matching application images. PostgreSQL/runtime/S3
+passwords can differ if the target configuration and runtime grants agree; retain
+the application signing secrets. Use PostgreSQL 17 for this tested procedure and
+first restore the matching application revision. Older PostgreSQL/application
+versions are not supported downgrade targets.
+
+Run the restore commands in a **fresh shell without exported source deployment
+variables**. Do not run the `.env.production` initialization from the top of this
+guide in that shell. Both Compose and the backup script follow normal
+[Compose environment precedence](https://docs.docker.com/compose/how-tos/environment-variables/envvars-precedence/):
+exported shell variables override values in `--env-file .env.restore`. Check that
+the target configuration names the new stores, bucket and ports before starting it.
 
 ```sh
-backup=backups/20260822T120000Z
-compose --profile rustfs up -d postgres rustfs rustfs-init
-compose stop api worker
-compose build
-# Prepare the runtime role so ACLs in newer backups have a valid grantee.
-compose run --rm migrate
-compose exec -T postgres pg_restore --clean --if-exists -U varda -d varda \
-  < "$backup/postgres.dump"
-compose --profile rustfs run --rm --no-deps -v "$PWD/$backup:/backup:ro" \
-  --entrypoint /bin/sh rustfs-init -ec \
-  'aws --endpoint-url http://rustfs:9000 s3 sync /backup/objects "s3://$S3_BUCKET"'
-# Reapply pending migrations and runtime grants after restoring the dump.
-compose run --rm migrate
-compose up -d --build --wait
-curl --fail "$APP_URL/ready"
+restore_project=vardum-restore
+backup_dir="$PWD/backups/20260921T120000Z"  # select a verified bundle
+restore_compose() {
+  docker compose --env-file .env.restore -p "$restore_project" \
+    -f compose.production.yml "$@"
+}
+# Bundled storage: start only the fresh stores and create the private bucket.
+restore_compose --profile rustfs up -d --wait postgres rustfs
+restore_compose --profile rustfs run --rm --no-deps rustfs-init
+# External storage: provision an empty private bucket separately; start postgres only.
+node scripts/backup.mjs restore --project "$restore_project" \
+  --env-file .env.restore --directory "$backup_dir"
+restore_compose up -d --wait api worker gateway
 ```
+
+Do **not** run the migrator before restore: it would populate the empty target.
+The command uses `pg_restore --single-transaction --exit-on-error --no-owner
+--no-acl`, restores and re-reads all objects to verify bytes/metadata, then runs
+the migrator to recreate the restricted runtime role and grants and runs `ANALYZE`.
+Source owner/ACL assignments are intentionally replaced by the current least-
+privilege provisioning. See PostgreSQL's [pg_restore documentation](https://www.postgresql.org/docs/17/app-pgrestore.html).
+
+Before routing users to the restored stack, verify login, organization/workspace
+membership, private anonymous denial, API key scope, an old version and signed
+transform, Vard configuration, and a normal/frozen CLI pull from the restored
+origin. Historical URLs contain the original application origin: preserve it at
+cutover, or use isolated local DNS/port routing during a drill so the old URLs
+actually reach the restored instance. Keep the old target isolated to avoid two
+writers. Restored queued jobs resume with the new worker; jobs previously active
+may first need queue expiry/reconciliation. Use authenticated operational health
+as well as `/ready` to check the recovered pipeline.
+
+### Automated recovery drill
+
+```sh
+bash scripts/smoke-production.sh
+```
+
+The CI/release production smoke creates a backup and restores it into a second
+fresh PostgreSQL 17/RustFS Compose project with independent volumes. It compares
+application row counts before starting workers, preserves version/current pointers,
+checks sessions and password login, private delivery, key scope, pre-backup signed
+transforms, saved Vards and byte-identical frozen pulls with the installed npm CLI.
+A job queued before backup must finish after restore. It also tests empty objects
+and metadata, corrupt-backup refusal, and refusal to overwrite either a populated
+bucket or database. Both disposable projects are removed; development data is
+untouched. Do not inject this drill into an existing deployed project.
+
+The output records object count/bytes and elapsed backup and restore/acceptance
+time. These tiny-fixture timings are **not** a production RTO. Choose and monitor
+backup frequency/retention from an explicit recovery-point objective, and rehearse
+on representative data to set a recovery-time objective. Off-host retention,
+credential recovery, provider failover, notification delivery and an actual
+production-size upgrade/rollback rehearsal remain operator work.
 
 ## Upgrade
 
