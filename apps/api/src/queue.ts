@@ -4,6 +4,7 @@ import { config } from "./config.js";
 export const assetIngestQueue = "asset-ingest";
 export const assetIngestRecoveryQueue = "asset-ingest-recovery";
 export const assetDeleteQueue = "asset-delete";
+export const uploadCleanupQueue = "upload-cleanup";
 export const deliveryRetentionQueue = "delivery-retention";
 export const boss = new PgBoss({
   connectionString: config.DATABASE_URL,
@@ -43,6 +44,13 @@ export function startQueue() {
       policy: "exclusive",
       retryLimit: 3,
       retryDelay: 10,
+      expireInSeconds: 5 * 60,
+      heartbeatSeconds: 30,
+    });
+    await instance.createQueue(uploadCleanupQueue, {
+      policy: "exclusive",
+      retryLimit: 3,
+      retryDelay: 30,
       expireInSeconds: 5 * 60,
       heartbeatSeconds: 30,
     });

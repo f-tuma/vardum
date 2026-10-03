@@ -58,6 +58,7 @@ export const workspace = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     slug: text("slug").notNull().unique(),
+    uploadCleanupAt: timestamp("upload_cleanup_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -68,7 +69,13 @@ export const workspace = pgTable(
       .notNull(),
     updatedBy: text("updated_by").notNull(),
   },
-  (table) => [index("workspace_organization_idx").on(table.organizationId)],
+  (table) => [
+    index("workspace_organization_idx").on(table.organizationId),
+    index("workspace_upload_cleanup_idx").on(
+      table.uploadCleanupAt.asc().nullsFirst(),
+      table.id,
+    ),
+  ],
 );
 
 export const workspaceSettings = pgTable(
@@ -224,6 +231,12 @@ export const assetVersion = pgTable(
     ingestJobId: uuid("ingest_job_id"),
     ingestAttemptId: uuid("ingest_attempt_id"),
     retryable: boolean("retryable").default(false).notNull(),
+    uploadExpiredAt: timestamp("upload_expired_at", { withTimezone: true }),
+    uploadCleanedAt: timestamp("upload_cleaned_at", { withTimezone: true }),
+    uploadSweepAt: timestamp("upload_sweep_at", { withTimezone: true }),
+    uploadCleanupAttemptAt: timestamp("upload_cleanup_attempt_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -247,6 +260,22 @@ export const assetVersion = pgTable(
     index("asset_version_processing_idx")
       .on(table.workspaceId, table.id)
       .where(sql`${table.status} = 'processing'`),
+    index("asset_version_pending_idx")
+      .on(table.workspaceId, table.createdAt)
+      .where(sql`${table.status} = 'pending'`),
+    index("asset_version_cleanup_idx")
+      .on(table.workspaceId, table.uploadSweepAt)
+      .where(sql`${table.uploadExpiredAt} IS NOT NULL`),
+    index("asset_version_cleanup_attempt_idx")
+      .on(
+        table.workspaceId,
+        table.uploadCleanupAttemptAt.asc().nullsFirst(),
+        table.createdAt,
+        table.id,
+      )
+      .where(
+        sql`${table.status} = 'pending' OR (${table.status} = 'failed' AND ${table.uploadExpiredAt} IS NOT NULL)`,
+      ),
     check("asset_version_number_check", sql`${table.number} > 0`),
     check("asset_version_size_check", sql`${table.size} > 0`),
     tenantPolicy(table.workspaceId),

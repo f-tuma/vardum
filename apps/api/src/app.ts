@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import { registerAssetRoutes } from "./asset-routes.js";
 import { registerAuthRoute } from "./auth-route.js";
+import { CapacityError, registerAdmission } from "./resource-budget.js";
 import { config } from "./config.js";
 import { registerDeliveryRoutes } from "./delivery-routes.js";
 import { db } from "./db/index.js";
@@ -29,6 +30,18 @@ export async function buildApp() {
     logger: process.env.NODE_ENV !== "test",
   }).withTypeProvider<ZodTypeProvider>();
 
+  registerAdmission(app);
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof CapacityError) {
+      if (error.statusCode === 429 || error.statusCode === 503)
+        reply.header("retry-after", "1");
+      return reply
+        .header("cache-control", "private, no-store")
+        .code(error.statusCode)
+        .send({ error: error.message });
+    }
+    return reply.send(error);
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(cors, {

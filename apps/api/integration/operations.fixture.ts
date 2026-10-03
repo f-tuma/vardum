@@ -30,7 +30,7 @@ export async function checkOperations(
       );
       const initial = await readProcessingHealth(runtime);
       assert.equal(initial.workers.live, 1);
-      assert.equal(initial.queues.length, 4);
+      assert.equal(initial.queues.length, 5);
       const waiting = await boss.send(
         assetIngestQueue,
         { secret: "not a metric" },

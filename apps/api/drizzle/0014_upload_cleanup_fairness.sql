@@ -1,0 +1,4 @@
+ALTER TABLE "asset_version" ADD COLUMN "upload_cleanup_attempt_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "workspace" ADD COLUMN "upload_cleanup_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "asset_version_cleanup_attempt_idx" ON "asset_version" USING btree ("workspace_id","upload_cleanup_attempt_at" NULLS FIRST,"created_at","id") WHERE "asset_version"."status" = 'pending' OR ("asset_version"."status" = 'failed' AND "asset_version"."upload_expired_at" IS NOT NULL);--> statement-breakpoint
+CREATE INDEX "workspace_upload_cleanup_idx" ON "workspace" USING btree ("upload_cleanup_at" NULLS FIRST,"id");

@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { asset, assetVersion, auditEvent } from "./db/app-schema.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
-import { getObject } from "./storage.js";
+import { getObject, readBoundedObject } from "./storage.js";
 
 const payloadSchema = z.object({
   workspaceId: z.string().min(1),
@@ -64,7 +64,7 @@ export async function processAsset(
   const object = await getObject(pending.storageKey, undefined, options.signal);
   if (!object.Body) throw new Error("S3 returned an empty body");
   // Upload limits bound this buffer; stream to disk if those limits grow.
-  const bytes = Buffer.from(await object.Body.transformToByteArray());
+  const bytes = await readBoundedObject(object, pending.size, options.signal);
   options.signal?.throwIfAborted();
 
   // Video: no sharp processing, just checksum + mark ready.

@@ -447,6 +447,49 @@ strategy. See [backup/restore instructions](operations.md#backup).
 Resource budgets, never-finalized upload cleanup, first-user acceptance and an
 actual production-size upgrade/rollback rehearsal remain separate work.
 
+### Step 9 — resource admission and unfinished-upload cleanup (2026-09-21)
+
+Implemented in source with migration `0013_upload_cleanup.sql`. Workspace original
+storage is reserved atomically before upload/import, including pending, processing,
+failed and historical originals. Concurrent requests across API replicas cannot
+oversubscribe the configured budget. Pending plus processing versions have a
+separate count limit; manual retry uses it too. An authorized usage endpoint and
+explicit 413/429/503 errors expose the limits without changing access permissions.
+
+The API bounds concurrent requests/streams and delivery rate, and applies a
+small, bounded transform queue. PostgreSQL advisory locks cap uncached transforms
+across replicas; cache hits bypass encoder admission. Transform checks include
+animation/extreme aspect ratios, bounded original reads and encode/storage
+timeouts. Production and Dokploy containers have configurable memory/CPU limits.
+
+The monitored cleanup queue expires only unfinished pending uploads, after 24 hours
+by default, with an audit record. Finalize rechecks the deadline under a version
+lock. Objects are removed outside the transaction; quota stays reserved until S3
+confirms success, including per-object errors inside an HTTP 200 response. Retained
+failed-version markers are re-swept daily to catch late object arrival. Processing,
+ready and current version pointers are retained.
+
+Validation: **92 unit tests** and **57 PostgreSQL integration checks**, including
+concurrent cross-asset quota reservations, import/retry limits, cleanup/finalizer
+locking, partial S3 deletion/retry, late finalize, tenant scope, cross-session
+transform saturation, HTTP busy responses, same-variant deduplication, cached
+reads under encoder saturation and extreme-aspect-ratio rejection. The production
+smoke also passed expiry against real RustFS and transform slot recovery. A local
+200-request burst produced 64 controlled rejections with 363 ms p95 overall;
+twelve concurrent WebP requests from a synthetic 4 MP JPEG completed ten with
+two controlled rejections, 1,083 ms successful-request p95 and 254 MiB API peak
+memory. The peak includes preceding smoke steps. Typecheck, build and all three
+deployment Compose configurations passed. Local migration retained the existing
+ready asset.
+
+These are deployment defaults and functional load checks, not a production SLO.
+The quota covers original reservations, not derived-cache/provider-history/log/DB
+storage. Operators must set derived-only lifecycle retention, edge-wide rate limits
+for multiple replicas, disk/memory alerts and representative codec/tenant load
+acceptance. Defaults, upgrade procedure and limits are in
+[operations](operations.md#resource-budgets-and-unfinished-uploads). No new npm
+release or production deployment is part of this step.
+
 ## Release blockers
 
 ### 1. Public npm CLI and MCP artifacts have unresolved workspace dependencies
@@ -580,10 +623,12 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
   health, queue age/failure metrics and storage probes now have dedicated protected
   endpoints and tested alert rules. `/ready` still checks PostgreSQL only. Operators
   must deploy these changes and configure/test external notification delivery.
-- **Resource budgets:** per-file limits exist, but no workspace storage quota,
-  general delivery/transform admission limit or global transform concurrency cap
-  was found. The in-process variant map only deduplicates identical work. Establish
-  load limits and measure memory/latency before an untrusted multi-tenant service.
+- **Resource budgets (implemented in step 9):** original-storage reservations,
+  unfinished-count limits, request/delivery admission, shared transform slots and
+  container CPU/memory bounds now have regression coverage. Expired pending uploads
+  are cleaned automatically. Derived-cache retention, fleet-wide edge rate limits,
+  representative capacity acceptance and operational alert thresholds still need
+  deployment-specific configuration.
 - **Recovery (matched restore covered in step 8):** the production-template drill
   now restores verified database/object bundles into a clean stack and exercises
   auth, delivery, CLI and queued work. Encrypted off-host retention, real-data

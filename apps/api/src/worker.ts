@@ -3,6 +3,7 @@ import {
   type AssetDeletePayload,
 } from "./asset-cleanup.js";
 import { processAsset, type AssetIngestPayload } from "./asset-processor.js";
+import { cleanupPendingUploads } from "./upload-lifecycle.js";
 import { reconcileAssetIngest } from "./asset-ingest.js";
 import { closeDatabase, pool } from "./db/index.js";
 import { config } from "./config.js";
@@ -14,6 +15,7 @@ import {
   assetIngestQueue,
   assetIngestRecoveryQueue,
   deliveryRetentionQueue,
+  uploadCleanupQueue,
   startQueue,
   stopQueue,
 } from "./queue.js";
@@ -31,6 +33,11 @@ process.once("SIGTERM", shutdown);
 try {
   if (config.NODE_ENV === "production") await assertRuntimeDatabaseRole(pool);
   const queue = await startQueue();
+  await queue.schedule(uploadCleanupQueue, "* * * * *");
+  await queue.work(uploadCleanupQueue, async () => {
+    await cleanupPendingUploads();
+  });
+  await queue.send(uploadCleanupQueue, {});
   await queue.schedule(assetIngestRecoveryQueue, "* * * * *");
   await queue.work(assetIngestRecoveryQueue, async () => {
     await reconcileAssetIngest();

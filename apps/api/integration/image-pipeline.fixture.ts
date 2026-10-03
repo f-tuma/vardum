@@ -65,7 +65,7 @@ export async function checkImagePipeline(
       "SELECT v.status,v.mime_type,v.width,v.height,v.checksum,v.error,a.current_version_id FROM asset_version v JOIN asset a ON a.id=v.asset_id WHERE v.id=$1",
       [versionId],
     );
-    return { row, source: { id: versionId, storageKey, mimeType } };
+    return { row, source: { id: versionId, storageKey, mimeType, size: bytes.length } };
   }
 
   for (const format of formats) {

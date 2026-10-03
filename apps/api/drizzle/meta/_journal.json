@@ -92,6 +92,20 @@
       "when": 1789996591952,
       "tag": "0012_worker_heartbeat",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790005243735,
+      "tag": "0013_upload_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791028532948,
+      "tag": "0014_upload_cleanup_fairness",
+      "breakpoints": true
     }
   ]
 }
