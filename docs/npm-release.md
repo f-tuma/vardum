@@ -12,8 +12,8 @@ CLI 0.6.0 uses schema **2** frozen snapshots.
 
 CLI **0.7.0**, shared **0.3.0**, MCP **0.3.0** and schema **3** belong to VARD-14's
 [unmerged, unpublished draft PR #13](https://github.com/f-tuma/vardum/pull/13).
-VARD-6's `server-v0.7` is provisional, with runtime hardening and VARD-53's residual
-OS/native assessment still open. See [current readiness status](production-readiness-2026-09-20.md#current-status).
+VARD-6's `server-v0.7` is provisional, with clean artifact acceptance and VARD-53's
+residual OS/native assessment still open. See [current readiness status](production-readiness-2026-09-20.md#current-status).
 Passing source tests does not make those candidates publicly available or ready
 for production.
 

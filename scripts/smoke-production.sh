@@ -80,6 +80,27 @@ SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node "$(dirname "$0")/sm
   const { assertRuntimeDatabaseRole } = await import("./dist/db/runtime-role.js");
   try {
     const { default: sharp } = await import("sharp");
+    console.log(`Deployed native codec versions: ${JSON.stringify(sharp.versions)}`);
+    function requirePatchedVersion(name, minimum) {
+      const version = sharp.versions[name];
+      if (typeof version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+        throw new Error(`Missing or invalid stable semantic version for ${name}: ${version}`);
+      }
+      const actual = version.split(".").map(BigInt);
+      const required = minimum.split(".").map(BigInt);
+      for (let index = 0; index < required.length; index++) {
+        if (actual[index] > required[index]) return;
+        if (actual[index] < required[index]) throw new Error(`Deployed ${name} ${version} is below security floor ${minimum}`);
+      }
+    }
+    requirePatchedVersion("sharp", "0.35.5");
+    requirePatchedVersion("rsvg", "2.63.2");
+    requirePatchedVersion("heif", "1.23.5");
+    const svg = Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"8\"><rect width=\"16\" height=\"8\" fill=\"red\"/></svg>");
+    const png = await sharp(svg, { limitInputPixels: 100_000_000 }).resize({ width: 8 }).png().toBuffer();
+    const svgPixels = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    if (svgPixels.info.width !== 8 || svgPixels.info.height !== 4 || svgPixels.data.length !== 8 * 4 * svgPixels.info.channels || svgPixels.data[0] < 180 || svgPixels.data[1] > 60 || svgPixels.data[2] > 60) throw new Error("Deployed SVG rasterize/decode check failed");
+    console.log("Deployed SVG rasterize/decode passed");
     const avif = await sharp({ create: { width: 16, height: 8, channels: 3, background: "red" } }).avif().toBuffer();
     const decoded = await sharp(avif).resize({ width: 8 }).raw().toBuffer({ resolveWithObject: true });
     if (decoded.info.width !== 8 || decoded.info.height !== 4 || decoded.data[0] < 180) throw new Error("Deployed AVIF codec check failed");
@@ -90,5 +111,10 @@ SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node "$(dirname "$0")/sm
     console.log("Deployed database role and unscoped RLS check passed");
   } finally { await closeDatabase(); }
 '
+
+# Bind runtime evidence to the actual images under acceptance. Reports and the
+# database snapshot deliberately survive disposable stack cleanup for review.
+runtime_report="${SMOKE_IMAGE_REPORT_DIR:-$(mktemp -d)/runtime}"
+node scripts/check-runtime-images.mjs "$project" "$runtime_report"
 
 # Cleanup is handled by trap
