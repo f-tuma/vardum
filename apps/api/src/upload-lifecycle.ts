@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { config } from "./config.js";
 import { assetVersion, auditEvent, workspace } from "./db/app-schema.js";
 import { db } from "./db/index.js";
@@ -104,91 +104,105 @@ export async function expirePending(
 }
 
 export async function cleanupPendingUploads(now = new Date(), batch = 100) {
-  let after: string | undefined;
   let cleaned = 0;
   let inspected = 0;
   let failure: unknown;
-  // Bound work per invocation. Skip locked rows; finalize and expiry agree on
-  // the terminal state before any object is deleted outside the transaction.
-  while (inspected < batch) {
-    const workspaces = await db
-      .select({ id: workspace.id })
-      .from(workspace)
-      .where(after ? gt(workspace.id, after) : undefined)
-      .orderBy(asc(workspace.id))
-      .limit(100);
-    for (const { id } of workspaces) {
-      const versions = await inWorkspace(id, async (tx) => {
-        const rows = await tx
-          .select({
-            id: assetVersion.id,
-            storageKey: assetVersion.storageKey,
-            status: assetVersion.status,
-          })
-          .from(assetVersion)
-          .where(
-            or(
-              and(
-                eq(assetVersion.status, "pending"),
-                lt(
-                  assetVersion.createdAt,
-                  new Date(
-                    now.getTime() - config.UPLOAD_PENDING_HOURS * 3600_000,
-                  ),
-                ),
+  // Persist least-recently-visited workspace/row ordering before storage work.
+  // Provider failures and process restarts cannot monopolize the next batch.
+  // Both directory visits and object operations are bounded per invocation.
+  const workspaces = await db
+    .select({ id: workspace.id })
+    .from(workspace)
+    .orderBy(sql`${workspace.uploadCleanupAt} asc nulls first`, asc(workspace.id))
+    .limit(100);
+  for (const { id } of workspaces) {
+    if (inspected >= batch) break;
+    const versions = await inWorkspace(id, async (tx) => {
+      await tx
+        .update(workspace)
+        .set({ uploadCleanupAt: now, updatedAt: workspace.updatedAt })
+        .where(eq(workspace.id, id));
+      // Skip locked rows. Finalize and expiry agree on the terminal state before
+      // any exact storage key is deleted outside the transaction.
+      const rows = await tx
+        .select({
+          id: assetVersion.id,
+          storageKey: assetVersion.storageKey,
+          status: assetVersion.status,
+        })
+        .from(assetVersion)
+        .where(
+          or(
+            and(
+              eq(assetVersion.status, "pending"),
+              lt(
+                assetVersion.createdAt,
+                new Date(now.getTime() - config.UPLOAD_PENDING_HOURS * 3600_000),
               ),
-              and(
-                isNotNull(assetVersion.uploadExpiredAt),
-                or(
-                  isNull(assetVersion.uploadSweepAt),
-                  lt(
-                    assetVersion.uploadSweepAt,
-                    new Date(now.getTime() - 86400_000),
-                  ),
+            ),
+            and(
+              eq(assetVersion.status, "failed"),
+              isNotNull(assetVersion.uploadExpiredAt),
+              or(
+                isNull(assetVersion.uploadCleanedAt),
+                isNull(assetVersion.uploadSweepAt),
+                lt(
+                  assetVersion.uploadSweepAt,
+                  new Date(now.getTime() - 86400_000),
                 ),
               ),
             ),
-          )
-          .orderBy(asc(assetVersion.createdAt), asc(assetVersion.id))
-          .limit(batch - inspected)
-          .for("update", { skipLocked: true });
-        for (const row of rows)
-          if (row.status === "pending") await expirePending(tx, row.id, now);
-        return rows;
-      });
-      for (const row of versions) {
-        inspected++;
-        try {
-          await deleteObjects([row.storageKey]);
-          await inWorkspace(id, (tx) =>
-            tx
-              .update(assetVersion)
-              .set({ uploadCleanedAt: now, uploadSweepAt: now })
-              .where(
-                and(
-                  eq(assetVersion.id, row.id),
-                  isNotNull(assetVersion.uploadExpiredAt),
-                  eq(assetVersion.status, "failed"),
-                ),
-              ),
-          );
-          cleaned++;
-        } catch (error) {
-          // Do not release quota on partial/provider failures. The next scheduled
-          // run retries; tombstones are re-swept daily for late S3 upload completion.
-          console.warn(
-            JSON.stringify({
-              event: "upload.cleanup_failed",
-              versionId: row.id,
-            }),
-          );
-          failure = error;
-        }
+          ),
+        )
+        .orderBy(
+          sql`${assetVersion.uploadCleanupAttemptAt} asc nulls first`,
+          asc(assetVersion.createdAt),
+          asc(assetVersion.id),
+        )
+        .limit(batch - inspected)
+        .for("update", { skipLocked: true });
+      for (const row of rows) {
+        if (row.status === "pending") await expirePending(tx, row.id, now);
+        await tx
+          .update(assetVersion)
+          .set({
+            uploadCleanupAttemptAt: now,
+            updatedAt: assetVersion.updatedAt,
+          })
+          .where(eq(assetVersion.id, row.id));
       }
-      if (inspected >= batch) break;
+      return rows;
+    });
+    for (const row of versions) {
+      inspected++;
+      try {
+        await deleteObjects([row.storageKey]);
+        await inWorkspace(id, (tx) =>
+          tx
+            .update(assetVersion)
+            .set({ uploadCleanedAt: now, uploadSweepAt: now })
+            .where(
+              and(
+                eq(assetVersion.id, row.id),
+                isNotNull(assetVersion.uploadExpiredAt),
+                eq(assetVersion.status, "failed"),
+              ),
+            ),
+        );
+        cleaned++;
+      } catch (error) {
+        // Failed reservations remain counted and immediately retryable, behind
+        // less-recent attempts. Successful tombstones still re-sweep daily for
+        // late S3 upload completion.
+        console.warn(
+          JSON.stringify({
+            event: "upload.cleanup_failed",
+            versionId: row.id,
+          }),
+        );
+        failure = error;
+      }
     }
-    if (workspaces.length < 100) break;
-    after = workspaces.at(-1)!.id;
   }
   if (failure) throw failure;
   return cleaned;

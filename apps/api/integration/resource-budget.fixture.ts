@@ -11,7 +11,7 @@ export async function checkResourceBudgets(
     app: FastifyInstance;
     objects: Map<string, Buffer>;
     keyHeaders: Record<string, Record<string, string>>;
-    setDeleteFailure: (value: boolean) => void;
+    setDeleteFailure: (value: boolean | ((key: string) => boolean)) => void;
     setReadHook: (hook: (key: string) => Promise<void>) => void;
   },
 ) {
@@ -133,6 +133,131 @@ export async function checkResourceBudgets(
       await admin.query("DELETE FROM asset WHERE id=$1", [duplicate]);
       await admin.query("DELETE FROM asset WHERE id=$1", [filler]);
       config.WORKSPACE_STORAGE_MB = previous.bytes;
+    },
+  );
+
+  await t.test(
+    "cleanup progresses past a full batch of failed keys within and across workspaces, then recovers reservations",
+    async (cleanupTest) => {
+      const suffix = randomUUID();
+      const earlyWorkspace = `000-budget-${suffix}`;
+      const lateWorkspace = `zzz-budget-${suffix}`;
+      const earlyAsset = randomUUID();
+      const lateAsset = randomUUID();
+      const earlyVersions = Array.from({ length: 102 }, () => randomUUID());
+      const lateVersion = randomUUID();
+      const failedKeys = new Set(earlyVersions.slice(0, 101).map(id => `budget-fair/${id}`));
+      const earlyHealthyKey = `budget-fair/${earlyVersions.at(-1)}`;
+      const lateHealthyKey = `budget-fair/${lateVersion}`;
+      const attempts: string[] = [];
+      const now = new Date();
+      cleanupTest.after(async () => {
+        fixture.setDeleteFailure(false);
+        await admin.query("DELETE FROM workspace WHERE id=ANY($1::text[])", [[earlyWorkspace, lateWorkspace]]);
+        for (const key of [...failedKeys, earlyHealthyKey, lateHealthyKey]) objects.delete(key);
+      });
+      await admin.query(
+        "INSERT INTO workspace(id,organization_id,name,slug,created_by,updated_by) SELECT id,'org',id,id,'fixture','fixture' FROM unnest($1::text[]) AS id",
+        [[earlyWorkspace, lateWorkspace]],
+      );
+      for (const [assetId, workspaceId] of [[earlyAsset, earlyWorkspace], [lateAsset, lateWorkspace]])
+        await admin.query(
+          "INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES ($1,$2,'cleanup','Cleanup fixture','fixture','fixture')",
+          [assetId, workspaceId],
+        );
+      await admin.query(
+        "INSERT INTO asset_version(id,workspace_id,asset_id,number,size,storage_key,filename,mime_type,created_at,created_by,updated_by) SELECT id,$2,$3,number,10,'budget-fair/'||id,'test.png','image/png',$4::timestamptz-interval '2 days'+number*interval '1 second','fixture','fixture' FROM unnest($1::uuid[]) WITH ORDINALITY AS versions(id,number)",
+        [earlyVersions, earlyWorkspace, earlyAsset, now],
+      );
+      await admin.query(
+        "INSERT INTO asset_version(id,workspace_id,asset_id,number,size,storage_key,filename,mime_type,created_at,created_by,updated_by) VALUES ($1,$2,$3,1,10,$4,'test.png','image/png',$5::timestamptz-interval '2 days','fixture','fixture')",
+        [lateVersion, lateWorkspace, lateAsset, lateHealthyKey, now],
+      );
+      for (const key of [...failedKeys, earlyHealthyKey, lateHealthyKey]) objects.set(key, Buffer.alloc(10));
+      fixture.setDeleteFailure(key => {
+        attempts.push(key);
+        return failedKeys.has(key);
+      });
+      await assert.rejects(cleanupPendingUploads(now), /delete/);
+      assert.equal(attempts.length, 100, "one run inspects at most the default key batch");
+      assert.equal((await state(earlyVersions[0]!)).upload_cleaned_at, null);
+      assert.equal((await state(earlyVersions.at(-1)!)).status, "pending");
+      assert.equal((await state(lateVersion)).status, "pending");
+
+      const firstAttempts = attempts.length;
+      // A fresh module instance has no in-memory sweep cursor to inherit.
+      const { cleanupPendingUploads: restartedCleanup } = await import(
+        `../src/upload-lifecycle.js?worker-restart=${suffix}`
+      );
+      await assert.rejects(restartedCleanup(new Date(now.getTime() + 1000)), /delete/);
+      assert.ok(attempts.length - firstAttempts <= 100);
+      assert.ok(!objects.has(lateHealthyKey), "later workspace is served while earliest workspace deletes still fail");
+      assert.ok(!objects.has(earlyHealthyKey), "new rows in the earliest workspace are served ahead of previously failed attempts");
+      assert.ok([...failedKeys].every(key => attempts.includes(key)), "every failed key receives an attempt across runs");
+      assert.ok((await state(lateVersion)).upload_cleaned_at);
+      const { inWorkspace } = await import("../src/db/tenant.js");
+      const { workspaceUsage } = await import("../src/upload-lifecycle.js");
+      assert.equal((await inWorkspace(earlyWorkspace, tx => workspaceUsage(tx, earlyWorkspace))).reservedBytes, 1010);
+      for (const id of earlyVersions.slice(0, 101)) {
+        const version = await state(id);
+        assert.equal(version.status, "failed");
+        assert.equal(version.upload_cleaned_at, null);
+        assert.ok(objects.has(version.storage_key));
+      }
+
+      fixture.setDeleteFailure(key => { attempts.push(key); return false; });
+      for (let run = 2; run < 4; run++) {
+        const previousAttempts = attempts.length;
+        await cleanupPendingUploads(new Date(now.getTime() + run * 1000));
+        assert.ok(attempts.length - previousAttempts <= 100);
+      }
+      assert.equal((await inWorkspace(earlyWorkspace, tx => workspaceUsage(tx, earlyWorkspace))).reservedBytes, 0);
+      for (const id of earlyVersions) assert.ok((await state(id)).upload_cleaned_at);
+      assert.ok([...failedKeys].every(key => !objects.has(key)));
+      assert.ok(attempts.filter(key => key === `budget-fair/${earlyVersions[0]}`).length >= 2, "failed reservations are retried after storage recovers");
+    },
+  );
+
+  await t.test(
+    "cleanup bounds directory visits and reaches work beyond a hundred empty workspaces",
+    async (cleanupTest) => {
+      const suffix = randomUUID();
+      const emptyWorkspaces = Array.from({ length: 101 }, (_, index) =>
+        `000-empty-${suffix}-${String(index).padStart(3, "0")}`,
+      );
+      const lastWorkspace = `zzz-cleanup-${suffix}`;
+      const workspaces = [...emptyWorkspaces, lastWorkspace];
+      const assetId = randomUUID();
+      const versionId = randomUUID();
+      const key = `budget-directory/${versionId}`;
+      const now = new Date();
+      cleanupTest.after(async () => {
+        await admin.query("DELETE FROM workspace WHERE id=ANY($1::text[])", [workspaces]);
+        objects.delete(key);
+      });
+      await admin.query(
+        "INSERT INTO workspace(id,organization_id,name,slug,created_by,updated_by) SELECT id,'org',id,id,'fixture','fixture' FROM unnest($1::text[]) AS id",
+        [workspaces],
+      );
+      await admin.query(
+        "INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES ($1,$2,'cleanup','Cleanup fixture','fixture','fixture')",
+        [assetId, lastWorkspace],
+      );
+      await admin.query(
+        "INSERT INTO asset_version(id,workspace_id,asset_id,number,size,storage_key,filename,mime_type,created_at,created_by,updated_by) VALUES ($1,$2,$3,1,10,$4,'test.png','image/png',$5::timestamptz-interval '2 days','fixture','fixture')",
+        [versionId, lastWorkspace, assetId, key, now],
+      );
+      objects.set(key, Buffer.alloc(10));
+      assert.equal(await cleanupPendingUploads(now), 0);
+      assert.ok(objects.has(key));
+      assert.equal(
+        (await admin.query("SELECT count(*)::int AS count FROM workspace WHERE id=ANY($1::text[]) AND upload_cleanup_at IS NOT NULL", [workspaces])).rows[0].count,
+        100,
+        "empty directory visits are bounded independently of key operations",
+      );
+      assert.equal(await cleanupPendingUploads(new Date(now.getTime() + 1000)), 1);
+      assert.ok(!objects.has(key));
+      assert.ok((await state(versionId)).upload_cleaned_at);
     },
   );
 

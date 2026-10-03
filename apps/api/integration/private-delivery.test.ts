@@ -32,7 +32,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   const objects = new Map<string, Buffer>();
   let storageReads = 0;
   let storageFailure = false;
-  let deleteFailure = false;
+  let deleteFailure: boolean | ((key: string) => boolean) = false;
   let beforeObjectRead: (key: string) => Promise<void> = async () => {};
   const objectServer = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://objects.invalid");
@@ -43,7 +43,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       const body = Buffer.concat(chunks).toString();
       const keys = [...body.matchAll(/<Key>(.*?)<\/Key>/g)].map(match => match[1]!);
       res.setHeader("content-type", "application/xml");
-      if (deleteFailure) return res.end(`<DeleteResult><Error><Key>${keys[0]}</Key><Code>AccessDenied</Code></Error></DeleteResult>`);
+      if (typeof deleteFailure === "function" ? keys.some(deleteFailure) : deleteFailure) return res.end(`<DeleteResult><Error><Key>${keys[0]}</Key><Code>AccessDenied</Code></Error></DeleteResult>`);
       for (const key of keys) objects.delete(key);
       return res.end("<DeleteResult/>");
     }

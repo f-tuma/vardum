@@ -59,19 +59,135 @@ test("request admission retains streaming slots and keeps health available", asy
   }
 });
 
-test("delivery rate gate returns 429 and does not retain a concurrency slot", async () => {
-  const old = config.DELIVERY_REQUESTS_PER_SECOND;
-  config.DELIVERY_REQUESTS_PER_SECOND = 1;
+const deliveryRoutes = [
+  {
+    route: "/w/:workspaceSlug/*",
+    plain: "/w/demo/fast",
+    encoded: "/%77/demo/fast",
+  },
+  {
+    route: "/w/:workspaceSlug/__v/:versionId/*",
+    plain: "/w/demo/__v/version/fast",
+    encoded: "/%77/demo/__v/version/fast",
+  },
+  { route: "/w/:assetKey", plain: "/w/fast", encoded: "/%77/fast" },
+  {
+    route: "/w/__v/:versionId/*",
+    plain: "/w/__v/version/fast",
+    encoded: "/%77/__v/version/fast",
+  },
+  {
+    route: "/assets/:workspaceSlug/*",
+    plain: "/assets/demo/fast",
+    encoded: "/%61ssets/demo/fast",
+  },
+  {
+    route: "/assets/:workspaceSlug/__v/:versionId/*",
+    plain: "/assets/demo/__v/version/fast",
+    encoded: "/%61ssets/demo/__v/version/fast",
+  },
+];
+
+for (const { route, plain, encoded } of deliveryRoutes)
+  for (const method of ["GET", "HEAD"] as const) {
+    test(`delivery rate gate covers encoded ${method} ${route}`, async () => {
+      const oldRate = config.DELIVERY_REQUESTS_PER_SECOND;
+      const oldConcurrency = config.DELIVERY_MAX_INFLIGHT;
+      config.DELIVERY_REQUESTS_PER_SECOND = 1;
+      config.DELIVERY_MAX_INFLIGHT = 1;
+      const app = Fastify();
+      registerAdmission(app);
+      app.get(route, async () => "ok");
+      try {
+        assert.equal((await app.inject(plain)).statusCode, 200);
+        const denied = await app.inject({ method, url: encoded });
+        assert.equal(denied.statusCode, 429);
+        assert.equal(denied.headers["retry-after"], "1");
+        assert.equal(denied.headers["cache-control"], "private, no-store");
+        assert.equal(
+          (await app.inject({ method, url: encoded })).statusCode,
+          429,
+          "rate rejection releases the only delivery concurrency slot",
+        );
+      } finally {
+        config.DELIVERY_REQUESTS_PER_SECOND = oldRate;
+        config.DELIVERY_MAX_INFLIGHT = oldConcurrency;
+        await app.close();
+      }
+    });
+
+    test(`delivery concurrency gate covers encoded ${method} ${route}`, async () => {
+      const old = config.DELIVERY_MAX_INFLIGHT;
+      config.DELIVERY_MAX_INFLIGHT = 1;
+      const app = Fastify();
+      registerAdmission(app);
+      const stream = new PassThrough();
+      let began!: () => void;
+      const started = new Promise<void>((yes) => {
+        began = yes;
+      });
+      app.get("/w/slow", async () => {
+        began();
+        return stream;
+      });
+      app.get(route, async () => "ok");
+      const running = app.inject("/w/slow").then((response) => response);
+      try {
+        await started;
+        const denied = await app.inject({ method, url: encoded });
+        assert.equal(denied.statusCode, 503);
+        assert.equal(denied.headers["retry-after"], "1");
+        assert.equal(denied.headers["cache-control"], "private, no-store");
+        stream.end("ok");
+        await running;
+        assert.equal((await app.inject({ method, url: encoded })).statusCode, 200);
+      } finally {
+        if (!stream.writableEnded) stream.end("ok");
+        await running;
+        config.DELIVERY_MAX_INFLIGHT = old;
+        await app.close();
+      }
+    });
+  }
+
+test("only matched health routes bypass full API admission, including encoded GET and HEAD", async () => {
+  const old = config.API_MAX_INFLIGHT;
+  config.API_MAX_INFLIGHT = 1;
   const app = Fastify();
   registerAdmission(app);
-  app.get("/w/fast", async () => "ok");
+  const stream = new PassThrough();
+  let began!: () => void;
+  const started = new Promise<void>((yes) => {
+    began = yes;
+  });
+  app.get("/api/slow", async () => {
+    began();
+    return stream;
+  });
+  const healthRoutes = [
+    "/health", "/ready", "/api/operations/health", "/api/operations/metrics",
+  ];
+  for (const route of healthRoutes) app.get(route, async () => "ok");
+  app.get("/health/expensive", async () => "ok");
+  const running = app.inject("/api/slow").then((response) => response);
   try {
-    assert.equal((await app.inject("/w/fast")).statusCode, 200);
-    const denied = await app.inject("/w/fast");
-    assert.equal(denied.statusCode, 429);
-    assert.equal(denied.headers["retry-after"], "1");
+    await started;
+    for (const route of healthRoutes)
+      for (const method of ["GET", "HEAD"] as const) {
+        assert.equal((await app.inject({ method, url: route })).statusCode, 200);
+        const encoded = route.replace(
+          /\/([^/])/,
+          (_, first: string) => `/%${first.charCodeAt(0).toString(16)}`,
+        );
+        assert.equal((await app.inject({ method, url: encoded })).statusCode, 200);
+      }
+    assert.equal((await app.inject("/health/expensive")).statusCode, 503);
+    assert.equal((await app.inject({ method: "POST", url: "/health" })).statusCode, 503);
+    assert.equal((await app.inject("/unknown")).statusCode, 503);
   } finally {
-    config.DELIVERY_REQUESTS_PER_SECOND = old;
+    if (!stream.writableEnded) stream.end("ok");
+    await running;
+    config.API_MAX_INFLIGHT = old;
     await app.close();
   }
 });

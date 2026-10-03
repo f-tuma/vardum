@@ -52,9 +52,13 @@ configurations without contacting a mail provider or the deployed database.
 
 ## Resource budgets and unfinished uploads
 
-Deploy migration `0013_upload_cleanup.sql` with matching API and worker images.
-Back up first. Existing ready/processing versions are retained; old **pending**
-versions become eligible for automatic expiry after the configured deadline.
+Deploy migrations `0013_upload_cleanup.sql` and `0014_upload_cleanup_fairness.sql`
+before updating the API and worker images. Back up first. Migration 0014 adds
+nullable scheduling timestamps and indexes; older images remain compatible with
+the migrated schema. Cleanup fairness takes effect after the workers are updated.
+For an image rollback, retain these additive columns and indexes. Existing
+ready/processing versions are retained; old **pending** versions become eligible
+for automatic expiry after the configured deadline.
 Choose limits for existing workspaces before deployment. Lowering a quota below
 current usage blocks new uploads/imports without deleting existing files.
 
@@ -104,8 +108,12 @@ is cooperative; container limits remain the hard boundary. See [sharp limits](ht
 and [encoding timeout](https://sharp.pixelplumbing.com/api-output/#timeout).
 
 The monitored `upload-cleanup` queue runs at worker startup and every minute in
-batches of at most 100 versions. It changes only expired pending versions to a
-non-retryable failure, with an audit entry; processing/ready versions and current
+batches of at most 100 versions and at most 100 workspace visits per invocation.
+The database retains the last workspace visit and version cleanup attempt, so
+failed keys move behind less-recent attempts even after a worker restart. Later
+workspaces and versions receive a turn while failed reservations remain counted.
+It changes only expired pending versions to a non-retryable failure, with an
+audit entry; processing/ready versions and current
 version pointers remain unchanged. Finalize rechecks the deadline while locking
 the version, so it cannot race the transition. The worker deletes the exact
 original key outside the transaction and releases its reservation only after a

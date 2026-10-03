@@ -38,8 +38,11 @@ export function registerAdmission(app: FastifyInstance) {
   let tokens = config.DELIVERY_REQUESTS_PER_SECOND;
   let last = performance.now();
   app.addHook("onRequest", async (request, reply) => {
-    const path = request.url.split("?")[0]!;
+    // Fastify decodes static route segments before matching. The matched
+    // template covers encoded aliases, custom domains and generated HEAD routes.
+    const path = request.routeOptions.url;
     if (
+      path &&
       [
         "/health",
         "/ready",
@@ -56,7 +59,7 @@ export function registerAdmission(app: FastifyInstance) {
     };
     try {
       releaseAll = all.acquire();
-      if (path.startsWith("/w/") || path.startsWith("/assets/")) {
+      if (path?.startsWith("/w/") || path?.startsWith("/assets/")) {
         releaseDelivery = delivery.acquire();
         const now = performance.now();
         tokens = Math.min(
