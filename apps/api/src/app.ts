@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import { registerAssetRoutes } from "./asset-routes.js";
 import { registerAuthRoute } from "./auth-route.js";
+import { registerCapabilityRoutes } from "./capability-routes.js";
 import { CapacityError, registerAdmission } from "./resource-budget.js";
 import { config } from "./config.js";
 import { registerDeliveryRoutes } from "./delivery-routes.js";
@@ -107,6 +108,7 @@ export async function buildApp() {
   );
 
   registerAuthRoute(app);
+  registerCapabilityRoutes(app);
   registerOrganizationRoutes(app);
   registerWorkspaceRoutes(app);
   registerDomainRoutes(app);

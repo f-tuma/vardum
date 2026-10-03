@@ -6,6 +6,7 @@ export type WorkspaceRef = {
   name: string;
   slug: string;
   canEdit: boolean;
+  canManage: boolean;
 };
 
 export function workspaceCrumb(workspace: WorkspaceRef): Crumb {

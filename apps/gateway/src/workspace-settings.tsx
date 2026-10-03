@@ -91,7 +91,7 @@ export function WorkspaceSettings({ workspace }: { workspace: WorkspaceRef }) {
           }
           tabs={[
             { value: "general", label: "General", content: <GeneralSettings workspace={workspace} /> },
-            { value: "custom-domain", label: "Domain", content: <DomainSettings workspaceId={workspace.id} /> },
+            { value: "custom-domain", label: "Domain", content: <DomainSettings workspaceId={workspace.id} canManage={workspace.canManage} /> },
             { value: "api-keys", label: "API keys", content: <ApiKeysSettings workspaceId={workspace.id} /> },
             ...(workspace.canEdit
               ? [{ value: "danger-zone", label: "Delete", content: <DangerZone workspace={workspace} /> }]
@@ -183,7 +183,7 @@ function verificationMessage(result: { status: string; checks?: { txt: boolean; 
   return "TXT record not found yet";
 }
 
-function DomainSettings({ workspaceId }: { workspaceId: string }) {
+export function DomainSettings({ workspaceId, canManage }: { workspaceId: string; canManage: boolean }) {
   const id = useId();
   const queryClient = useQueryClient();
   const [pendingAction, setPendingAction] = useState("");
@@ -193,8 +193,11 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   const domain = useQuery({
     queryKey: ["workspace-domain", workspaceId],
     queryFn: () => getWorkspaceDomain(workspaceId),
+    enabled: canManage,
+    retry: false,
   });
   const status = domain.data?.status;
+  const canConfigure = canManage && domain.isSuccess && Boolean(domain.data.target);
 
   const refresh = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ["workspace-domain", workspaceId] }),
@@ -203,7 +206,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
 
   // Re-check every 12 s while DNS propagates.
   useEffect(() => {
-    if (status !== "pending") return;
+    if (!canConfigure || status !== "pending") return;
     async function autoVerify() {
       if (autoVerifyingRef.current) return;
       autoVerifyingRef.current = true;
@@ -220,10 +223,11 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
     void autoVerify();
     const interval = window.setInterval(() => void autoVerify(), 12_000);
     return () => window.clearInterval(interval);
-  }, [status, workspaceId, refresh]);
+  }, [canConfigure, status, workspaceId, refresh]);
 
   async function configure(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canConfigure || pendingAction) return;
     setPendingAction("configure");
     setError("");
     try {
@@ -237,6 +241,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   }
 
   async function verify() {
+    if (!canConfigure || pendingAction) return;
     setPendingAction("verify");
     setError("");
     try {
@@ -252,18 +257,37 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
   }
 
   async function remove() {
+    if (!canManage || !domain.data?.domain) return;
     await removeWorkspaceDomain(workspaceId);
     await refresh();
     toast.success("Custom domain removed");
   }
 
-  if (domain.isPending) return <Spinner />;
+  if (!canManage)
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Custom domain</CardTitle>
+          <CardDescription>Only organization owners can manage custom domains. Ask an owner to make changes.</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  if (domain.isPending)
+    return (
+      <output className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        Loading domain settings…
+      </output>
+    );
   if (domain.isError)
     return (
       <Alert variant="destructive">
         <TriangleAlertIcon />
         <AlertTitle>Domain settings unavailable</AlertTitle>
-        <AlertDescription>{domain.error.message}</AlertDescription>
+        <AlertDescription>
+          {domain.error.message}
+          <Button type="button" variant="outline" size="sm" disabled={domain.isFetching} onClick={() => void domain.refetch()}>Retry</Button>
+        </AlertDescription>
       </Alert>
     );
   const record = domain.data;
@@ -290,7 +314,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
         <CardContent>
           <form onSubmit={configure}>
             <FieldGroup>
-              <Field>
+              <Field data-disabled={!canConfigure}>
                 <FieldLabel htmlFor={`${id}-domain`}>Hostname</FieldLabel>
                 <div className="flex gap-2">
                   <div className="flex-1">
@@ -302,15 +326,25 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
                       placeholder="assets.example.com"
                       autoComplete="off"
                       spellCheck={false}
+                      disabled={!canConfigure}
+                      aria-describedby={!canConfigure ? `${id}-domain-availability` : undefined}
                       required
                     />
                   </div>
-                  <Button type="submit" variant="outline" disabled={Boolean(pendingAction)}>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    disabled={Boolean(pendingAction) || !canConfigure}
+                    aria-describedby={!canConfigure ? `${id}-domain-availability` : undefined}
+                  >
                     {pendingAction === "configure" && <Spinner data-icon="inline-start" />}
                     Save
                   </Button>
                 </div>
               </Field>
+              {!canConfigure && (
+                <FieldDescription id={`${id}-domain-availability`}>Custom domains are unavailable because this server has no delivery target. Ask the server administrator to configure one.</FieldDescription>
+              )}
               {error && <FieldError>{error}</FieldError>}
             </FieldGroup>
           </form>
@@ -350,7 +384,7 @@ function DomainSettings({ workspaceId }: { workspaceId: string }) {
               >
                 Remove
               </Button>
-              <Button variant="outline" disabled={Boolean(pendingAction)} onClick={() => void verify()}>
+              <Button variant="outline" disabled={Boolean(pendingAction) || !canConfigure} aria-describedby={!canConfigure ? `${id}-domain-availability` : undefined} onClick={() => void verify()}>
                 {pendingAction === "verify" && <Spinner data-icon="inline-start" />}
                 Check DNS now
               </Button>

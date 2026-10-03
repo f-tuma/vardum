@@ -30,6 +30,16 @@ export type VardSummary = {
   itemCount: number;
 };
 
+export type DeploymentCapabilities = {
+  passwordRecovery: boolean;
+  emailChange: boolean;
+  invitations: boolean;
+};
+
+export function getDeploymentCapabilities() {
+  return request<DeploymentCapabilities>("/api/capabilities");
+}
+
 export type OrganizationDirectory = {
   canCreateOrganization: boolean;
   organizationCreation: {

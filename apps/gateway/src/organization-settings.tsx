@@ -54,6 +54,7 @@ import {
   type WorkspaceMember,
 } from "./asset-api";
 import { authClient } from "./auth-client";
+import { CapabilityNotice, useDeploymentCapabilities } from "./capabilities";
 import { NameSlugFields } from "./name-slug-fields";
 import { OrganizationVerification } from "./organization-verification";
 
@@ -297,7 +298,7 @@ function OrganizationsCard({
 
   async function createOrganization(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || !directory.canCreateOrganization) return;
     const form = new FormData(event.currentTarget);
     setError("");
     setPending(true);
@@ -334,13 +335,14 @@ function OrganizationsCard({
       <Card>
         <CardHeader>
           <CardTitle>Your organizations</CardTitle>
-          {directory.canCreateOrganization && (
-            <CardAction>
-              <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
-                <PlusIcon data-icon="inline-start" />
-                New organization
-              </Button>
-            </CardAction>
+          <CardAction>
+            <Button variant="outline" size="sm" disabled={!directory.canCreateOrganization} aria-describedby={directory.organizationCreation.status === "not_allowed" ? "organization-creation-unavailable" : undefined} onClick={() => { if (directory.canCreateOrganization) setCreating(true); }}>
+              <PlusIcon data-icon="inline-start" />
+              New organization
+            </Button>
+          </CardAction>
+          {directory.organizationCreation.status === "not_allowed" && (
+            <CardDescription id="organization-creation-unavailable">Organization creation is not available for your account. Ask the server administrator for access.</CardDescription>
           )}
         </CardHeader>
         <CardContent>
@@ -377,7 +379,7 @@ function OrganizationsCard({
         </CardContent>
       </Card>
       <Dialog
-        open={creating}
+        open={creating && directory.canCreateOrganization}
         onOpenChange={(next) => {
           if (!next && !pending) {
             setError("");
@@ -493,8 +495,10 @@ function OrganizationMembers({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
+export function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
   const id = useId();
+  const capabilities = useDeploymentCapabilities();
+  const canInvite = capabilities.isSuccess && capabilities.data.invitations;
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [role, setRole] = useState<WorkspaceInvitation["role"]>("viewer");
@@ -512,7 +516,7 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
 
   async function invite(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pendingId) return;
+    if (pendingId || !canInvite) return;
     const form = new FormData(event.currentTarget);
     setPendingId("create");
     setError("");
@@ -533,6 +537,7 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
   }
 
   async function resend(record: WorkspaceInvitation) {
+    if (!canInvite || pendingId) return;
     setPendingId(record.id);
     try {
       await resendWorkspaceInvitation(workspaceId, record.id);
@@ -558,13 +563,19 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
           <CardTitle>Invitations</CardTitle>
           <CardDescription>Pending invitations to join the organization.</CardDescription>
           <CardAction>
-            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            <Button variant="outline" size="sm" disabled={!canInvite} aria-describedby={!canInvite ? `${id}-invitation-availability` : undefined} onClick={() => { if (canInvite) setOpen(true); }}>
               <PlusIcon data-icon="inline-start" />
               Invite
             </Button>
           </CardAction>
         </CardHeader>
         <CardContent>
+          <CapabilityNotice
+            id={`${id}-invitation-availability`}
+            capabilities={capabilities}
+            available={canInvite}
+            unavailable="Inviting and resending are unavailable because email delivery is not configured. Contact the server administrator."
+          />
           {invitations.isPending ? (
             <Spinner />
           ) : invitations.isError ? (
@@ -594,7 +605,8 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={pendingId === record.id}
+                          disabled={pendingId === record.id || !canInvite}
+                          aria-describedby={!canInvite ? `${id}-invitation-availability` : undefined}
                           onClick={() => void resend(record)}
                         >
                           {pendingId === record.id && <Spinner data-icon="inline-start" />}
@@ -621,7 +633,7 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
                   <MailIcon />
                 </EmptyMedia>
                 <EmptyTitle>No pending invitations</EmptyTitle>
-                <EmptyDescription>Invite teammates by email.</EmptyDescription>
+                <EmptyDescription>{canInvite ? "Invite teammates by email." : "Pending invitations appear here."}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
@@ -642,14 +654,15 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
               <DialogHeader>
                 <DialogTitle>Invite member</DialogTitle>
               </DialogHeader>
-              <Field>
+              <Field data-disabled={!canInvite}>
                 <FieldLabel htmlFor={`${id}-email`}>Email</FieldLabel>
-                <Input id={`${id}-email`} name="email" type="email" autoComplete="email" autoFocus required />
+                <Input id={`${id}-email`} name="email" type="email" autoComplete="email" autoFocus disabled={!canInvite} required />
               </Field>
-              <Field>
+              <Field data-disabled={!canInvite}>
                 <FieldLabel htmlFor={`${id}-role`}>Role</FieldLabel>
                 <NativeSelect
                   id={`${id}-role`}
+                  disabled={!canInvite}
                   value={role}
                   onChange={(event) => setRole(event.target.value as WorkspaceInvitation["role"])}
                 >
@@ -659,9 +672,15 @@ function OrganizationInvitations({ workspaceId }: { workspaceId: string }) {
                 </NativeSelect>
                 <FieldDescription>{roleDescriptions[role]}</FieldDescription>
               </Field>
+              <CapabilityNotice
+                id={`${id}-invite-form-availability`}
+                capabilities={capabilities}
+                available={canInvite}
+                unavailable="Email delivery is not configured. Contact the server administrator to enable invitations."
+              />
               {error && <FieldError>{error}</FieldError>}
               <DialogFooter>
-                <Button type="submit" disabled={Boolean(pendingId)}>
+                <Button type="submit" disabled={Boolean(pendingId) || !canInvite}>
                   {pendingId === "create" && <Spinner data-icon="inline-start" />}
                   Send invitation
                 </Button>
