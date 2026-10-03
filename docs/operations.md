@@ -50,6 +50,64 @@ The check creates and removes its own temporary database, ignores `.env`, and
 uses real auth endpoints with captured outbound email. It covers both SMTP
 configurations without contacting a mail provider or the deployed database.
 
+## Object storage compatibility and RustFS upgrade
+
+The bundled provider is [RustFS 1.0.1](https://github.com/rustfs/rustfs/releases/tag/1.0.1),
+pinned in all four Compose templates to image digest
+`sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c`.
+It is the minimum supported RustFS version for large presigned POST uploads.
+RustFS 1.0.0's multipart parser can return `500` / `InternalError` with
+`FileStreamError: BoundaryBufferTooLarge` for a legal
+large JPEG when a retained carriage return plus the next 64 KiB body chunk
+exceeds its boundary buffer. 1.0.1 uses the bounded parser from s3s 0.17.0.
+The API's presigned POST contract and CLI 0.6.0 upload transport are unchanged.
+
+An external S3 provider must accept SigV4 presigned POST with exact key and
+Content-Type conditions, enforce its size range and expiration, and expose CORS
+at the actual public upload origin. The app also needs HEAD, GET (including ranges),
+PUT, COPY, paginated LIST and batch DELETE. An S3-compatible label alone does not
+establish these capabilities. Amazon S3 and Hetzner are configuration examples;
+the automated production smoke currently validates the pinned bundled RustFS.
+Run upload/policy, ingest, delivery, import, deletion and backup/restore acceptance
+against your chosen endpoint and any proxy before relying on it.
+
+For an existing RustFS deployment:
+
+1. Block bucket writers, including outstanding signed uploads. Follow [Backup](#backup)
+   for a verified matched database/object backup; it leaves app services stopped.
+   Stop RustFS and preserve an offline snapshot of its volume before upgrading.
+2. Rehearse on an independent copy of that volume and its matching database/config.
+   Preserve the bucket, keys and endpoints. The disposable 1.0.0→1.0.1 probe checked
+   existing object SHA-256/ETag, listing, CORS, copy/get/delete and a still-valid
+   pre-upgrade POST grant. Those fixture results do not certify your own volume.
+3. In the rehearsal, compare existing object hashes and metadata; run a native
+   FormData large JPEG upload, finalize/ingest and decode delivery. Check CORS,
+   configured upload limits (default 25 MiB image / 200 MiB video), rejection one
+   byte above each limit, and altered key, MIME, signature and expired policies.
+4. After acceptance, use the updated template on the original deployment and
+   recreate only storage, retaining its volume:
+
+   ```sh
+   # Reuse the exact project name selected and verified during Backup.
+   : "${deployment_project:?Set the existing Compose project name used for backup}"
+   compose -p "$deployment_project" --profile rustfs pull rustfs
+   compose -p "$deployment_project" --profile rustfs up -d --no-deps --wait rustfs
+   compose -p "$deployment_project" up -d --wait api worker gateway
+   ```
+
+   Repeat object/upload acceptance before reopening writers. For Dokploy use its
+   matching template and maintenance/redeploy controls. Never use `down -v` on an
+   existing deployment. If rollback is required, restore the verified pre-upgrade
+   backup/snapshot in an independent deployment; do not assume an older image can
+   read a volume modified by the newer one.
+
+`bash scripts/smoke-production.sh` creates fresh disposable volumes. It checks a
+seeded, decodable 4 MP JPEG with legal CR-filled comment segments through the
+normal app grant and native FormData POST, verifies the stored SHA-256 before
+finalize, and fully decodes delivered bytes after ingest. The separate random
+4 MP resource/transform fixture remains part of the same smoke. This fresh-volume
+check is not an upgrade rehearsal for an existing volume.
+
 ## Resource budgets and unfinished uploads
 
 Deploy migrations `0013_upload_cleanup.sql` and `0014_upload_cleanup_fairness.sql`
