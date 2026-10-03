@@ -136,7 +136,10 @@ test("asset phase omits folder discovery and every keyset order uses C collation
   assert.match(next.sql, /path COLLATE "C", stable_identity COLLATE "C"\) >/);
   assert.doesNotMatch(next.sql, /OFFSET/);
   assert.match(next.sql, /FROM consumed_page p\s+JOIN "asset" a/);
-  assert.match(next.sql, /WHERE v.asset_id = a.id AND v.workspace_id =/);
+  assert.match(next.sql, /page_asset_inputs AS MATERIALIZED/);
+  assert.match(next.sql, /page_assets AS MATERIALIZED/);
+  assert.match(next.sql, /FROM page_asset_inputs p\s+LEFT JOIN LATERAL/);
+  assert.match(next.sql, /WHERE v.asset_id = p.id AND v.workspace_id =/);
   const searched = dialect.sqlToQuery(
     assetPageSql({ ...scope, search: "%" }, null),
   );

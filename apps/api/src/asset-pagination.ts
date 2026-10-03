@@ -239,17 +239,21 @@ export function assetPageSql(
       ORDER BY kind_rank, path COLLATE "C", stable_identity COLLATE "C"
       LIMIT ${limit}
     ),
-    page_assets AS (
+    page_asset_inputs AS MATERIALIZED (
       SELECT a.id, a.key, a.display_name, a.is_public, a.current_version_id,
         current.mime_type, current.size::double precision AS size, current.width, current.height,
-        a.updated_at, latest.id AS latest_version_id, latest.status, latest.error
+        a.updated_at
       FROM consumed_page p
       JOIN ${asset} a ON p.kind_rank = 1 AND a.id = p.asset_id AND a.workspace_id = ${workspaceId}
       LEFT JOIN ${assetVersion} current
         ON current.id = a.current_version_id AND current.workspace_id = ${workspaceId}
+    ),
+    page_assets AS MATERIALIZED (
+      SELECT p.*, latest.id AS latest_version_id, latest.status, latest.error
+      FROM page_asset_inputs p
       LEFT JOIN LATERAL (
         SELECT v.id, v.status, v.error FROM ${assetVersion} v
-        WHERE v.asset_id = a.id AND v.workspace_id = ${workspaceId}
+        WHERE v.asset_id = p.id AND v.workspace_id = ${workspaceId}
         ORDER BY v.number DESC LIMIT 1
       ) latest ON true
     ),

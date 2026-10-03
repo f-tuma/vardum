@@ -44,7 +44,11 @@ the UI keeps the latest value at its already-rendered position. Secret rotation
 invalidates existing cursors; Refresh obtains a new first page.
 
 Candidate selection and current/latest-version hydration share one SQL
-statement snapshot. Only consumed page assets receive latest-version lookups,
+statement snapshot. Materialized asset inputs bound hydration to consumed page
+assets before latest-version lookups, independently of join order; the hydration
+result is materialized once so rescans by the final page join reuse cached
+rows without repeating metadata lookups.
+Only consumed page assets receive latest-version lookups,
 and asset-phase continuation skips folder derivation. Output is bounded; folder
 derivation, search, deduplication, sorting and some scans may still scale with
 workspace contents. This is not a claim of O(limit) database work.

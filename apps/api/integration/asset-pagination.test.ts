@@ -725,6 +725,9 @@ test(
               visit(child);
           };
           visit(document["QUERY PLAN"][0]!.Plan);
+          if (fullExplain) {
+            t.diagnostic(`${name}: ${JSON.stringify(document["QUERY PLAN"])}`);
+          }
           const pageNode = nodes.find(
             (node) => node["Subplan Name"] === "CTE candidate_page",
           );
@@ -738,6 +741,19 @@ test(
           );
           assert.ok(consumedNode);
           assert.ok(Number(consumedNode["Actual Rows"]) <= 50);
+          const inputNode = nodes.find(
+            (node) => node["Subplan Name"] === "CTE page_asset_inputs",
+          );
+          assert.ok(inputNode, "hydration inputs are a bounded materialized page");
+          assert.ok(Number(inputNode["Actual Rows"]) <= 50);
+          const hydrationNode = nodes.find(
+            (node) => node["Subplan Name"] === "CTE page_assets",
+          );
+          assert.ok(hydrationNode, "hydration result is materialized once");
+          assert.ok(Number(hydrationNode["Actual Loops"]) <= 1);
+          assert.ok(
+            Number(hydrationNode["Actual Rows"]) <= Number(inputNode["Actual Rows"]),
+          );
           const containsLatestScan = (node: Record<string, unknown>): boolean =>
             node["Alias"] === "v" ||
             ((node.Plans ?? []) as Record<string, unknown>[]).some(
@@ -746,6 +762,9 @@ test(
           const latest = nodes.filter(
             (node) => node["Node Type"] === "Limit" && containsLatestScan(node),
           );
+          t.diagnostic(
+            `${name}: candidate rows=${pageNode["Actual Rows"]}, consumed rows=${consumedNode["Actual Rows"]}, latest lookup loops=${latest[0]?.["Actual Loops"]}, folder relations=${nodes.filter((node) => node["Relation Name"] === "asset_folder").length}`,
+          );
           assert.equal(
             latest.length,
             1,
@@ -753,7 +772,7 @@ test(
           );
           for (const node of latest)
             assert.ok(
-              Number(node["Actual Loops"]) <= 50,
+              Number(node["Actual Loops"]) <= Number(inputNode["Actual Rows"]),
               "latest versions only hydrate page assets",
             );
           if (name === "asset continuation") {
@@ -762,12 +781,6 @@ test(
               nodes.some((node) => node["Relation Name"] === "asset_folder"),
               false,
             );
-          }
-          t.diagnostic(
-            `${name}: candidate rows=${pageNode["Actual Rows"]}, consumed rows=${consumedNode["Actual Rows"]}, latest lookup loops=${latest[0]!["Actual Loops"]}, folder relations=${nodes.filter((node) => node["Relation Name"] === "asset_folder").length}`,
-          );
-          if (fullExplain) {
-            t.diagnostic(`${name}: ${JSON.stringify(document["QUERY PLAN"])}`);
           }
         }
       },
