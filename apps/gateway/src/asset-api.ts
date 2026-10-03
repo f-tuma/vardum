@@ -507,6 +507,26 @@ export function listAssets(workspaceId: string, prefix = "", search = "") {
   );
 }
 
+export type AssetPage = {
+  folders: AssetFolder[];
+  assets: AssetSummary[];
+  nextCursor: string | null;
+};
+
+export function listAssetPage(
+  workspaceId: string,
+  prefix: string,
+  search: string,
+  cursor: string | null,
+  limit = 50,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ pagination: "cursor", prefix, limit: String(limit) });
+  if (search.trim()) query.set("search", search.trim());
+  if (cursor !== null) query.set("cursor", cursor);
+  return request<AssetPage>("/api/workspaces/" + workspaceId + "/assets?" + query, { signal });
+}
+
 export function listAssetVersions(workspaceId: string, assetId: string) {
   return request<{ currentVersionId: string | null; versions: AssetVersion[] }>(
     `/api/workspaces/${workspaceId}/assets/${assetId}/versions`,

@@ -1,5 +1,5 @@
 import { uploadAccept } from "@vardum/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   CloudDownloadIcon,
@@ -15,6 +15,7 @@ import {
   ArrowUpDownIcon,
   ArrowUpIcon,
   SearchIcon,
+  RefreshCwIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UploadIcon,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type DragEvent, type SyntheticEvent } from "react";
 import { toast } from "sonner";
+import { AssetPageControls } from "@/components/asset-page-controls";
 import { AssetThumb } from "@/components/asset-thumb";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AppHeader, Page, PageHeader, PageSkeleton, type Crumb } from "@/components/page";
@@ -95,9 +97,9 @@ import {
   formatUploadLimit,
   getUploadLimits,
   importAssets,
-  listAssets,
   type AssetSummary,
 } from "./asset-api";
+import { assetBrowserQueryOptions, flattenAssetPages } from "./asset-queries";
 import { AssetDetail } from "./asset-detail";
 import { useUploader } from "./use-uploader";
 import { workspaceCrumb, type WorkspaceRef } from "./workspace";
@@ -107,21 +109,23 @@ export function AssetDashboard({
   search,
   assetId,
   prefix,
+  fromPrefix,
 }: {
   workspace: WorkspaceRef;
   search: string;
   assetId?: string;
   prefix: string;
+  fromPrefix?: string;
 }) {
   if (assetId)
     return (
-      <AssetDetail workspace={workspace} assetId={assetId} fromPrefix={prefix} fromSearch={search} />
+      <AssetDetail workspace={workspace} assetId={assetId} fromPrefix={fromPrefix} fromSearch={search} />
     );
   return <AssetBrowser workspace={workspace} search={search} prefix={prefix} />;
 }
 
 /** Crumbs for a folder path: each segment opens that folder. */
-export function folderCrumbs(workspace: WorkspaceRef, prefix: string): Crumb[] {
+export function folderCrumbs(workspace: WorkspaceRef, prefix: string, search = ""): Crumb[] {
   const segments = prefix.split("/").filter(Boolean);
   return [
     workspaceCrumb(workspace),
@@ -131,7 +135,7 @@ export function folderCrumbs(workspace: WorkspaceRef, prefix: string): Crumb[] {
         <Link
           to="/workspaces/$workspaceId/assets"
           params={{ workspaceId: workspace.id }}
-          search={{ prefix: "" }}
+          search={{ prefix: "", ...(search && !segments.length ? { q: search } : {}) }}
         />
       ),
     },
@@ -141,7 +145,7 @@ export function folderCrumbs(workspace: WorkspaceRef, prefix: string): Crumb[] {
         <Link
           to="/workspaces/$workspaceId/assets"
           params={{ workspaceId: workspace.id }}
-          search={{ prefix: `${segments.slice(0, index + 1).join("/")}/` }}
+          search={{ prefix: `${segments.slice(0, index + 1).join("/")}/`, ...(search && index === segments.length - 1 ? { q: search } : {}) }}
         />
       ),
     })),
@@ -181,6 +185,7 @@ function AssetBrowser({
 }) {
   const navigate = useNavigate();
   const uploader = useUploader(workspace.id);
+  const queryClient = useQueryClient();
   const needle = useDebouncedValue(search.trim());
   const [dialog, setDialog] = useState<"upload" | "folder" | "import" | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -201,16 +206,21 @@ function AssetBrowser({
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
   const dragDepth = useRef(0);
-  const assets = useQuery({
-    queryKey: ["assets", workspace.id, needle ? "" : prefix, needle],
-    queryFn: () => listAssets(workspace.id, needle ? "" : prefix, needle),
-    refetchInterval: (query) =>
-      query.state.data?.assets.some(({ status }) => status === "processing")
-        ? 1500
-        : false,
-  });
-  const folders = assets.data?.folders ?? [];
-  const files = assets.data?.assets ?? [];
+  const options = assetBrowserQueryOptions(workspace.id, needle ? "" : prefix, needle);
+  const assets = useInfiniteQuery(options);
+  const { folders, assets: files } = flattenAssetPages(assets.data?.pages);
+  const loaded = folders.length + files.length;
+
+  function loadMore() {
+    if (!assets.isFetching) void assets.fetchNextPage({ cancelRefetch: false });
+  }
+
+  function refresh() {
+    if (!assets.isFetching) {
+      window.scrollTo({ top: 0 });
+      void queryClient.resetQueries({ queryKey: options.queryKey, exact: true });
+    }
+  }
   const folderName = prefix.split("/").findLast(Boolean);
 
   function setSearch(value: string) {
@@ -261,8 +271,8 @@ function AssetBrowser({
               assets.isPending
                 ? "Loading…"
                 : needle
-                  ? `${files.length} ${files.length === 1 ? "match" : "matches"} in all folders`
-                  : `${folders.length + files.length} ${folders.length + files.length === 1 ? "item" : "items"}`
+                  ? `${loaded} ${loaded === 1 ? "match" : "matches"}${assets.hasNextPage ? " loaded" : ""} in all folders`
+                  : `${loaded} ${loaded === 1 ? "item" : "items"}${assets.hasNextPage ? " loaded" : ""}`
             }
             actions={
               workspace.canEdit && (
@@ -326,6 +336,10 @@ function AssetBrowser({
               </InputGroupAddon>
             </InputGroup>
           </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon" aria-label="Refresh assets" disabled={assets.isFetching} onClick={refresh}>
+              <RefreshCwIcon />
+            </Button>
             <ToggleGroup
               variant="outline"
               spacing={0}
@@ -344,14 +358,18 @@ function AssetBrowser({
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
+          </div>
 
           {assets.isPending ? (
             <PageSkeleton />
-          ) : assets.isError ? (
+          ) : assets.isError && !assets.data ? (
             <Alert variant="destructive">
               <TriangleAlertIcon />
               <AlertTitle>Assets could not load</AlertTitle>
-              <AlertDescription>{assets.error.message}</AlertDescription>
+              <AlertDescription>
+                {assets.error.message}
+                <Button variant="outline" size="sm" onClick={() => { void assets.refetch(); }}>Retry</Button>
+              </AlertDescription>
             </Alert>
           ) : (folders.length || files.length) && view === "list" ? (
             <AssetTable
@@ -360,6 +378,7 @@ function AssetBrowser({
               workspace={workspace}
               prefix={prefix}
               search={search}
+              partial={assets.hasNextPage}
             />
           ) : folders.length || files.length ? (
             <div className="flex flex-col gap-6">
@@ -421,6 +440,19 @@ function AssetBrowser({
                 </EmptyContent>
               )}
             </Empty>
+          )}
+
+          {assets.data && (assets.hasNextPage || assets.data.pages.length > 1 || assets.isError) && (
+            <AssetPageControls
+              loaded={loaded}
+              hasMore={assets.hasNextPage}
+              fetching={assets.isFetching}
+              loadingMore={assets.isFetchingNextPage}
+              error={assets.isError ? assets.error.message : undefined}
+              nextPageError={assets.isFetchNextPageError}
+              onMore={loadMore}
+              onRetry={() => { void assets.refetch(); }}
+            />
           )}
 
           {dragging && (
@@ -709,16 +741,20 @@ function AssetTable({
   workspace,
   prefix,
   search,
+  partial,
 }: {
   folders: Array<{ name: string; prefix: string }>;
   assets: AssetSummary[];
   workspace: WorkspaceRef;
   prefix: string;
   search: string;
+  partial: boolean;
 }) {
   const [sort, setSort] = useState<Sort>({ key: "name", direction: "asc" });
   return (
-    <div className="rounded-xl border">
+    <div className="flex flex-col gap-2">
+      {partial && <p className="text-xs text-muted-foreground">Sorts loaded files.</p>}
+      <div className="rounded-xl border">
       <Table>
         <TableHeader>
           <TableRow>
@@ -807,6 +843,7 @@ function AssetTable({
           })}
         </TableBody>
       </Table>
+      </div>
     </div>
   );
 }

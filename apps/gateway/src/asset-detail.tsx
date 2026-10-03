@@ -84,6 +84,7 @@ import {
 } from "./asset-api";
 import { assetVersionHistoryQueryOptions } from "./asset-queries";
 import { folderCrumbs, statusBadge, UploadLimitDescription } from "./asset-dashboard";
+import { assetOrigin } from "./asset-origin";
 import { useUploader } from "./use-uploader";
 import type { WorkspaceRef } from "./workspace";
 
@@ -95,7 +96,7 @@ export function AssetDetail({
 }: {
   workspace: WorkspaceRef;
   assetId: string;
-  fromPrefix: string;
+  fromPrefix?: string;
   fromSearch: string;
 }) {
   const detail = useQuery({
@@ -106,10 +107,10 @@ export function AssetDetail({
   });
 
   if (detail.isPending || detail.isError) {
-    const folder = fromPrefix;
+    const folder = fromPrefix ?? "";
     return (
       <>
-        <AppHeader crumbs={[...folderCrumbs(workspace, folder), { label: "Asset" }]} />
+        <AppHeader crumbs={[...folderCrumbs(workspace, folder, fromSearch), { label: "Asset" }]} />
         <Page id="main">
           {detail.isPending ? (
             <PageSkeleton />
@@ -136,11 +137,6 @@ export function AssetDetail({
   );
 }
 
-function keyFolder(key: string) {
-  const slash = key.lastIndexOf("/");
-  return slash === -1 ? "" : key.slice(0, slash + 1);
-}
-
 function AssetDetailPage({
   asset,
   workspace,
@@ -149,7 +145,7 @@ function AssetDetailPage({
 }: {
   asset: AssetSummary;
   workspace: WorkspaceRef;
-  fromPrefix: string;
+  fromPrefix?: string;
   fromSearch: string;
 }) {
   const navigate = useNavigate();
@@ -165,8 +161,8 @@ function AssetDetailPage({
   const url = new URL(path, window.location.origin).href;
   const badge = statusBadge(asset);
   const isVideo = isVideoMimeType(asset.mimeType);
-  // Search results open assets from any folder; the key says where it lives.
-  const folder = fromSearch ? keyFolder(asset.key) : fromPrefix || keyFolder(asset.key);
+  const origin = assetOrigin(asset.key, fromPrefix, fromSearch);
+  const folder = origin.prefix;
 
   async function changeVisibility() {
     await setAssetVisibility(workspace.id, asset.id, !asset.isPublic);
@@ -188,13 +184,13 @@ function AssetDetailPage({
     await navigate({
       to: "/workspaces/$workspaceId/assets",
       params: { workspaceId: workspace.id },
-      search: { prefix: folder, ...(fromSearch ? { q: fromSearch } : {}) },
+      search: origin,
     });
   }
 
   return (
     <>
-      <AppHeader crumbs={[...folderCrumbs(workspace, folder), { label: asset.displayName }]} />
+      <AppHeader crumbs={[...folderCrumbs(workspace, folder, fromSearch), { label: asset.displayName }]} />
       <Page id="main">
         <PageHeader
           title={asset.displayName}

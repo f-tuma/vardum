@@ -47,6 +47,15 @@ import {
   expirePending,
 } from "./upload-lifecycle.js";
 import { maximumUploadSize, uploadLimits } from "./upload-limits.js";
+import { config } from "./config.js";
+import {
+  assetPaginationQuery,
+  assetPageSql,
+  decodeAssetCursor,
+  encodeAssetCursor,
+  normalizedAssetSearch,
+  type AssetPageRow,
+} from "./asset-pagination.js";
 
 const thumbnailTransformation = {
   w: 640,
@@ -699,17 +708,22 @@ export function registerAssetRoutes(app: FastifyInstance) {
     },
   );
 
-  // ponytail: capped list; add cursor pagination when workspaces exceed 100 assets.
   api.get(
     "/api/workspaces/:workspaceId/assets",
     {
       schema: {
         params: workspaceParams,
-        querystring: z.object({
-          limit: z.coerce.number().int().min(1).max(100).default(50),
-          prefix: assetPrefix,
-          search: z.string().trim().max(255).optional(),
-        }),
+        querystring: z
+          .object({
+            limit: z.coerce.number().int().min(1).max(100).default(50),
+            prefix: assetPrefix,
+            search: z.string().trim().max(255).optional(),
+            ...assetPaginationQuery,
+          })
+          .refine((query) => !query.cursor || query.pagination === "cursor", {
+            message: "Cursor requires pagination=cursor",
+            path: ["cursor"],
+          }),
       },
     },
     async (request, reply) => {
@@ -721,6 +735,68 @@ export function registerAssetRoutes(app: FastifyInstance) {
         return reply
           .code(authorization.statusCode)
           .send({ error: authorization.error });
+      }
+
+      if (request.query.pagination === "cursor") {
+        const scope = {
+          workspaceId,
+          prefix: request.query.prefix,
+          search: normalizedAssetSearch(request.query.search),
+          limit: request.query.limit,
+        };
+        const position = decodeAssetCursor(
+          request.query.cursor,
+          scope,
+          config.BETTER_AUTH_SECRET,
+        );
+        if (position === "invalid")
+          return reply.code(400).send({ error: "Invalid cursor" });
+        return inWorkspace(workspaceId, async (transaction) => {
+          const { rows } = await transaction.execute<AssetPageRow>(
+            assetPageSql(scope, position),
+          );
+          const page = rows.slice(0, scope.limit);
+          const last = rows.length > scope.limit ? page.at(-1) : undefined;
+          return {
+            folders: page
+              .filter((item) => item.kindRank === 0)
+              .map((item) => ({
+                name: item.path.slice(0, -1).split("/").at(-1)!,
+                prefix: item.path,
+              })),
+            assets: page
+              .filter((item) => item.kindRank === 1)
+              .map((item) => {
+                // Candidate selection and these joins share one statement snapshot.
+                const asset = {
+                  id: item.id!,
+                  key: item.key!,
+                  displayName: item.displayName!,
+                  isPublic: item.isPublic!,
+                  currentVersionId: item.currentVersionId,
+                  mimeType: item.mimeType,
+                  size: item.size,
+                  width: item.width,
+                  height: item.height,
+                  updatedAt: new Date(item.updatedAt!),
+                };
+                const workspace = item.slug
+                  ? { slug: item.slug, customDomain: item.customDomain }
+                  : undefined;
+                return {
+                  ...asset,
+                  latestVersionId: item.latestVersionId,
+                  status: item.status,
+                  error: item.error,
+                  customDomain: item.customDomain,
+                  thumbnailUrl: thumbnailUrl(workspace, asset),
+                };
+              }),
+            nextCursor: last
+              ? encodeAssetCursor(scope, last, config.BETTER_AUTH_SECRET)
+              : null,
+          };
+        });
       }
 
       const listing = await inWorkspace(workspaceId, async (transaction) => {
