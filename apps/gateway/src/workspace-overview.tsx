@@ -9,6 +9,7 @@ export const activityLabels: Record<string, string> = {
   "asset.deleted": "Asset deleted",
   "asset.version_created": "Version created",
   "asset.version_queued": "Version queued",
+  "asset.version_retried": "Processing retried",
   "asset.version_processed": "Version ready",
   "asset.version_restored": "Version restored",
   "asset.version_failed": "Version failed",

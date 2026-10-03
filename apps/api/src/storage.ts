@@ -96,13 +96,18 @@ export function inspectUpload(storageKey: string) {
   );
 }
 
-export function getObject(storageKey: string, range?: string) {
+export function getObject(
+  storageKey: string,
+  range?: string,
+  signal?: AbortSignal,
+) {
   return storage.send(
     new GetObjectCommand({
       Bucket: config.S3_BUCKET,
       Key: storageKey,
       Range: range,
     }),
+    { abortSignal: signal },
   );
 }
 

@@ -2,6 +2,7 @@ import { PgBoss } from "pg-boss";
 import { config } from "./config.js";
 
 export const assetIngestQueue = "asset-ingest";
+export const assetIngestRecoveryQueue = "asset-ingest-recovery";
 export const assetDeleteQueue = "asset-delete";
 export const deliveryRetentionQueue = "delivery-retention";
 export const boss = new PgBoss({
@@ -37,6 +38,13 @@ export function startQueue() {
       retryDelay: 10,
       retryBackoff: true,
       expireInSeconds: 5 * 60,
+    });
+    await instance.createQueue(assetIngestRecoveryQueue, {
+      policy: "exclusive",
+      retryLimit: 3,
+      retryDelay: 10,
+      expireInSeconds: 5 * 60,
+      heartbeatSeconds: 30,
     });
     await instance.createQueue(deliveryRetentionQueue, {
       policy: "exclusive",

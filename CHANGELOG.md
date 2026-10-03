@@ -6,6 +6,11 @@ All notable changes to Vardum are documented here.
 
 ### Fixed
 
+- Ingest jobs no longer remain processing after queue retries are exhausted or
+  jobs disappear. Workers reconcile interrupted versions on startup and every
+  minute; authorized users can retry the same stored upload from version history.
+  Older ready versions stay available and stale workers cannot overwrite a newer
+  attempt. Requires migration `0011_asset_ingest_recovery.sql`.
 - Release verification waits for npm registry propagation before installing
   published packages; registry errors and integrity conflicts still fail immediately.
 

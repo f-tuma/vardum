@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { videoMimeSet } from "@vardum/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 import { asset, assetVersion, auditEvent } from "./db/app-schema.js";
-import { inWorkspace } from "./db/tenant.js";
+import { inWorkspace, type Transaction } from "./db/tenant.js";
 import { getObject } from "./storage.js";
 
 const payloadSchema = z.object({
@@ -15,8 +15,13 @@ const payloadSchema = z.object({
 });
 export type AssetIngestPayload = z.infer<typeof payloadSchema>;
 
-export async function processAsset(input: unknown) {
+export async function processAsset(
+  input: unknown,
+  options: { jobId?: string; signal?: AbortSignal } = {},
+) {
   const payload = payloadSchema.parse(input);
+  const attemptId = randomUUID();
+  options.signal?.throwIfAborted();
   const pending = await inWorkspace(
     payload.workspaceId,
     async (transaction) => {
@@ -29,28 +34,51 @@ export async function processAsset(input: unknown) {
             eq(assetVersion.assetId, payload.assetId),
             eq(assetVersion.id, payload.versionId),
           ),
-        );
+        )
+        .for("update");
       if (!row || row.status === "ready" || row.status === "failed")
         return null;
+      if (row.ingestJobId && row.ingestJobId !== options.jobId) return null;
+      options.signal?.throwIfAborted();
 
       await transaction
         .update(assetVersion)
-        .set({ status: "processing", updatedBy: "system:ingest-worker" })
+        .set({
+          status: "processing",
+          ingestAttemptId: attemptId,
+          ingestJobId: options.jobId ?? row.ingestJobId,
+          updatedBy: "system:ingest-worker",
+        })
         .where(eq(assetVersion.id, payload.versionId));
       return row;
     },
   );
   if (!pending) return;
+  const fail = (message: string) => {
+    options.signal?.throwIfAborted();
+    return inWorkspace(payload.workspaceId, (tx) =>
+      failVersion(tx, payload, attemptId, message, false),
+    );
+  };
 
-  const object = await getObject(pending.storageKey);
+  const object = await getObject(pending.storageKey, undefined, options.signal);
   if (!object.Body) throw new Error("S3 returned an empty body");
-  // ponytail: upload size is capped at 100 MiB; stream to disk if that ceiling grows.
+  // Upload limits bound this buffer; stream to disk if those limits grow.
   const bytes = Buffer.from(await object.Body.transformToByteArray());
+  options.signal?.throwIfAborted();
 
   // Video: no sharp processing, just checksum + mark ready.
   if (videoMimeSet.has(pending.mimeType)) {
     const checksum = createHash("sha256").update(bytes).digest("hex");
-    await markReady(payload, checksum, pending.mimeType, null, null);
+    await markReady(
+      payload,
+      attemptId,
+      checksum,
+      pending.mimeType,
+      null,
+      null,
+      options.signal,
+    );
     return;
   }
 
@@ -61,7 +89,9 @@ export async function processAsset(input: unknown) {
       limitInputPixels: 100_000_000,
     }).metadata();
   } catch {
-    await failVersion(payload, "The uploaded file is not a supported image");
+    await fail(
+      "The uploaded file is not a supported image. Upload a new file.",
+    );
     return;
   }
 
@@ -76,32 +106,47 @@ export async function processAsset(input: unknown) {
     !height ||
     totalPixels > 100_000_000
   ) {
-    await failVersion(
-      payload,
-      "The uploaded image does not match its declared type or limits",
+    await fail(
+      "The uploaded image does not match its declared type or limits. Upload a new file.",
     );
     return;
   }
 
   const checksum = createHash("sha256").update(bytes).digest("hex");
-  await markReady(payload, checksum, detectedMimeType, width, height);
+  await markReady(
+    payload,
+    attemptId,
+    checksum,
+    detectedMimeType,
+    width,
+    height,
+    options.signal,
+  );
 }
 
 async function markReady(
   payload: AssetIngestPayload,
+  attemptId: string,
   checksum: string,
   mimeType: string,
   width: number | null,
   height: number | null,
+  signal?: AbortSignal,
 ) {
   await inWorkspace(payload.workspaceId, async (transaction) => {
     const [version] = await transaction
       .select({ status: assetVersion.status, number: assetVersion.number })
       .from(assetVersion)
-      .where(eq(assetVersion.id, payload.versionId))
+      .where(
+        and(
+          eq(assetVersion.id, payload.versionId),
+          eq(assetVersion.ingestAttemptId, attemptId),
+        ),
+      )
       .for("update");
     if (!version || version.status === "ready" || version.status === "failed")
       return;
+    signal?.throwIfAborted();
 
     const [target] = await transaction
       .select({
@@ -113,6 +158,7 @@ async function markReady(
       .where(eq(asset.id, payload.assetId))
       .for("update");
     if (!target) return;
+    signal?.throwIfAborted();
 
     let becomesCurrent = true;
     if (target.currentVersionId) {
@@ -132,6 +178,8 @@ async function markReady(
         width,
         height,
         error: null,
+        retryable: false,
+        ingestAttemptId: null,
         updatedBy: "system:ingest-worker",
       })
       .where(eq(assetVersion.id, payload.versionId));
@@ -166,45 +214,64 @@ async function markReady(
   });
 }
 
-async function failVersion(payload: AssetIngestPayload, message: string) {
-  await inWorkspace(payload.workspaceId, async (transaction) => {
-    const [context] = await transaction
-      .select({
-        key: asset.key,
-        displayName: asset.displayName,
-        number: assetVersion.number,
-        filename: assetVersion.filename,
-      })
-      .from(assetVersion)
-      .innerJoin(asset, eq(asset.id, assetVersion.assetId))
-      .where(eq(assetVersion.id, payload.versionId));
+export async function failVersion(
+  transaction: Transaction,
+  payload: AssetIngestPayload,
+  attemptId: string | null,
+  message: string,
+  retryable: boolean,
+) {
+  const [failed] = await transaction
+    .update(assetVersion)
+    .set({
+      status: "failed",
+      error: message,
+      retryable,
+      ingestAttemptId: null,
+      updatedBy: "system:ingest-worker",
+    })
+    .where(
+      and(
+        eq(assetVersion.id, payload.versionId),
+        eq(assetVersion.assetId, payload.assetId),
+        eq(assetVersion.status, "processing"),
+        attemptId === null
+          ? isNull(assetVersion.ingestAttemptId)
+          : eq(assetVersion.ingestAttemptId, attemptId),
+      ),
+    )
+    .returning({ id: assetVersion.id });
+  if (!failed) return false;
+  const [context] = await transaction
+    .select({
+      key: asset.key,
+      displayName: asset.displayName,
+      number: assetVersion.number,
+      filename: assetVersion.filename,
+    })
+    .from(assetVersion)
+    .innerJoin(asset, eq(asset.id, assetVersion.assetId))
+    .where(eq(assetVersion.id, payload.versionId));
 
-    await transaction
-      .update(assetVersion)
-      .set({
-        status: "failed",
-        error: message,
-        updatedBy: "system:ingest-worker",
-      })
-      .where(eq(assetVersion.id, payload.versionId));
-    await transaction.insert(auditEvent).values({
-      workspaceId: payload.workspaceId,
-      actorType: "system",
-      actorId: "ingest-worker",
-      action: "asset.version_failed",
-      targetType: "asset_version",
-      targetId: payload.versionId,
-      metadata: {
-        assetId: payload.assetId,
-        key: context?.key,
-        displayName: context?.displayName,
-        number: context?.number,
-        filename: context?.filename,
-        error: message,
-      },
-      requestId: payload.requestId,
-    });
+  await transaction.insert(auditEvent).values({
+    workspaceId: payload.workspaceId,
+    actorType: "system",
+    actorId: "ingest-worker",
+    action: "asset.version_failed",
+    targetType: "asset_version",
+    targetId: payload.versionId,
+    metadata: {
+      assetId: payload.assetId,
+      key: context?.key,
+      displayName: context?.displayName,
+      number: context?.number,
+      filename: context?.filename,
+      error: message,
+      retryable,
+    },
+    requestId: payload.requestId,
   });
+  return true;
 }
 
 export function detectMimeType(format: string, declared: string) {

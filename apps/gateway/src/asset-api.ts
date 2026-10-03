@@ -59,6 +59,7 @@ export type AssetVersion = {
   height: number | null;
   checksum: string | null;
   error: string | null;
+  retryable: boolean;
   createdAt: string;
   createdBy: string;
   current: boolean;
@@ -490,6 +491,17 @@ export function restoreAssetVersion(
 ) {
   return request<{ currentVersionId: string; number: number }>(
     `/api/workspaces/${workspaceId}/assets/${assetId}/versions/${versionId}/restore`,
+    { method: "POST" },
+  );
+}
+
+export function retryAssetVersion(
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+) {
+  return request<{ id: string; status: "processing" }>(
+    `/api/workspaces/${workspaceId}/assets/${assetId}/versions/${versionId}/retry`,
     { method: "POST" },
   );
 }

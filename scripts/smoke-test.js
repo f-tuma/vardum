@@ -1,5 +1,6 @@
 // Production smoke test script
 import { checkInstalledPackages } from "./smoke-installed-packages.mjs";
+import { checkRustfsRecovery } from "./smoke-ingest-recovery.mjs";
 
 const base = process.env.SMOKE_URL;
 let cookie = "";
@@ -171,4 +172,5 @@ if (
   throw new Error(`Transform/cache analytics failed: ${JSON.stringify(transformedOverview.delivery)}`);
 }
 await checkInstalledPackages({ releaseDir: process.env.SMOKE_RELEASE_DIR, base, cookie, workspaceId: workspace.id, otherWorkspaceId: secondary.id });
+await checkRustfsRecovery({ request, workspaceId: workspace.id, assetId: asset.id, currentVersionId: version.id, file: svg });
 console.log("Production smoke test passed");
