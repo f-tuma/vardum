@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/table";
 import { timeAgo } from "@/lib/format";
 import { authClient } from "./auth-client";
+import { CapabilityNotice, useDeploymentCapabilities } from "./capabilities";
 
 type RevokeTarget = { token: string | null; label: string };
 
@@ -89,8 +90,10 @@ export function AccountSettings() {
   );
 }
 
-function ProfileCard() {
+export function ProfileCard() {
   const id = useId();
+  const capabilities = useDeploymentCapabilities();
+  const canChangeEmail = capabilities.isSuccess && capabilities.data.emailChange;
   const session = authClient.useSession();
   const [error, setError] = useState("");
   const [nameError, setNameError] = useState("");
@@ -103,9 +106,12 @@ function ProfileCard() {
 
   async function updateProfile(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name")).trim();
-    const email = String(data.get("email")).trim().toLowerCase();
+    const email = canChangeEmail
+      ? String(data.get("email")).trim().toLowerCase()
+      : user.email.toLowerCase();
     setError("");
     setNameError("");
     if (!name) {
@@ -119,7 +125,7 @@ function ProfileCard() {
       setError(result.error.message ?? "Profile update failed");
       return;
     }
-    if (email !== user.email.toLowerCase()) {
+    if (canChangeEmail && email !== user.email.toLowerCase()) {
       const emailResult = await authClient.changeEmail({
         newEmail: email,
         callbackURL: `${window.location.origin}/account?emailChanged=true`,
@@ -129,7 +135,7 @@ function ProfileCard() {
         setError(emailResult.error.message ?? "Email change failed");
         return;
       }
-      toast.success(`Check ${email} to confirm the change`);
+      toast.success("Check your inbox to confirm the change.");
       return;
     }
     setPending(false);
@@ -160,7 +166,7 @@ function ProfileCard() {
               />
               {nameError && <FieldError id={`${id}-name-error`}>{nameError}</FieldError>}
             </Field>
-            <Field>
+            <Field data-disabled={!canChangeEmail}>
               <FieldLabel htmlFor={`${id}-email`}>Email</FieldLabel>
               <Input
                 id={`${id}-email`}
@@ -168,9 +174,20 @@ function ProfileCard() {
                 type="email"
                 defaultValue={user.email}
                 autoComplete="email"
+                disabled={!canChangeEmail}
+                aria-describedby={`${id}-email-availability`}
                 required
               />
-              <FieldDescription>Changing it sends a confirmation link to the new address.</FieldDescription>
+              {canChangeEmail ? (
+                <FieldDescription id={`${id}-email-availability`}>Changing it sends an email to confirm the change.</FieldDescription>
+              ) : (
+                <CapabilityNotice
+                  id={`${id}-email-availability`}
+                  capabilities={capabilities}
+                  available={canChangeEmail}
+                  unavailable="Email changes are unavailable because email delivery is not configured. Contact the server administrator."
+                />
+              )}
             </Field>
             {error && <FieldError>{error}</FieldError>}
           </FieldGroup>

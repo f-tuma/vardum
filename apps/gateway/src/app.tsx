@@ -238,6 +238,7 @@ function WorkspaceApp({
       name: selected.name,
       slug: selected.slug,
       canEdit: selected.organizationRole !== "viewer",
+      canManage: selected.organizationRole === "owner",
     };
     content =
       view === "assets" ? (
@@ -271,9 +272,11 @@ function WorkspaceApp({
             </EmptyMedia>
             <EmptyTitle>No workspaces yet</EmptyTitle>
             <EmptyDescription>
-              {selectedOrganization
+              {selectedOrganization?.canCreateWorkspace
                 ? "Create a workspace to start uploading assets."
-                : "Ask an organization owner for an invitation."}
+                : selectedOrganization
+                  ? "Ask an organization owner to create a workspace."
+                  : "Ask an organization owner for an invitation."}
             </EmptyDescription>
           </EmptyHeader>
           {selectedOrganization?.canCreateWorkspace && (

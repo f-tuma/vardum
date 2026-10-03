@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient } from "./auth-client";
+import { CapabilityNotice, useDeploymentCapabilities } from "./capabilities";
 
 const copy = {
   "sign-in": { title: "Sign in", submit: "Sign in" },
@@ -27,12 +28,15 @@ const copy = {
  */
 export function AuthForm() {
   const id = useId();
+  const capabilities = useDeploymentCapabilities();
+  const canRecover = capabilities.isSuccess && capabilities.data.passwordRecovery;
   const [mode, setMode] = useState<keyof typeof copy>("sign-in");
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
 
   function switchMode(next: typeof mode) {
+    if (next === "forgot" && !canRecover) return;
     setMode(next);
     setError("");
     setStatus("");
@@ -40,6 +44,7 @@ export function AuthForm() {
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending || (mode === "forgot" && !canRecover)) return;
     setPending(true);
     setError("");
     setStatus("");
@@ -112,7 +117,8 @@ export function AuthForm() {
                     type="button"
                     variant="link"
                     size="xs"
-                    disabled={pending}
+                    disabled={pending || !canRecover}
+                    aria-describedby={!canRecover ? `${id}-recovery` : undefined}
                     onClick={() => switchMode("forgot")}
                   >
                     Forgot password?
@@ -132,13 +138,21 @@ export function AuthForm() {
               )}
             </Field>
           )}
+          {mode !== "sign-up" && (
+            <CapabilityNotice
+              id={`${id}-recovery`}
+              capabilities={capabilities}
+              available={canRecover}
+              unavailable="Password recovery is unavailable because email delivery is not configured. Contact the server administrator."
+            />
+          )}
           {error && <FieldError>{error}</FieldError>}
           {status && (
             <Alert>
               <AlertDescription>{status}</AlertDescription>
             </Alert>
           )}
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending || (mode === "forgot" && !canRecover)}>
             {pending && <Spinner data-icon="inline-start" />}
             {copy[mode].submit}
           </Button>
