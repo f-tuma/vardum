@@ -359,8 +359,109 @@ do not establish that these components are patched.
 | Gateway raw scan | `e13bfa02529c2dd11930175d1313195a8b88fa3334b170fbe96042ac6f09d790` |
 | Runtime evidence | `bb09494e95593c4b5ec2f4212020e56210bc402307b750c4bd6639251b42cd7f` |
 
-**Residual record disposition, final independent review, exact-head CI and the
-clean VARD-6 portable artifact remain pending.** These successful local checks
-are not a release or production deployment approval. Raw records, exact image
-exports and the scanner database remain available locally for independent
-assessment; CI retains only the approved JSON/text evidence.
+The independent local residual and image assessment is complete, and required
+CI [37145662070](https://github.com/f-tuma/vardum/actions/runs/37145662070) passed
+on reviewed commit `48605cb7de472e75327e9e00700c808887f75633`. That hosted run
+separately restored 28 objects / 11,347,511 bytes and retained JSON/text evidence
+as artifact `11282440834` (archive SHA-256
+`1522505dcfcf57a85d8135e025eacd343f618740231cab994923e9ca3e6ff603`).
+It does not replace the identities of the local image exports assessed above.
+The documentation update itself still requires review and current-head CI.
+The clean VARD-6 portable artifact and provider acceptance remain pending.
+
+### Independent residual disposition and release hold
+
+The [per-record ledger](runtime-residual-assessment-20261003.json) preserves all
+31 candidate OS rows, all 282 baseline rows and 19 additional native vendor
+records, including original package versions/severities, conditions, evidence,
+limits and primary sources. Scanner descriptions and duplicate reference lists
+are omitted from this projection; complete local input ledgers are hash-bound
+in the file. No ignore filter or severity downgrade is used. Baseline disposition
+is 50 retained-advisory rows mapping to 31 candidate rows, six fixed-version rows
+and 226 component-absence rows. Missing tools and packages are distinguished
+from retained code assessed under specific application conditions.
+
+The independent assessment checked all 24 API and 11 gateway compressed layers
+and uncompressed diff IDs and their manifests/configurations. The whiteout-aware
+API/worker effective filesystem had no SUID/SGID files or file capabilities, shell,
+package managers, Perl or esbuild executable. Actual Node, Sharp addon and
+libvips hashes match the baseline. Together with the privilege and lifecycle
+checks above, this supports merging the runtime improvement while preserving
+the release hold. It does not make retained libraries universally safe.
+
+GCC template findings have no identified checked caller; absent dynamic symbols
+alone cannot exclude every hidden static template. The actual GCC aligned-new
+branch uses `posix_memalign`, excluding the reported old rounding sequence.
+glibc caller-dependent findings retain their individual boundaries in the
+ledger. The DNS search-entry finding remains dependent on provider resolver
+configuration, despite the short local search entry. Privileged-loader findings
+are bounded by actual non-root, no-new-privileges, empty capabilities and absent
+setuid/file-capability transitions. Node is `ET_EXEC`, not PIE; old hardening
+limitations are preserved. zlib's negative CRC-combine length is not exposed by
+the checked JS binding. The gzip-file printf caller is absent, and its upstream
+introduced-version disagreement with Debian is recorded without silently
+resolving it. Old Perl tracker/version and 32-bit conditions are also retained
+separately from the candidate's actual Perl/package removal.
+
+The two Japanese gconv findings tracked in VARD-54 remain unpatched. Both
+affected modules are present, but the initial uploaded-SVG encoding hypothesis
+was not confirmed: Sharp's exact vendor build sets libxml2 `minimum=true`,
+which disables its optional iconv support. Actual libvips' direct `iconv_open`
+site is a GLib wrapper; checked direct conversion selectors are internal GLib
+paths and both IOChannel encoding setters pass NULL. The application supplies
+upload Buffers. No checked native caller selecting an uploaded Japanese encoding
+was identified. Saved image configuration and all three explicit Compose
+environment mappings omit `LANG`, `LANGUAGE`, `LC_ALL`, `LC_CTYPE`, `CHARSET`,
+`G_FILENAME_ENCODING` and `G_BROKEN_FILENAMES`; the original smoke did not
+capture the complete process environment. This is a conditional local
+caller/configuration boundary. Provider charset overrides or new native
+conversion APIs invalidate it. GLib E2BIG growth/retry and ordinary passing
+fixtures do not prove buffer safety. See the exact
+[Sharp build](https://raw.githubusercontent.com/lovell/sharp-libvips/v1.3.4/build/posix.sh)
+and [libxml2 option evaluation](https://raw.githubusercontent.com/GNOME/libxml2/v2.15.4/meson.build).
+
+Bundled libpng 1.6.58 remains affected by
+[GHSA-qvg3-h654-xq3j](https://github.com/pnggroup/libpng/security/advisories/GHSA-qvg3-h654-xq3j).
+The exact primary [libvips PNG loader](https://raw.githubusercontent.com/libvips/libvips/v8.18.7/libvips/foreign/vipspng.c)
+does not call `png_read_end`, so the vendor's required rare call sequence is
+absent on that checked application path. This is not a libpng patch or a proof
+of every hidden Cairo/FreeType path; exact Cairo 1.18.6 source was unavailable
+to the reviewer. No vulnerable secondary application sequence was identified.
+Font inventories are empty and there is no user-font ingestion API. A vendor
+libpng 1.6.59 update and re-review of future secondary loaders remain warranted.
+The named Sharp/rsvg/libheif fixes are met; the Node nghttp2 caller is assessed
+separately from the absent nghttpx proxy handler.
+
+**Release is held by VARD-55.** Node 22.23.3 bundles OpenSSL 3.5.8, which still
+eagerly expands relative CRL distribution points while caching X509 extensions
+under CVE-2026-35189. The [vendor advisory](https://openssl-library.org/news/secadv/20260929.txt)
+severity remains LOW. Actual exported Node code retains the allocation path;
+its hash is unchanged from the baseline. S3 HTTPS, SMTP implicit TLS/STARTTLS
+and configured PostgreSQL TLS can reach ordinary native certificate parsing.
+Configured trusted endpoints, benign HTTPS 200 responses, V8 heap limits and
+container memory limits do not close this native allocation issue. Node has no
+dynamic libssl/libcrypto dependency, so Debian's system-library backport does
+not fix the bundled code. The other 13 OpenSSL records retain their individual
+protocol, architecture, version-range or caller boundaries in the ledger.
+
+As checked on 3 October, official Node 22.23.3 and 24.21.0 both still bundle
+OpenSSL 3.5.8; switching between those vendor images does not remove the hold.
+Prefer the first supported official Node/base artifact containing OpenSSL
+3.5.9 or an authenticated vendor backport, then verify its actual code and repeat
+full image/runtime/compatibility acceptance. A maintained Wolfi Node 24 runtime
+with dynamically linked fixed OpenSSL is a possible separate migration, but
+requires its own libc/runtime stack and has not been accepted here. Do not
+transplant those libraries into the Debian image. See the
+[Node release index](https://nodejs.org/dist/index.json),
+[Debian advisory](https://security-tracker.debian.org/tracker/DSA-6531-1) and
+[Wolfi Node recipe](https://github.com/wolfi-dev/os/blob/main/nodejs-24.yaml).
+
+Full local assessment SHA-256:
+`fb2c7078df99aa33e40f86d5ed27d898093878ac70f0cdf76d29b4e4ff5a5729`.
+Identity proof: `1d14642bb26278d33432cb19c2cd30829e2bd9a8308df2f1c6e9dcebcdacf91f`.
+Lifecycle/compatibility proof:
+`c8715655de2449f893085aa8d556604ac76e8a50aa9d18a85fd0a935a87776d0`.
+Exact exports, complete raw scans, the scanner database and full independent
+ledgers remain local. CI retains approved JSON/text evidence only. These checks
+do not approve a production rollout, provider certificates/resolver settings,
+fonts, the clean portable candidate or publication.
