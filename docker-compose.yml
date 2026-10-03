@@ -28,7 +28,7 @@ services:
       retries: 5
 
   rustfs:
-    image: rustfs/rustfs:1.0.0
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     profiles: [storage]
     environment:
       RUSTFS_ACCESS_KEY: varda
