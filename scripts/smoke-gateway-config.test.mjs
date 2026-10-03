@@ -41,7 +41,10 @@ else if (args[0] === "rm" || (args[0] === "network" && args[1] === "rm")) {
   if (state.resources[args.at(-1)].owner === "foreign") throw new Error("Foreign cleanup attempted");
   delete state.resources[args.at(-1)];
 } else throw new Error("Unexpected fake Docker command " + JSON.stringify(args));
-fs.writeFileSync(path, JSON.stringify(state));
+// The signal test polls concurrently; never expose a truncated JSON document.
+const temporary = path + "." + process.pid + ".tmp";
+fs.writeFileSync(temporary, JSON.stringify(state));
+fs.renameSync(temporary, path);
 fs.writeSync(1, value + "\\n");
 `;
 
