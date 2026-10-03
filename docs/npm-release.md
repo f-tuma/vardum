@@ -1,8 +1,33 @@
 # npm releases
 
-Status on 2026-09-20: **published and verified on npm** — CLI 0.6.0, MCP 0.2.0
-and shared 0.2.0. Their registry SHA-512 values match the tested archives;
-CLI and MCP each install independently, resolving shared transitively.
+## Current status
+
+Reviewed **2026-10-03** (planner project **frgtn.VARD**, VARD-20).
+The available public versions are [CLI **0.6.0**](https://registry.npmjs.org/@vardum%2Fcli/0.6.0),
+[MCP **0.2.0**](https://registry.npmjs.org/@vardum%2Fmcp/0.2.0) and
+[shared **0.2.0**](https://registry.npmjs.org/@vardum%2Fshared/0.2.0).
+Their immutable archives were rechecked against registry SHA-512 values.
+Independent installs and the disposable Linux first-project flow are verified;
+CLI 0.6.0 uses schema **2** frozen snapshots.
+
+CLI **0.7.0**, shared **0.3.0**, MCP **0.3.0** and schema **3** belong to VARD-14's
+[unmerged, unpublished draft PR #13](https://github.com/f-tuma/vardum/pull/13).
+VARD-6's `server-v0.7` is provisional, with clean artifact acceptance and VARD-53's
+residual OS/native assessment still open. See [current readiness status](production-readiness-2026-09-20.md#current-status).
+Passing source tests does not make those candidates publicly available or ready
+for production.
+
+The current private source repository is `f-tuma/vardum`. npm-owner confirmation
+of its package-side trusted publishers remains VARD-45. The successful
+[validation-only run](https://github.com/f-tuma/vardum/actions/runs/37129022120)
+validated and downloaded archives, with **publish skipped**; it does not prove
+current publisher identity or a new npm publication.
+
+## September 20 publication evidence
+
+CLI 0.6.0, MCP 0.2.0 and shared 0.2.0 were published and verified on 2026-09-20.
+Their registry SHA-512 values matched the tested archives; CLI and MCP each
+installed independently, resolving shared transitively.
 
 - Release: [`v0.6.0`](https://github.com/frgtn-dot-dev/vardum/releases/tag/v0.6.0)
 - Source commit: `e8d17667933601ea7055bda8cabee26ac510e40f`
@@ -16,21 +41,26 @@ waits up to 18 checks, 10 seconds apart, for missing versions. Registry errors
 and conflicting integrity values fail immediately.
 
 Older CLI 0.5.0 / MCP 0.1.0 have unsupported `workspace:^` dependencies and remain
-immutable. Install the new versions below.
+immutable. Install the published compatible versions below.
 
 ## Compatibility
 
-| Component | Released version | Required counterpart |
+| Component | Published baseline | Compatibility notes |
 | --- | --- | --- |
-| `@vardum/cli` | 0.6.0, Node ≥22 | Matching server release; minimum CLI for schema 2 frozen snapshots |
-| `@vardum/mcp` | 0.2.0, Node ≥22 | Matching server release; 11 asset/Vard tools using a workspace key |
+| `@vardum/cli` | 0.6.0, Node ≥22 | Matching API contract; minimum CLI for schema 2 frozen snapshots |
+| `@vardum/mcp` | 0.2.0, Node ≥22 | Matching API contract; 11 asset/Vard tools using a workspace key |
 | `@vardum/shared` | 0.2.0 | CLI/MCP archives require `^0.2.0`; resolved automatically by npm |
-| API / gateway / worker | Server source at tag `v0.6.0` | Apply migrations through `0010_vard_folder_rules.sql` and follow runtime-role/visibility upgrade instructions |
+| API / gateway / worker | Historical server source at tag `v0.6.0` | The September client baseline used migrations through `0010_vard_folder_rules.sql`; newer merged source requires its own migrations and release acceptance |
 | Existing CLI ≤0.5.0 / MCP 0.1.0 | Not supported for this workflow | Upgrade; these artifacts are not a fallback for frozen snapshots |
 
-The API has no independent published npm version. This table describes the
-tested release set, not a guarantee for arbitrary older/newer server combinations.
-Deploy the matching server and migrations before rolling out these clients.
+The API has no independent published npm version. This table identifies the
+historical tested client/server contract, not a currently certified deployment
+artifact or a guarantee for arbitrary server combinations. Merged operational
+source adds migrations through `0014_upload_cleanup_fairness.sql`; it is distinct
+from the September release and from the unmerged schema 3 candidate. Follow the
+[operations upgrade instructions](operations.md) and complete the server/runtime
+release gates before deployment. Align server contracts and migrations before
+rolling out clients.
 Keep the locked files, source versions, keys and signing configuration needed
 for historical builds; see [snapshot limitations](../apps/cli/README.md#reproducible-asset-consumption).
 
@@ -59,7 +89,10 @@ node scripts/release-packages.mjs preflight artifacts/npm
 The output directory must be empty. It contains three `.tgz` archives and
 `release.json` with their versions and SHA-512 integrity values. Keep this exact
 directory for review and publication; do not repack after testing. Source edits
-require a fresh candidate directory and another validation run.
+require a fresh candidate directory and another validation run. A candidate built
+from changed source can differ from published archives even if its package version
+has not changed. Existing npm versions cannot receive those different bytes;
+prepare new versions for a new publication.
 
 Packing checks ordinary semver workspace dependencies, runtime entries, version
 numbers, the Node engine requirement, archive contents and hashes. The prepack
@@ -81,8 +114,9 @@ UI check. The auth/RLS/private-delivery database integrations run in CI/release 
 
 Publication is a separate, deliberate action. The GitHub `Release` workflow runs
 for version tag pushes and manual dispatch. Publication requires the matching CLI
-version tag (`v0.6.0` for this batch), including manual retries from that tag. Its
-validation job runs the checks above plus database integrations, then uploads the
+version tag (`v0.6.0` for the September batch), including manual retries from that
+tag with the original tested archives. Its validation job runs the checks above
+plus database integrations, then uploads the
 exact tested archives. A separate publish job
 downloads that artifact, checks its SHA-512 manifest, and uses the `npm`
 environment and npm trusted publishing (OIDC). No `NPM_TOKEN` secret is needed.
@@ -106,28 +140,37 @@ round trip; local package checks do not verify the hosted runner or action runti
 
 ### One-time npm setup
 
-For each existing package (`@vardum/shared`, `@vardum/cli`, `@vardum/mcp`), open
-its npm Settings → Trusted publishing and add GitHub Actions with:
+The September 20 release exercised the historical publisher identity below
+(VARD-40). For the current private repository, an npm owner must inspect each
+package (`@vardum/shared`, `@vardum/cli`, `@vardum/mcp`) in npm Settings → Trusted
+publishing and confirm the intended identity. That confirmation is still open
+under VARD-45; these are not three currently verified connections.
 
-| Field | Value |
-| --- | --- |
-| Organization or user | `frgtn-dot-dev` |
-| Repository | `vardum` |
-| Workflow filename | `release.yml` |
-| Environment | `npm` |
-| Allowed actions | Allow direct `npm publish` |
+| Field | Historical successful identity | Intended current identity, unverified |
+| --- | --- | --- |
+| Organization or user | `frgtn-dot-dev` | `f-tuma` |
+| Repository | `vardum` | `vardum` |
+| Workflow filename | `release.yml` | `release.yml` |
+| Environment | `npm` | `npm` |
+| Allowed actions | Allow direct `npm publish` | Allow direct `npm publish` |
 
-These three connections were configured and exercised on 2026-09-20.
-Create the GitHub environment `npm` and restrict its deployment policy to tags
-matching `v*`. Configure any required reviewers there. npm validates this trust
-when the workflow publishes; simply saving the form does not test the connection.
+The GitHub `npm` environment must restrict deployment to tags matching `v*`;
+configure any required reviewers there. npm validates trust when the workflow
+actually publishes. Saving the form or passing validation-only archive checks
+does not test that trust.
 The workflow pins Node 22.23.3 and npm 12.0.2, which support trusted publishing.
 See the [npm trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
 
 The source repository is currently private. npm provenance is therefore disabled
-for this repository; OIDC authentication still works. The workflow enables
-provenance automatically for a public repository. The public package metadata
-continues to point to this repository; this does not change repository visibility.
+for this repository. OIDC publication worked for the historical identity;
+current publisher acceptance remains unverified. The workflow enables provenance
+automatically for a public repository.
+
+Repository documentation links require access to the private source repository.
+The existing public archives retain `frgtn-dot-dev/vardum` metadata and README
+links. Editing current source documentation to use `f-tuma/vardum` neither changes
+those immutable archives nor makes the source public; package documentation and
+metadata changes need a future versioned release.
 
 ### Trigger and verify
 
@@ -136,8 +179,8 @@ push the matching version tag. A successful run publishes shared → CLI → MCP
 checks independent installs from npm, and creates a GitHub release with the
 archives and integrity manifest. Manual retries must select the same tag.
 The source tree, `release.json`, workflow run and GitHub release identify the
-published build. Review npm results before changing the gateway's pending-release
-guidance.
+published build. Update client availability guidance only after verifying the
+new public versions, not after source validation alone.
 
 The equivalent archive publication commands are:
 
@@ -155,7 +198,8 @@ and independently installs both packages from public npm, without the fixture.
 If the registry has not propagated yet, rerun verification; do not overwrite or
 unpublish versions to make it pass.
 
-After successful publication, update release status and the gateway's temporary
-unreleased-CLI guidance. Run a first-user install from the public registry and
-record the release commit/tag. Publication alone does not close worker recovery,
-backup/restore, capacity or external user-acceptance work in the readiness audit.
+After a future publication, update release status, compatibility and client
+availability guidance. Check a clean install from the public registry and record
+the release commit/tag. Keep automated integration evidence separate from a new
+human first-use session. Publication alone does not complete server/runtime,
+provider, backup/restore, capacity or product acceptance in the readiness audit.

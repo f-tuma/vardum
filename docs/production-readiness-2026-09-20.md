@@ -1,12 +1,32 @@
 # Production readiness review — 2026-09-20
 
+## Current status
+
+Reviewed **2026-10-03** for planner project **frgtn.VARD**, issue **VARD-20**.
+**Release acceptance remains open.** This summary supersedes the current-status
+claims in the dated audit below; it does not change the historical measurements.
+
+| Area | Verified status and remaining limit |
+| --- | --- |
+| Public npm packages | CLI **0.6.0**, MCP **0.2.0** and shared **0.2.0** are published. Registry SHA-512 values, independent installations and the public-npm first-project flow in a disposable Linux stack were verified. Schema **2** is the available frozen-snapshot contract; see [release evidence and compatibility](npm-release.md). |
+| Merged source | PRs #3–#12 are merged after their hosted CI checks: operational recovery/monitoring/backup/budgets, dependency fixes, [UI acceptance](https://github.com/f-tuma/vardum/pull/8), [first-project example](https://github.com/f-tuma/vardum/pull/9), [capability guidance](https://github.com/f-tuma/vardum/pull/10), [RustFS uploads](https://github.com/f-tuma/vardum/pull/11) and [Actions runtime](https://github.com/f-tuma/vardum/pull/12). These source checks are not a production deployment. |
+| Server/runtime release | VARD-6's `server-v0.7` remains a provisional candidate, without a final clean released artifact. VARD-51/52's [runtime patch](https://github.com/f-tuma/vardum/pull/14) passed [hosted validation](https://github.com/f-tuma/vardum/actions/runs/37140690476), including stack/routing/restore and patched native codecs. VARD-53's residual OS/native findings and clean artifact acceptance still hold the release. |
+| Next client contract | VARD-14's [draft PR #13](https://github.com/f-tuma/vardum/pull/13) has [passing CI](https://github.com/f-tuma/vardum/actions/runs/37134655120), but CLI **0.7.0**, shared **0.3.0**, MCP **0.3.0** and schema **3** are unmerged and unpublished. Server/runtime integration and release acceptance remain required. |
+| Publisher identity | September 20 OIDC publication under `frgtn-dot-dev/vardum` is historical evidence (VARD-40). The current private repository is `f-tuma/vardum`; its package-side npm trust is unverified while VARD-45 awaits npm-owner login. [Validation-only run 37129022120](https://github.com/f-tuma/vardum/actions/runs/37129022120) passed validation and artifact download; publication was skipped. |
+| External acceptance | Provider HTTPS/DNS/CORS, production SMTP, external alert delivery, off-host backups, representative restore/capacity, the two-project Musubi workflow and a new human first-use session remain unproven. Automated checks used a simulated browser grant. |
+
+Track the release gates in frgtn.VARD: VARD-6, VARD-14, VARD-45 and VARD-51/52/53.
+The dated evidence links identify tested releases and workflow runs.
+
+## Initial audit — 2026-09-20
+
 Scope: the Vardum product, published npm packages and deployment templates,
 not the configuration of the current development instance. Reviewed repository
 HEAD `0bc5fdf` together with the existing uncommitted changes. This is a point-in-time
 engineering review, not a penetration test or a capacity certification.
 
-**Decision: not ready for an unrestricted production release.** The source build
-has a credible foundation for a supervised small-team pilot after the security
+**Initial decision (2026-09-20): not ready for an unrestricted production release.**
+The source build has a credible foundation for a supervised small-team pilot after the security
 and distribution blockers below are resolved. The public npm onboarding path
 failed before a user could start at the time of the initial review. Remediation
 steps below record subsequent fixes; step 5 closes the public npm distribution blocker.
@@ -70,11 +90,15 @@ The dedicated security fix subsequently passed the full
 [hosted CI gate](https://github.com/f-tuma/vardum/actions/runs/37117354545)
 on commit `2b9ce10` and was merged in [PR #7](https://github.com/f-tuma/vardum/pull/7)
 as `0f89a8c`. VARD-1 is complete. No new npm publication or production deployment
-was performed. PRs #3–#6 require review and fresh CI after incorporating the fix;
-the pre-fix PR #6 failure is historical. The following sections retain historical
-measurements.
+was performed by that fix. At that checkpoint, PRs #3–#6 still required review
+and fresh CI after incorporating it; those PRs have since merged. The pre-fix
+PR #6 failure and the following measurements remain historical evidence. The
+zero npm audit result above does not cover the runtime image findings in the
+[current status](#current-status).
 
 ## Verified results
+
+These are the initial September 20 audit results, before the remediation entries.
 
 | Check | Result | Meaning and limits |
 | --- | --- | --- |
@@ -94,6 +118,9 @@ removed after each run. No production deployment or npm publication was made.
 The existing development data was not reset.
 
 ## Remediation progress
+
+Each entry records its source, deployment and npm state at that dated checkpoint.
+Later merges and open release gates are summarized in [current status](#current-status).
 
 ### Step 1 — verified ownership for organization allowlists (2026-09-20)
 
@@ -280,9 +307,9 @@ release-gate contracts in source. Step 5 below completes public publication.
 
 Published **CLI 0.6.0, MCP 0.2.0 and shared 0.2.0** from tag `v0.6.0`, commit
 `e8d17667933601ea7055bda8cabee26ac510e40f`, through GitHub Actions and npm OIDC.
-Each package trusts only `frgtn-dot-dev/vardum` workflow `release.yml` using the
-`npm` environment; that environment accepts only `v*` tags. No persistent npm
-token was added. npm provenance is unsupported for the private source repository.
+At that publication, each package trusted `frgtn-dot-dev/vardum` workflow
+`release.yml` using the `npm` environment; that environment accepted only `v*`
+tags. No persistent npm token was added. npm provenance is unsupported for the private source repository.
 
 The [release workflow](https://github.com/frgtn-dot-dev/vardum/actions/runs/35520781363)
 passed its dependency audit, unit tests, typecheck/build, PostgreSQL integrations,
@@ -492,10 +519,15 @@ release or production deployment is part of this step.
 
 ## Release blockers
 
+These findings describe the **initial 2026-09-20 audit**, before remediation.
+They are retained as historical evidence, not the current blocker list. Steps
+1–5 address the source/distribution findings; see [current status](#current-status)
+for the release and acceptance gates that remain.
+
 ### 1. Public npm CLI and MCP artifacts have unresolved workspace dependencies
 
-On the registry, `@vardum/cli` latest is **0.5.0**, `@vardum/mcp` latest is **0.1.0**,
-and `@vardum/shared` latest is **0.1.0**. Both CLI and MCP declare
+At the initial audit, the registry's latest versions were `@vardum/cli` **0.5.0**,
+`@vardum/mcp` **0.1.0** and `@vardum/shared` **0.1.0**. Both CLI and MCP declare
 `"@vardum/shared": "workspace:^"` in their published metadata. A clean npm CLI
 installation reproduced the unsupported-protocol error. MCP has the same
 invalid dependency declaration; its full published installation was not separately
@@ -516,8 +548,8 @@ needs explicit snapshot, visibility and folder-rule entries.
 
 Evidence: `apps/cli/package.json`, `apps/mcp/package.json`,
 `scripts/smoke-publish.sh`, `apps/cli/README.md` (minimum compatible CLI),
-[CLI registry metadata](https://registry.npmjs.org/@vardum%2Fcli/latest),
-[MCP registry metadata](https://registry.npmjs.org/@vardum%2Fmcp/latest).
+[CLI 0.5.0 registry metadata](https://registry.npmjs.org/@vardum%2Fcli/0.5.0),
+[MCP 0.1.0 registry metadata](https://registry.npmjs.org/@vardum%2Fmcp/0.1.0).
 
 ### 2. Organization allowlisting does not prove email ownership
 
@@ -614,6 +646,9 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
 
 ## Operational and lifecycle gaps before dependable external use
 
+Reviewed 2026-10-03: the source fixes below are merged; deployment-specific
+acceptance and the server/runtime release gates remain open.
+
 - **Worker failure recovery (addressed in step 6):** the original audit found
   versions stuck in `processing` after a persistent storage outage exhausted the
   queue retries. Terminal reconciliation, authorized retry and outage/restart
@@ -645,12 +680,15 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
 
 ## Product plan status
 
+Assessment updated 2026-10-03. This separates published clients and tested source
+from completion of the broader product milestone.
+
 | Plan item | Assessment |
 | --- | --- |
 | Versioned library, intentional public/private assets | Implemented and covered by real auth/database tests; upgrade and public-cache limitations remain important |
-| Manual project mappings, pins, image transformations | Implemented; npm distribution currently blocks ordinary onboarding |
-| Recursive folder rules | Implemented in source; ready originals, collision rejection, bounded output count, repairable configuration tested |
-| Intentional updates vs locked CI builds | Schema 2 and frozen source CLI pass integration; no released compatible npm version and lifecycle caveats remain |
+| Manual project mappings, pins, image transformations | Implemented; published CLI 0.6.0 installs from npm and the first-project integration passes |
+| Recursive folder rules | Matching server source and published CLI 0.6.0/MCP 0.2.0 support ready originals, collision rejection, bounded outputs and repairable configuration |
+| Intentional updates vs locked CI builds | Published CLI 0.6.0 supports schema 2 frozen snapshots; retention, rename, signing and server limits remain. Schema 3 is unmerged/unpublished VARD-14 work |
 | First real app-and-web acceptance scenario | Still open: no evidence of the full two-project Musubi scenario, old-commit rebuild, independent update and reviewed result |
 | Reusable templates, input slots, platform previews/checks | Planned, not implemented by existing resize presets |
 | Usage inventory and outdated-asset monitoring | Planned; delivery analytics are not a project usage inventory or outdated-logo detector |
@@ -658,10 +696,14 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
 | Validation with two additional teams | Still open |
 
 Templates and monitoring are not prerequisites for the first dependable handoff
-milestone. Shipping them before fixing distribution, authorization, isolation and
-the release gate would expand the surface without completing that milestone.
+milestone. Public client distribution and the bounded authorization/isolation
+fixes are available; server/runtime release acceptance and real product adoption
+still take priority over the later milestones.
 
 ## First-use assessment and changes made
+
+The observations and UI/CLI changes below record the initial review and subsequent
+source work; they are not evidence of a new human completing onboarding.
 
 An experienced developer can infer the data model after reading the repository.
 A new user is likely to stall at the handoff from uploading an asset to getting
@@ -673,7 +715,7 @@ Added collapsed **Quick guide** sections to all 17 Vard, workspace, organization
 and account tabs. They explain purpose, examples, next actions and relevant
 consequences. Tooltips remain for short field explanations; multi-step guidance
 stays open while the user works and can be used with keyboard or touch. The CLI
-guide explicitly notes the current published-version limitation rather than
+guide at that point noted the then-published-version limitation rather than
 claiming a working npm install. Workspace “Public path” was renamed to “Delivery
 path” because a URL does not imply public access.
 
@@ -693,20 +735,28 @@ CLI tests (20), gateway tests (11), independent npm archive installations and
 the disposable production smoke passed. Updated unpublished candidate archives
 are in `artifacts/npm/init-setup`; the earlier archives remain unchanged.
 
-Still needed for a convincing first use:
+Update on 2026-10-03: [the first-project sample](../examples/first-project/README.md)
+pins public CLI 0.6.0 and verifies actual outputs and schema 2 checksums, including
+a clean consumer's frozen restore after remote changes. [Capability guidance](https://github.com/f-tuma/vardum/pull/10)
+now explains unavailable mail/domain/organization actions. These checks and source
+UI improvements do not republish the client or prove a person's browser consent.
 
-1. One guided path: create/open workspace → upload → create Vard → map an output
-   → connect CLI → first successful pull → commit lockfile → frozen CI example.
-2. Ready-to-copy setup commands tied to a verified, installable package version
-   and the selected Vard; ideally a downloadable `vardum.json`.
-3. A small sample project and an onboarding check that confirms a real successful
-   pull, not merely creation of empty records.
-4. Clearly display whether SMTP, custom domains and organization creation are
-   available, instead of presenting unavailable actions followed by errors.
-5. First-user sessions with someone unfamiliar with the terminology. This review
-   is a heuristic assessment, not evidence that users can complete the workflow.
+Still needed for acceptance:
+
+1. A new user completing the workspace → upload → Vard → public CLI install →
+   pull → committed snapshot → frozen CI path, with observed confusion recorded.
+2. The full real Musubi app-and-web scenario, old-commit rebuild and independently
+   reviewed updates; then validation with at least two other teams.
+3. Deployment-specific HTTPS/DNS/CORS, SMTP/recovery, external alert delivery,
+   off-host backup and representative restore/capacity checks.
+4. Server/runtime release acceptance and delivery of any improved client UX through
+   its separately tested versioned release, rather than source archives alone.
 
 ## Recommended order and exit criteria
+
+The following was the **initial September 20 order**. Subsequent source fixes and
+publication are recorded above; the current outstanding gates are in
+[current status](#current-status).
 
 1. **Security:** gate email-derived privileges, separate runtime DB role, update
    the reachable image-processing dependency and triage remaining advisories.
@@ -720,5 +770,6 @@ Still needed for a convincing first use:
    monitoring; choose additional file formats from those real workflows.
 
 No authentication, role, dependency version, published artifact or production
-deployment was changed during this review. The implemented changes are the
-contextual guides and the delivery-path wording.
+deployment was changed during the initial September 20 review. Its implemented
+changes were the contextual guides and delivery-path wording; subsequent
+remediation entries record later work.
