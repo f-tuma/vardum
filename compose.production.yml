@@ -98,6 +98,8 @@ services:
       aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket $$S3_BUCKET"
 
   migrate:
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     image: vardum-api:${VARDUM_VERSION:-local}
     build:
       context: .
@@ -113,6 +115,8 @@ services:
     restart: "no"
 
   api:
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     mem_limit: ${API_MEMORY_LIMIT:-2g}
     cpus: ${API_CPU_LIMIT:-2}
     image: vardum-api:${VARDUM_VERSION:-local}
@@ -136,6 +140,8 @@ services:
     restart: unless-stopped
 
   worker:
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     mem_limit: ${WORKER_MEMORY_LIMIT:-1g}
     cpus: ${WORKER_CPU_LIMIT:-1}
     image: vardum-api:${VARDUM_VERSION:-local}

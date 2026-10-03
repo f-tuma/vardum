@@ -46,24 +46,86 @@ try {
   }
   assert.equal(recorded.images.api.id, recorded.images.worker.id, "API and worker must use the same runtime image");
   run(process.execPath, ["scripts/smoke-gateway-config.mjs", recorded.images.gateway.id, recorded.images.api.id, join(output, "gateway-config")]);
-  const runtimeProbe = `
-    import { existsSync, readFileSync, readdirSync } from "node:fs";
+  const runtimeProbe = String.raw`
+    import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+    import { createHash } from "node:crypto";
+    import { createSecureContext, rootCertificates } from "node:tls";
     const { default: sharp } = await import("sharp");
-    const tools = ["/usr/local/lib/node_modules/npm", "/usr/local/lib/node_modules/corepack", "/usr/local/bin/npm", "/usr/local/bin/npx", "/usr/local/bin/corepack", "/usr/local/bin/yarn", "/usr/local/bin/yarnpkg", ...readdirSync("/opt").filter(p => p.startsWith("yarn-v")).map(p => "/opt/" + p)];
-    const search = readFileSync("/etc/resolv.conf", "utf8").split("\\n").filter(line => /^(?:search|domain)\\s/.test(line)).flatMap(line => line.replace(/[#;].*$/, "").trim().split(/\\s+/).slice(1));
-    const localDomain = (process.env.LOCALDOMAIN ?? "").split(/\\s+/).filter(Boolean);
-    console.log(JSON.stringify({ versions: process.versions, sharp: sharp.versions, uid: process.getuid(), capEff: readFileSync("/proc/self/status", "utf8").match(/^CapEff:\\s*(\\w+)$/m)?.[1], inheritedTools: Object.fromEntries(tools.map(path => [path, existsSync(path)])), resolver: { searchCount: search.length, longestSearchDomain: Math.max(0, ...search.map(s => s.length)), localDomainSet: process.env.LOCALDOMAIN !== undefined, longestLocalDomain: Math.max(0, ...localDomain.map(s => s.length)) } }));
+    const fingerprint = bytes => createHash("sha256").update(bytes).digest("hex");
+    const paths = directory => existsSync(directory) ? readdirSync(directory) : [];
+    const tools = ["/usr/local/lib/node_modules/npm", "/usr/local/lib/node_modules/corepack", "/usr/local/bin/npm", "/usr/local/bin/npx", "/usr/local/bin/corepack", "/usr/local/bin/yarn", "/usr/local/bin/yarnpkg", "/nodejs/bin/npm", "/bin/sh", "/usr/bin/perl", "/usr/bin/mount", "/usr/bin/su", "/usr/bin/gzip", "/usr/bin/infocmp", ...paths("/opt").filter(p => p.startsWith("yarn-v")).map(p => "/opt/" + p)];
+    const productionStorePresent = existsSync("/app/node_modules/.pnpm");
+    const developmentPackages = paths("/app/node_modules/.pnpm").filter(p => /^(?:drizzle-kit@|esbuild@|@esbuild\+|@esbuild-kit\+)/.test(p));
+    function privileges(path) {
+      const status = readFileSync(path, "utf8");
+      return {
+        uid: status.match(/^Uid:\s*(\d+)/m)?.[1],
+        capEff: status.match(/^CapEff:\s*(\w+)$/m)?.[1],
+        capBnd: status.match(/^CapBnd:\s*(\w+)$/m)?.[1],
+        noNewPrivs: status.match(/^NoNewPrivs:\s*(\d+)$/m)?.[1],
+      };
+    }
+    const search = readFileSync("/etc/resolv.conf", "utf8").split("\n").filter(line => /^(?:search|domain)\s/.test(line)).flatMap(line => line.replace(/[#;].*$/, "").trim().split(/\s+/).slice(1));
+    const localDomain = (process.env.LOCALDOMAIN ?? "").split(/\s+/).filter(Boolean);
+    const ca = readFileSync("/etc/ssl/certs/ca-certificates.crt");
+    createSecureContext({ ca });
+    const timezone = zone => Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date("2026-01-01T12:00:00Z")).map(p => [p.type, p.value]));
+    function fonts(directory) {
+      if (!existsSync(directory)) return [];
+      return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+        const path = directory + "/" + entry.name;
+        if (entry.isDirectory()) return fonts(path);
+        return entry.isFile() && /\.(?:ttf|otf|ttc|woff2?)$/i.test(path) ? [{ path, bytes: statSync(path).size, sha256: fingerprint(readFileSync(path)) }] : [];
+      });
+    }
+    const fontInventory = ["/usr/share/fonts", "/usr/local/share/fonts"].flatMap(fonts).sort((a, b) => a.path.localeCompare(b.path));
+    let svgText;
+    try {
+      const { data, info } = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><text x="4" y="24" font-family="sans-serif" font-size="20">Vardum</text></svg>')).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let visiblePixels = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) visiblePixels++;
+      svgText = { ...info, visiblePixels, sha256: fingerprint(data) };
+    } catch (error) { svgText = { error: error.message }; }
+    console.log(JSON.stringify({ versions: process.versions, sharp: sharp.versions, uid: process.getuid(), process: privileges("/proc/self/status"), initProcess: privileges("/proc/1/status"), inheritedTools: Object.fromEntries(tools.map(path => [path, existsSync(path)])), productionStorePresent, developmentPackages, trust: { systemCABundleBytes: ca.length, systemCACertificates: (ca.toString().match(/-----BEGIN CERTIFICATE-----/g) ?? []).length, systemCABundleSha256: fingerprint(ca), nodeBundledCACertificates: rootCertificates.length }, timezone: { utc: timezone("UTC"), prague: timezone("Europe/Prague"), filesPresent: ["/usr/share/zoneinfo/UTC", "/usr/share/zoneinfo/Europe/Prague"].every(existsSync) }, fontInventory, svgText, resolver: { searchCount: search.length, longestSearchDomain: Math.max(0, ...search.map(s => s.length)), localDomainSet: process.env.LOCALDOMAIN !== undefined, longestLocalDomain: Math.max(0, ...localDomain.map(s => s.length)) } }));
   `;
   for (const service of ["api", "worker"]) {
     const runtime = JSON.parse(docker("exec", containers[service], "node", "--input-type=module", "-e", runtimeProbe));
-    assert.ok(Object.values(runtime.inheritedTools).every(present => present === false), "Inherited package-manager tools must be absent from runtime");
-    assert.notEqual(runtime.uid, 0, "Application runtime must not run as root");
-    assert.match(runtime.capEff ?? "", /^[0-9a-f]+$/i, "Effective capabilities were not recorded");
-    assert.equal(BigInt("0x" + runtime.capEff) & (1n << 21n), 0n, "Application runtime must not have CAP_SYS_ADMIN");
+    assert.ok(Object.values(runtime.inheritedTools).every(present => present === false), "Inherited package managers and unused essential tools must be absent from runtime");
+    assert.equal(runtime.productionStorePresent, true, "Production package inventory must be present");
+    assert.deepEqual(runtime.developmentPackages, [], "Development Drizzle/esbuild packages must be absent from runtime");
+    assert.equal(runtime.uid, 65532, "Application runtime must use the pinned nonroot UID");
+    for (const [name, process] of Object.entries({ probe: runtime.process, application: runtime.initProcess })) {
+      assert.equal(process.uid, "65532", `${service} ${name} must use the pinned nonroot UID`);
+      for (const cap of ["capEff", "capBnd"]) {
+        assert.match(process[cap] ?? "", /^[0-9a-f]+$/i, `${service} ${name} ${cap} was not recorded`);
+        assert.equal(BigInt("0x" + process[cap]), 0n, `${service} ${name} ${cap} must be zero`);
+      }
+      assert.equal(process.noNewPrivs, "1", `${service} ${name} must prohibit privilege gain on exec`);
+    }
+    assert.ok(runtime.trust.systemCACertificates > 0 && runtime.trust.nodeBundledCACertificates > 0, "System and Node CA inventories must be present");
+    assert.equal(runtime.timezone.utc.hour, "12");
+    assert.equal(runtime.timezone.prague.hour, "13");
+    assert.equal(runtime.timezone.filesPresent, true, "Runtime timezone files must be present");
     await save(`${service}-runtime.json`, runtime);
   }
+  const migrations = docker("ps", "-aq", "--filter", `label=com.docker.compose.project=${project}`, "--filter", "label=com.docker.compose.service=migrate").trim().split(/\s+/);
+  assert.equal(migrations.length, 1, "Exactly one completed migration container is required");
+  assert.match(migrations[0], /^[a-f0-9]{12,64}$/);
+  const migration = JSON.parse(docker("inspect", migrations[0]))[0];
+  assert.equal(migration.Image, recorded.images.api.id, "Migration must use the API runtime image");
+  assert.equal(migration.State.Status, "exited");
+  assert.equal(migration.State.ExitCode, 0, "Migration must have completed successfully");
+  for (const service of ["api", "worker", "migrate"]) {
+    const container = service === "migrate" ? migration : JSON.parse(docker("inspect", containers[service]))[0];
+    assert.ok(container.HostConfig.CapDrop?.includes("ALL"), `${service} must drop all capabilities`);
+    assert.ok(container.HostConfig.SecurityOpt?.some(option => /^no-new-privileges(?::true)?$/.test(option)), `${service} must prohibit privilege gain on exec`);
+    recorded.containerPolicies ??= {};
+    recorded.containerPolicies[service] = { user: container.Config.User, capDrop: container.HostConfig.CapDrop, securityOpt: container.HostConfig.SecurityOpt, state: container.State.Status, exitCode: container.State.ExitCode };
+  }
   for (const service of ["api", "gateway"]) {
-    await save(`${service}-os.txt`, docker("exec", containers[service], "cat", "/etc/os-release"));
+    await save(`${service}-os.txt`, service === "api"
+      ? docker("exec", containers.api, "node", "--input-type=module", "-e", 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync("/etc/os-release", "utf8"))')
+      : docker("exec", containers.gateway, "cat", "/etc/os-release"));
     const archive = join(output, `${service}.tar`);
     docker("image", "save", "--output", archive, recorded.images[service].id);
     recorded.images[service].archiveSha256 = await hash(archive);

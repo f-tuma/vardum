@@ -11,7 +11,8 @@ Verified against official catalogs on 3 October 2026:
 | Input | Official index digest | Linux/amd64 manifest |
 | --- | --- | --- |
 | Nginx 1.30.5 Alpine | `sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` | `sha256:8f84ed99befc3891b8f329c5c202785278a2cfb7c25107d57fb2a134a3117433` |
-| Node 22.23.3 Bookworm slim | `sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c` | `sha256:25330af3531fb5e23318554a0aa911125b6e91b1b777edf7655501d207c067a2` |
+| Node 22.23.3 Bookworm slim (build only) | `sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c` | `sha256:25330af3531fb5e23318554a0aa911125b6e91b1b777edf7655501d207c067a2` |
+| Distroless Node 22 Debian 13 nonroot (runtime, Node 22.23.3) | `sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c` | `sha256:7b0a2b9262b3d1d57e139e08fe11bccb0a7d426ca515eab0cd6abcaf2016ae5c` |
 | Trivy 0.75.0 | `sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa` | `sha256:9db099105405c648166e6b94155eb32f8da12673cf1f455207f7385cc9a77283` |
 
 The index, platform manifest, application image ID and exported archive hash are
@@ -22,6 +23,7 @@ worker must use the same image. Acceptance is limited to linux/amd64.
 Sources: [Nginx official images](https://github.com/docker-library/official-images/blob/master/library/nginx),
 [Node official images](https://github.com/docker-library/official-images/blob/master/library/node),
 [Node 22.23.3 release](https://nodejs.org/en/blog/release/v22.23.3),
+[Distroless supported images and signature verification](https://github.com/GoogleContainerTools/distroless),
 [Trivy 0.75.0 release](https://github.com/aquasecurity/trivy/releases/tag/v0.75.0).
 
 ## Evidence and replay
@@ -39,8 +41,15 @@ incomplete and fails the smoke.
 
 `runtime-evidence.json` records invocations, source commit and dirty state,
 image identities, archive/report hashes, scan time, database metadata and hashes.
-`api-runtime.json` records `process.versions` and `sharp.versions`. Nginx and OS
-reports record the running native environment. `gateway-config/` contains the
+`api-runtime.json` and `worker-runtime.json` record `process.versions`,
+`sharp.versions`, UID, effective/bounding capabilities and NoNewPrivs for both
+the probe and application PID 1. They inventory inherited tools and development
+packages, system/Node CA certificates, timezone files and a fixed UTC/Prague
+conversion, installed font files and ordinary SVG text rasterization. CA parsing
+is not an outbound TLS handshake; text output must be compared with the saved
+baseline rather than assuming fonts are installed. Nginx and OS reports record
+the running native environment. Migration image identity, successful exit and
+container capability/security settings are also required. `gateway-config/` contains the
 normal-entrypoint, envsubst and HTTP checks for standard, marketing and loopback
 fallback configurations. SIGINT/SIGTERM abort active probes, clean up only the
 invocation's labelled resources, retain interrupted evidence and exit nonzero.
@@ -145,9 +154,10 @@ the final rebuilt image.
 The gateway installs four exact fixes from the official Alpine 3.24 package
 index: libexpat 2.8.5-r0, libpng 1.6.59-r0, nghttp2-libs 1.70.0-r0 and pcre2
 10.49-r0. The API runtime removes inherited npm/npx, Corepack and Yarn;
-build-stage package managers remain available. An attempted optional
-`better-auth@1.7.1>drizzle-kit` removal was reverted: pinned pnpm 12.4.2 retained
-the peer toolchain. The deployed esbuild findings therefore remain for review.
+build-stage package managers remain available. At this historical checkpoint,
+an attempted optional
+`better-auth@1.7.1>drizzle-kit` override was reverted: pinned pnpm 12.4.2 retained
+the peer toolchain. That deployed image retained the esbuild findings.
 Sharp's optional native packages and supply-chain controls remain enabled.
 
 The runtime probe records non-root UID, effective capabilities, absence of the
@@ -217,3 +227,140 @@ image evidence, independent review and current CI are required for this patch;
 VARD-6 additionally requires clean artifact acceptance and disposition of
 material residual findings. No new npm/server publication or provider deployment
 is established by this checkpoint.
+
+
+## VARD-53 minimal runtime candidate: 3 October 2026
+
+The candidate uses the maintained official Distroless Node 22 Debian 13 nonroot
+runtime above, while retaining the pinned Bookworm Node build stage. Public
+registry metadata identifies Node 22.23.3 and the linux/amd64 manifest shown
+above; the index was uploaded on 1 October. The image config's epoch creation
+time is reproducible-build metadata, not its publication date. It uses the
+glibc/C++ runtime family required by the existing Node and Sharp Linux binaries;
+complete ABI and deployed compatibility still require rebuilt-image acceptance. A Debian 13 version label alone does not dispose of glibc or other
+remaining findings.
+
+Before changing the runtime input, Cosign 3.1.3 verified the exact index with the
+[Distroless vendor identity](https://github.com/GoogleContainerTools/distroless#how-do-i-verify-distroless-images):
+
+```sh
+cosign verify \
+  gcr.io/distroless/nodejs22-debian13@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c \
+  --certificate-oidc-issuer https://accounts.google.com \
+  --certificate-identity keyless@distroless.iam.gserviceaccount.com
+```
+
+Verification validated the signature/claims, certificate chain and offline
+transparency-log claims, with no verification bypass flags. The temporary
+`cosign-linux-amd64` binary came from the
+[official v3.1.3 release](https://github.com/sigstore/cosign/releases/tag/v3.1.3).
+Its SHA-256 was
+`4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71`,
+matched both the release API digest and official checksum file before execution,
+and its release Sigstore bundle verified with the documented
+`keyless@projectsigstore.iam.gserviceaccount.com` identity and Google issuer.
+That tool bootstrap relies on official HTTPS release metadata; it is separate
+from the subsequent runtime signature verification. Repeat verification for
+any replacement input.
+
+The root [supported pnpm readPackage hook](https://pnpm.io/pnpmfile) removes only
+Better Auth **1.7.1**'s optional Drizzle Kit peer metadata. The API retains its
+direct development Drizzle Kit dependency for schema generation; production
+migrations use checked-in SQL through Drizzle ORM and the declared pg-boss CLI.
+The exact-version hook must be reassessed when Better Auth changes. No declared
+binary is deleted after deployment. A dedicated nonlegacy deploy experiment
+still included Drizzle Kit; the hook fixes the declared graph under the existing
+legacy production deployment path instead.
+
+Pinned pnpm 12.4.2 regeneration changed only that package's peer metadata,
+affected peer contexts and the hook checksum. Package keys, importer versions
+and specifiers stayed unchanged. A frozen installation passed the unchanged
+seven-day age, trust and build policies. Host API build, workspace type checks
+and both Better Auth/Drizzle schema generators passed. The host production
+deployment contained no Drizzle Kit, esbuild, @esbuild or @esbuild-kit packages;
+Sharp 0.35.5 and its optional Linux native packages remained present. These are
+host graph checks, not a scan or acceptance result for the rebuilt image.
+
+The Dockerfile clears the vendor Node entrypoint so existing `node` commands
+start once, adds `/nodejs/bin` to PATH and uses numeric UID/GID 65532 with matching
+application ownership. Production and both Dokploy templates drop all
+capabilities and enable `no-new-privileges` for migration, API and worker. The
+[Linux no_new_privs contract](https://www.kernel.org/doc/html/latest/userspace-api/no_new_privs.html)
+bounds setuid/setgid/file-capability gains across exec; it does not assess host
+kernel issues or every possible privilege transition. Gateway retains its
+existing startup policy. API probes use Node filesystem reads and tolerate an
+absent `/opt`; no shell or `cat` is required in the minimal application image.
+
+**Candidate acceptance and release disposition remain pending.** Rebuild the
+actual final images and run the full disposable production smoke, migrations,
+RLS, SVG/AVIF, public CLI/MCP, outage/backpressure, large POST, restore and all
+three gateway routing configurations. Verify API/worker health commands and
+signals, numeric ownership, CA/default-trust HTTPS and timezone behavior; compare
+ordinary SVG text/font output against the saved baseline without adding fonts
+merely to satisfy a test. Require actual PID 1 and probe NoNewPrivs=1,
+CapEff=0/CapBnd=0 and matching migration container policy. Export the exact images,
+scan with a fresh database and retain complete OS/Node/native inventories and
+hashes. Reconcile every baseline residual with actual component absence, a
+specific conditional call-path assessment or unresolved impact. Keep bundled
+libpng 1.6.58 and Node/nghttp2 assessment separate; fewer scanner records alone
+are not evidence that a retained library is patched. Independent reviews,
+current exact-source CI and VARD-6 clean artifact/provider acceptance remain
+required before release.
+
+
+### Rebuilt candidate acceptance: 3 October 2026, 18:20 UTC
+
+The complete local dirty-source check used staged source tree
+`7602e79666ebeb374c13d16c294f0e74c69d7845` above merged main `c38b9fb0`.
+Frozen installation, 164 unit/script tests, type checking, lint, build and all
+three Compose configuration checks passed. The deployed acceptance passed
+public CLI 0.6.0/MCP 0.2.0 onboarding and authentication, actual service outages
+and worker recovery, resource rejection/recovery, a 3,512,199-byte image POST,
+clean-stack backup/restore of 28 objects / 11,351,680 bytes, SVG/AVIF/RLS and all
+87 gateway routing assertions. The normal Dockerfile API command and Compose
+worker/migration/health commands ran without a shell. Docker events recorded
+SIGTERM (15) and exit 0 for the actual API and worker during final cleanup;
+intentionally killed routing-helper containers are separate events.
+
+API and worker use the same actual image
+`sha256:b28cb643aa4b851a1eb8d1e76e80794d7952f8dcd0c38fe9cf14ebbf98cd3987`.
+Gateway image is
+`sha256:57f892e73f4f015c7896ab0a05beba8aeb97d78533c310698182be9e46a67f10`.
+API and worker PID 1 and probe processes had UID 65532, NoNewPrivs 1 and zero
+effective/bounding capabilities. Migration used the same image, completed with
+exit 0 and had matching cap-drop/security options. No inherited package managers
+or Drizzle/esbuild packages were found in the production runtime. The tested
+resolver had one search domain, maximum length three, and no LOCALDOMAIN.
+These are tested container conditions, not evidence for a provider's resolver.
+
+Identical fixtures in the saved previous image and this image produced identical
+PNG/JPEG/WebP/AVIF decoded pixels, SVG text pixels and UTC/Prague/New York time
+zone results. Both images have no installed system fonts and emit the same
+Fontconfig warning; the unchanged fallback text is not a font-quality or general
+typography guarantee. The new image passed HTTPS certificate verification to
+one public npm endpoint using both default Node trust and its system CA bundle
+(150 system certificates, 119 Node bundled roots). This does not establish an
+external SMTP provider's TLS compatibility.
+
+The freshly downloaded Trivy database was updated at
+`2026-10-03T14:28:08.788288516Z`, downloaded at `18:20:16Z`, and its SHA-256 is
+`43bf9c31bd79ea3a98f7b467c1d4cfe87cdbc4f7939654fedc76a9350dcfceb4`.
+The complete unfiltered scan reports **31 API OS package records** (23 medium,
+eight low), with 14 Debian 13.7 OS packages inventoried and 185 Node packages
+with no reported findings. Gateway has no reported findings. Remaining records
+include glibc 2.41-12+deb13u4, GCC runtime 14.2.0-19 and zlib 1.3.1; reduced counts
+do not establish that these components are patched.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| API export | `e3c9fdcb336410a37ce025afaf6fb7d4b17a7bcb9d168d847c393d4f2303faec` |
+| API raw scan | `5e045ed4da8d0bdba2b71aa35ed60b333ded12441922c1985454227500c1f40e` |
+| Gateway export | `006353e4ab6ed6272f94546f75016248e6494dfd1364f4a40c510f61a42a47de` |
+| Gateway raw scan | `e13bfa02529c2dd11930175d1313195a8b88fa3334b170fbe96042ac6f09d790` |
+| Runtime evidence | `bb09494e95593c4b5ec2f4212020e56210bc402307b750c4bd6639251b42cd7f` |
+
+**Residual record disposition, final independent review, exact-head CI and the
+clean VARD-6 portable artifact remain pending.** These successful local checks
+are not a release or production deployment approval. Raw records, exact image
+exports and the scanner database remain available locally for independent
+assessment; CI retains only the approved JSON/text evidence.
