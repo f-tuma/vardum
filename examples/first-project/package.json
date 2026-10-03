@@ -1,0 +1,9 @@
+{
+  "name": "vardum-first-project",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "verify": "node verify.mjs" },
+  "devDependencies": { "@vardum/cli": "0.6.0" }
+}

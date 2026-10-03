@@ -292,7 +292,7 @@ export async function checkInstalledPackages({
         vard.id,
       );
       await assert.rejects(command("pull", "--frozen"), /snapshot|lock/i);
-      const cliKey = await login({ cli, project, env, base, workspaceId, api });
+      const cliKey = await loginCli({ cli, project, env, base, workspaceId, api });
       const credentialPath = join(configHome, "vardum/credentials.json");
       assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
       assert.equal(
@@ -369,7 +369,7 @@ export async function checkInstalledPackages({
   });
 }
 
-async function login({ cli, project, env, base, workspaceId, api }) {
+export async function loginCli({ cli, project, env, base, workspaceId, api, access = "write" }) {
   const child = spawn(process.execPath, [cli.binary, "login"], {
     cwd: project,
     env,
@@ -409,8 +409,9 @@ async function login({ cli, project, env, base, workspaceId, api }) {
     assert.equal(callback.hostname, "127.0.0.1");
     const grant = await api(`/api/workspaces/${workspaceId}/cli-keys`, {
       label: url.searchParams.get("label"),
-      access: "write",
+      access,
     });
+    assert.equal(grant.access, access);
     const post = (state) =>
       fetch(callback, {
         method: "POST",

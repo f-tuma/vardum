@@ -164,6 +164,9 @@ Private files, private Vards and push operations need a workspace key. `vardum l
 authorizes the machine in the browser and stores one scoped to your own
 permissions; `VARDUM_API_KEY` overrides it, so CI stays explicit.
 
+Try the [three-file first project](examples/first-project/README.md) for private
+uploads, a recursive folder rule and a verified frozen pull.
+
 See [`apps/cli/README.md`](apps/cli/README.md) for setup, conflict handling,
 lockfiles, safe deletion and bulk folder push.
 

@@ -6,6 +6,8 @@ repository to create `vardum.json`.
 
 ## First project
 
+For a runnable three-file example, follow [First project](../../examples/first-project/README.md).
+
 Use Node.js 22 or newer. These commands target CLI **0.6.0** and the matching
 server release; see [release status and compatibility](https://github.com/frgtn-dot-dev/vardum/blob/main/docs/npm-release.md)
 for candidate availability. Published CLI 0.5.0 has a broken workspace dependency
