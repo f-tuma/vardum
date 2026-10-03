@@ -369,6 +369,17 @@ must be retained separately for offline replay. A successful scan is not approva
 of its findings: assess current vendor advisories and unresolved runtime exposure
 before promoting the artifact.
 
+The minimal API/worker image contains no shell or package manager. Use explicit
+Node commands for migrations and health checks; the Dockerfile clears the
+vendor entrypoint and puts `/nodejs/bin` on PATH. Application files belong to
+UID/GID 65532. Production and Dokploy templates drop all capabilities and set
+`no-new-privileges` on migration, API and worker. Runtime evidence requires
+NoNewPrivs=1 and zero effective/bounding capabilities for application PID 1;
+these settings do not replace an assessment of the provider's host. Native
+codecs, system/Node trust, timezone data and SVG text/font behavior need actual
+image acceptance whenever the base changes. VARD-53's candidate remains subject
+to the residual finding and release gates in the linked procedure.
+
 ## Runtime database role upgrade
 
 The production and both Dokploy templates keep the existing `varda` database

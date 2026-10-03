@@ -2,7 +2,7 @@ FROM node:22.23.3-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627c
 
 RUN corepack enable
 WORKDIR /repo
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.mjs tsconfig.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/gateway/package.json apps/gateway/package.json
 COPY packages/shared/package.json packages/shared/package.json
