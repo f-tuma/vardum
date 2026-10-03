@@ -110,6 +110,15 @@ opens a picker with the workspace's folders, shows the file-by-file plan, and
 waits for confirmation; uploads then run with a `(3/50)` counter and processing
 is awaited once at the end rather than per file.
 
+In a source checkout, `push` and `push-folder` fetch `/api/upload-limits` before
+reading file contents, including during `--dry-run` and for unchanged files.
+The command fails if that endpoint is unavailable or returns invalid ceilings,
+or if a file is empty, not regular, too large for its MIME type, or changes
+while being read. An oversized unchanged file therefore fails rather than
+being skipped. Folder push checks the bytes again against its plan before
+creating a new asset. These source changes do not patch the immutable published
+CLI 0.6.0 package; they require a separate CLI release.
+
 ## Folder membership updates
 
 Configure literal recursive rules in the Vard editor or through MCP:

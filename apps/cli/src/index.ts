@@ -15,6 +15,7 @@ import {
 import { planPushFolder } from "./interactive.js";
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
 import { maybeWarnOutdated, updateVardum, VERSION } from "./update.js";
+import { readUploadFile } from "./upload-file.js";
 import {
   assetKey,
   atomicWrite,
@@ -491,14 +492,29 @@ async function push(options: Options) {
 
   validateOutputPaths(manifest.items.map((item) => item.outputPath));
   const writable = manifest.items.filter((item) => item.writable);
+  const limits = writable.length ? await context.client.uploadLimits() : null;
   let changed = 0;
   for (const item of writable) {
     if (!item.versionId || !item.fingerprint)
       throw new Error(`Vard output is unavailable: ${item.outputPath}`);
     const path = await safeTarget(context.directory, item.outputPath);
-    const localChecksum = await checksumFile(path);
-    if (!localChecksum)
-      throw new Error(`Writable output is missing: ${item.outputPath}`);
+    const mimeType = mimeForFilename(path);
+    if (!mimeType)
+      throw new Error(`Unsupported image type: ${item.outputPath}`);
+    let bytes: Uint8Array;
+    try {
+      bytes = await readUploadFile(path, mimeType, limits!);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+        throw new Error(`Writable output is missing: ${item.outputPath}`);
+      throw error;
+    }
+    const localChecksum = checksum(bytes);
     const decision = pushDecision(
       item.fingerprint,
       localChecksum,
@@ -512,10 +528,6 @@ async function push(options: Options) {
     const entry = report("push", item.outputPath, options);
     changed += 1;
     if (options.dryRun) continue;
-    const bytes = await readFile(path);
-    const mimeType = mimeForFilename(path);
-    if (!mimeType)
-      throw new Error(`Unsupported image type: ${item.outputPath}`);
     const previousVersion = item.versionId;
     await context.client.uploadVersion(
       context.config.workspace,
@@ -601,6 +613,7 @@ async function pushFolder(options: Options) {
     prefix,
   );
   const byKey = new Map(remote.assets.map((asset) => [asset.key, asset]));
+  const limits = await context.client.uploadLimits();
   const local = [] as Array<{
     key: string;
     absolute: string;
@@ -608,12 +621,15 @@ async function pushFolder(options: Options) {
     mimeType: string;
     checksum: string;
   }>;
-  for (const file of files)
+  for (const file of files) {
+    const key = assetKey(prefix, file.relative);
+    const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
     local.push({
       ...file,
-      key: assetKey(prefix, file.relative),
-      checksum: (await checksumFile(file.absolute))!,
+      key,
+      checksum: checksum(bytes),
     });
+  }
 
   const pushLockPath = join(context.directory, ".vardum.push.lock");
   const pushLock = await readPushLock(pushLockPath, context.config.workspace);
@@ -640,6 +656,11 @@ async function pushFolder(options: Options) {
     );
     changed += 1;
     if (options.dryRun) continue;
+    const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
+    if (checksum(bytes) !== file.checksum)
+      throw new Error(
+        `${file.relative} changed since the folder plan; retry the push`,
+      );
     const target =
       byKey.get(file.key) ??
       (await context.client.createAsset(
@@ -654,7 +675,7 @@ async function pushFolder(options: Options) {
         target.id,
         basename(file.relative),
         file.mimeType,
-        await readFile(file.absolute),
+        bytes,
       ),
     );
     currentAssets[file.key] = target.id;
