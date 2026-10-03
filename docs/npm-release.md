@@ -41,8 +41,8 @@ Asset/Vard keys do not receive administrative permissions.
 
 ## Prepare and test
 
-Use Node 22 and the root `packageManager` version of pnpm. From a clean checkout
-of the intended release commit:
+Use Node 22.23.3 and the root `packageManager` version of pnpm (12.4.2). From a clean
+checkout of the intended release commit:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -80,12 +80,29 @@ UI check. The auth/RLS/private-delivery database integrations run in CI/release 
 ## Publish
 
 Publication is a separate, deliberate action. The GitHub `Release` workflow runs
-only for a matching CLI version tag (`v0.6.0` for this batch), including manual
-dispatch from that tag. Its validation job runs the checks above plus database
-integrations, then uploads the exact tested archives. A separate publish job
+for version tag pushes and manual dispatch. Publication requires the matching CLI
+version tag (`v0.6.0` for this batch), including manual retries from that tag. Its
+validation job runs the checks above plus database integrations, then uploads the
+exact tested archives. A separate publish job
 downloads that artifact, checks its SHA-512 manifest, and uses the `npm`
 environment and npm trusted publishing (OIDC). No `NPM_TOKEN` secret is needed.
 Release runs are serialized and cannot cancel an in-progress publication.
+
+For a safe hosted check of this release path, manually dispatch `Release` from the
+candidate branch with `validation_only=true`. This explicit mode runs the same
+validation and preserves its tested archives, then downloads them in a separate
+read-only job to verify manifests, SHA-512 hashes and independent CLI/MCP installs.
+It cannot enter the `npm` environment or publish packages or a GitHub release, even
+when dispatched from a matching tag. The default is `false`; branch dispatches with
+that default fail the tag check. No pull request event uploads release artifacts.
+A validation run checks new candidate archives; it does not prove their bytes match
+already published versions and must not be used to retry publication of those versions.
+
+CI and release jobs pin the GitHub-hosted Ubuntu 24.04 image to keep their native
+PostgreSQL baseline stable. The pinned JavaScript actions use their bundled Node 24
+runtime; application commands use the separately selected Node 22.23.3. Updating
+these pins still requires a successful hosted CI run and a validation-only archive
+round trip; local package checks do not verify the hosted runner or action runtime.
 
 ### One-time npm setup
 
@@ -104,7 +121,7 @@ These three connections were configured and exercised on 2026-09-20.
 Create the GitHub environment `npm` and restrict its deployment policy to tags
 matching `v*`. Configure any required reviewers there. npm validates this trust
 when the workflow publishes; simply saving the form does not test the connection.
-The workflow pins Node 22.23.2 and npm 12.0.2, which support trusted publishing.
+The workflow pins Node 22.23.3 and npm 12.0.2, which support trusted publishing.
 See the [npm trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
 
 The source repository is currently private. npm provenance is therefore disabled
