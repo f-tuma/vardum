@@ -53,7 +53,10 @@ curl --fail http://localhost:8080/ready
 ```
 
 The example file is written for Hetzner Object Storage and shows Amazon S3
-beside it; anything S3-compatible works. Browsers upload straight into the
+beside it. An external provider must support signed POST policies, CORS, and
+the object operations listed in
+[storage compatibility](docs/operations.md#object-storage-compatibility-and-rustfs-upgrade);
+validate it before deployment. Browsers upload straight into the
 bucket with a presigned POST, so `S3_PUBLIC_ENDPOINT` must be reachable from
 the public internet and must be the origin the generated URL actually carries —
 with AWS that host is bucket-prefixed, which is what `VITE_UPLOAD_ORIGINS` is
@@ -62,7 +65,9 @@ for. Providers that do not serve virtual-hosted buckets need
 
 For a single box with no object store of its own, `--profile rustfs` starts
 RustFS alongside the app and treats `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` as
-its root credentials:
+its root credentials. All templates pin RustFS 1.0.1 by digest; this is the
+minimum supported bundled version for large presigned POST uploads. Existing
+RustFS installs need the [storage upgrade procedure](docs/operations.md#object-storage-compatibility-and-rustfs-upgrade):
 
 ```sh
 compose="docker compose --env-file .env.production -f compose.production.yml"
