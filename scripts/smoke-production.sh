@@ -23,7 +23,8 @@ export S3_ENDPOINT="http://rustfs:9000"
 export S3_FORCE_PATH_STYLE="true"
 export SMTP_HOST=""
 export SMTP_FROM=""
-export VARDUM_VERSION="smoke"
+# Keep concurrent disposable smoke builds from replacing each other's images.
+export VARDUM_VERSION="$project"
 compose=(docker compose -p "$project" -f compose.production.yml)
 # The bundled object store is a profile, so it gets its own command line. The
 # app services must be waited on without it: `up --wait` aborts when any
