@@ -2,7 +2,7 @@ import { CopyButton, useDebouncedValue } from "./ui-controls";
 import { isVideoMimeType, uploadAccept } from "@vardum/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import {
   assetDeliveryPath,
   createAsset,
@@ -16,7 +16,6 @@ import {
   getUploadLimits,
   importAssets,
   listAssets,
-  listAssetVersions,
   restoreAssetVersion,
   retryAssetVersion,
   setAssetVisibility,
@@ -25,6 +24,7 @@ import {
   type AssetSummary,
   type TransformationInput,
 } from "./asset-api";
+import { assetVersionHistoryQueryOptions } from "./asset-queries";
 import { ConfirmDialog } from "./confirm-dialog";
 import { InfoTip } from "./info-tip";
 import { FormDialog } from "./form-dialog";
@@ -835,16 +835,17 @@ function VersionHistory({
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState("");
   const [error, setError] = useState("");
-  const history = useQuery({
-    queryKey: ["asset-versions", workspaceId, assetId, currentVersionId],
-    queryFn: () => listAssetVersions(workspaceId, assetId),
-    refetchInterval: (query) =>
-      query.state.data?.versions.some(
-        (version) => version.status === "processing",
-      )
-        ? 1500
-        : false,
-  });
+  const historyOptions = useMemo(
+    () =>
+      assetVersionHistoryQueryOptions(
+        queryClient,
+        workspaceId,
+        assetId,
+        currentVersionId,
+      ),
+    [queryClient, workspaceId, assetId, currentVersionId],
+  );
+  const history = useQuery(historyOptions);
 
   async function updateVersion(versionId: string, retry = false) {
     setPendingId(versionId);
