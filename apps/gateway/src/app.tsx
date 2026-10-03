@@ -54,6 +54,7 @@ export function App({
   assetId,
   vardId,
   prefix = "",
+  fromPrefix,
   searchQuery = "",
   view = "overview",
 }: {
@@ -62,6 +63,7 @@ export function App({
   assetId?: string;
   vardId?: string;
   prefix?: string;
+  fromPrefix?: string;
   searchQuery?: string;
   view?: View;
 }) {
@@ -82,6 +84,7 @@ export function App({
       assetId={assetId}
       vardId={vardId}
       prefix={prefix}
+      fromPrefix={fromPrefix}
       searchQuery={searchQuery}
       view={view}
     />
@@ -96,6 +99,7 @@ function WorkspaceApp({
   assetId,
   vardId,
   prefix,
+  fromPrefix,
   searchQuery,
   view,
 }: {
@@ -106,6 +110,7 @@ function WorkspaceApp({
   assetId?: string;
   vardId?: string;
   prefix: string;
+  fromPrefix?: string;
   searchQuery: string;
   view: View;
 }) {
@@ -248,6 +253,7 @@ function WorkspaceApp({
           search={searchQuery}
           assetId={assetId}
           prefix={prefix}
+          fromPrefix={fromPrefix}
         />
       ) : view === "vards" ? (
         vardId ? (

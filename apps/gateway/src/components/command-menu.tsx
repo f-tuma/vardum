@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ActivityIcon,
@@ -9,6 +9,7 @@ import {
   ImagesIcon,
   LayoutDashboardIcon,
   RefreshCwIcon,
+  SearchIcon,
   SettingsIcon,
   UserIcon,
 } from "lucide-react";
@@ -20,7 +21,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { listAssets } from "@/asset-api";
+import { assetBrowserQueryOptions, flattenAssetPages } from "@/asset-queries";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Command,
@@ -121,9 +122,8 @@ function CommandMenuContent({
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const needle = useDebouncedValue(search.trim());
-  const results = useQuery({
-    queryKey: ["assets", workspaceId, "", needle],
-    queryFn: () => listAssets(workspaceId, "", needle),
+  const results = useInfiniteQuery({
+    ...assetBrowserQueryOptions(workspaceId, "", needle),
     enabled: Boolean(needle),
     retry: false,
   });
@@ -185,11 +185,11 @@ function CommandMenuContent({
     },
   ];
 
-  // Server search covers assets; pages and workspaces are matched here.
+  // Server search covers assets and folders; pages and workspaces are matched here.
   const query = search.trim().toLowerCase();
   const matches = (text: string) => text.toLowerCase().includes(query);
-  const assets = needle ? (results.data?.assets ?? []) : [];
-  const folders = needle ? (results.data?.folders ?? []) : [];
+  const listing = flattenAssetPages(needle ? results.data?.pages : []);
+  const { assets, folders } = listing;
   const searchFailed = Boolean(needle && needle === search.trim() && results.isError);
   const shownPages = pages.filter((page) => matches(page.label));
   const shownWorkspaces = workspaces.filter(
@@ -227,7 +227,7 @@ function CommandMenuContent({
             <CommandItem
               value="retry asset search"
               disabled={results.isFetching}
-              onSelect={() => { void results.refetch(); }}
+              onSelect={() => { if (!results.isFetching) void (results.isFetchNextPageError ? results.fetchNextPage({ cancelRefetch: false }) : results.refetch()); }}
             >
               {results.isFetching ? <Spinner /> : <RefreshCwIcon />}
               {results.isFetching ? "Retrying…" : "Retry"}
@@ -245,7 +245,7 @@ function CommandMenuContent({
                     navigate({
                       to: "/workspaces/$workspaceId/assets/$assetId",
                       params: { workspaceId, assetId: asset.id },
-                      search: { from: "" },
+                      search: { from: "", q: needle },
                     }),
                   )
                 }
@@ -279,6 +279,18 @@ function CommandMenuContent({
                 <span className="truncate font-mono">{folder.prefix}</span>
               </CommandItem>
             ))}
+          </CommandGroup>
+        )}
+        {needle && results.hasNextPage && !searchFailed && (
+          <CommandGroup heading="More results">
+            <CommandItem
+              value="load more search results"
+              disabled={results.isFetching}
+              onSelect={() => { if (!results.isFetching) void results.fetchNextPage({ cancelRefetch: false }); }}
+            >
+              {results.isFetchingNextPage ? <Spinner /> : <SearchIcon />}
+              {results.isFetchingNextPage ? "Loading…" : "Load more"}
+            </CommandItem>
           </CommandGroup>
         )}
         {shownPages.length > 0 && (

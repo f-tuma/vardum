@@ -37,6 +37,8 @@ jobs:
               run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:runtime-database
             - name: Check private delivery with the production database role
               run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:private-delivery
+            - name: Check asset pagination with real auth and workspace isolation
+              run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:asset-pagination
             - run: pnpm typecheck
             - run: pnpm lint
             - run: pnpm build

@@ -206,6 +206,9 @@ see [release status](docs/npm-release.md), [MCP rule operations](apps/mcp/README
 
 ## Asset visibility
 
+See [asset browsing and search](docs/asset-browser.md) for pagination, loaded
+counts, retry/refresh behavior and the opt-in browser HTTP contract.
+
 New assets are **private**, including uploads through the UI, CLI or MCP and
 bucket imports. The upgrade preserves existing files as public. Asset visibility
 is independent of a Vard's public manifest setting. Owners and editors can change

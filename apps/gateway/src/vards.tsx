@@ -1,5 +1,5 @@
 import type { VardDefinition, VardFolderRule } from "@vardum/shared";
-import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useId, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { toast } from "sonner";
+import { AssetPageControls } from "@/components/asset-page-controls";
 import { AssetThumb } from "@/components/asset-thumb";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -78,7 +79,6 @@ import {
   deleteVard,
   getVard,
   getVardManifest,
-  listAssets,
   listSyncAssets,
   listVards,
   replaceVardItems,
@@ -89,6 +89,7 @@ import {
   type VardItem,
   type VardManifest,
 } from "./asset-api";
+import { assetBrowserQueryOptions, flattenAssetPages } from "./asset-queries";
 import { cliSetupCommand, cliSetupCommands, CLI_SETUP_VERSION } from "./cli-setup";
 import {
   applyVardMetadata,
@@ -1452,12 +1453,8 @@ function AssetPicker({
   onPick: (asset: { id: string; key: string; mimeType: string }) => void;
 }) {
   const [prefix, setPrefix] = useState("");
-  const browse = useQuery({
-    queryKey: ["assets", workspace.id, prefix],
-    queryFn: () => listAssets(workspace.id, prefix),
-  });
-  const folders = browse.data?.folders ?? [];
-  const assets = browse.data?.assets ?? [];
+  const browse = useInfiniteQuery(assetBrowserQueryOptions(workspace.id, prefix));
+  const { folders, assets } = flattenAssetPages(browse.data?.pages);
   const segments = prefix.split("/").filter(Boolean);
 
   return (
@@ -1481,8 +1478,11 @@ function AssetPicker({
       </nav>
       {browse.isPending ? (
         <Spinner />
-      ) : browse.isError ? (
-        <FieldError>{browse.error.message}</FieldError>
+      ) : browse.isError && !browse.data ? (
+        <div className="flex flex-col gap-2">
+          <FieldError>{browse.error.message}</FieldError>
+          <Button variant="outline" onClick={() => { void browse.refetch(); }}>Retry</Button>
+        </div>
       ) : folders.length || assets.length ? (
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {folders.map((folder) => (
@@ -1509,6 +1509,18 @@ function AssetPicker({
         </ul>
       ) : (
         <p className="text-sm text-muted-foreground">This folder is empty.</p>
+      )}
+      {browse.data && (browse.hasNextPage || browse.data.pages.length > 1 || browse.isError) && (
+        <AssetPageControls
+          loaded={folders.length + assets.length}
+          hasMore={browse.hasNextPage}
+          fetching={browse.isFetching}
+          loadingMore={browse.isFetchingNextPage}
+          error={browse.isError ? browse.error.message : undefined}
+          nextPageError={browse.isFetchNextPageError}
+          onMore={() => { if (!browse.isFetching) void browse.fetchNextPage({ cancelRefetch: false }); }}
+          onRetry={() => { void browse.refetch(); }}
+        />
       )}
     </div>
   );

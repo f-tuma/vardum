@@ -140,13 +140,20 @@ const assetRoute = createRoute({
   path: "/workspaces/$workspaceId/assets/$assetId",
   validateSearch: (
     search: Record<string, unknown>,
-  ): { from: string; q?: string } => ({
+  ): { from?: string; q?: string } => ({
     ...(typeof search.q === "string" && search.q ? { q: search.q } : {}),
-    from: typeof search.from === "string" ? search.from : "",
+    ...(typeof search.from === "string" ? { from: search.from } : {}),
   }),
   component: AssetPage,
 });
 const router = createRouter({
+  scrollRestoration: true,
+  getScrollRestorationKey: (location) =>
+    /^\/workspaces\/[^/]+\/assets\/?$/.test(location.pathname)
+      ? location.href
+      // TanStack's default history-entry key keeps new detail visits independent.
+      // oxlint-disable-next-line no-underscore-dangle
+      : location.state.__TSR_key ?? location.href,
   routeTree: rootRoute.addChildren([
     indexRoute,
     appRoute,
@@ -241,7 +248,7 @@ function AssetPage() {
     <App
       routeWorkspaceId={workspaceId}
       assetId={assetId}
-      prefix={from}
+      fromPrefix={from}
       searchQuery={q}
       view="assets"
     />
