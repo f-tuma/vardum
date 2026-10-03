@@ -47,6 +47,29 @@ export async function checkRustfsRecovery({
     );
   const base = `/api/workspaces/${workspaceId}/assets/${assetId}`;
   let version;
+  const monitoringHeaders = {
+    authorization: `Bearer ${process.env.MONITORING_TOKEN}`,
+  };
+  async function waitHealth(matches) {
+    const deadline = Date.now() + 100_000;
+    let health;
+    do {
+      const response = await fetch(
+        `${process.env.SMOKE_URL}/api/operations/health`,
+        {
+          headers: monitoringHeaders,
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      health = await response.json();
+      assert.equal(response.status, health.status === "healthy" ? 200 : 503);
+      if (matches(health)) return health;
+      await pause(1000);
+    } while (Date.now() < deadline);
+    throw new Error(
+      `Operational health did not converge: ${JSON.stringify(health)}`,
+    );
+  }
   async function waitFor(status) {
     const deadline = Date.now() + 180_000;
     do {
@@ -58,8 +81,23 @@ export async function checkRustfsRecovery({
     throw new Error(`RustFS recovery: version did not become ${status}`);
   }
 
-  await compose("stop", "worker");
   try {
+    const denied = await fetch(
+      `${process.env.SMOKE_URL}/api/operations/metrics`,
+    );
+    assert.equal(denied.status, 401);
+    await waitHealth((health) => health.status === "healthy");
+    await compose("exec", "-T", "worker", "node", "dist/worker-healthcheck.js");
+    // Freeze a real process: no graceful heartbeat cleanup can hide expiry bugs.
+    await compose("pause", "worker");
+    await waitHealth((health) => health.workers?.live === 0);
+    assert.equal((await fetch(`${process.env.SMOKE_URL}/ready`)).status, 200);
+    await compose("unpause", "worker");
+    await waitHealth((health) => health.status === "healthy");
+    console.log(
+      "Worker heartbeat expiry and recovery detected while API readiness stayed available",
+    );
+    await compose("stop", "worker");
     // Shorten only this isolated stack's backoff; real automatic queue retries and
     // the worker's scheduled reconciliation still run without manual status edits.
     await policy({ retryLimit: 1, retryDelay: 1, retryBackoff: false });
@@ -90,6 +128,22 @@ export async function checkRustfsRecovery({
     assert.equal(failed.row.retryable, true);
     assert.equal(failed.history.currentVersionId, currentVersionId);
     assert.match(failed.row.error, /repeated attempts/);
+    await waitHealth(
+      (health) =>
+        !health.storage &&
+        health.queues?.some(
+          (queue) => queue.name === "asset-ingest" && queue.failed15m > 0,
+        ),
+    );
+    const metrics = await fetch(
+      `${process.env.SMOKE_URL}/api/operations/metrics`,
+      { headers: monitoringHeaders },
+    );
+    assert.equal(metrics.status, 200);
+    assert.match(
+      await metrics.text(),
+      /vardum_dependency_up\{dependency="storage"\} 0/,
+    );
 
     await compose("up", "-d", "--wait", "--wait-timeout", "90", "rustfs");
     await compose("restart", "worker");
@@ -107,10 +161,23 @@ export async function checkRustfsRecovery({
         .update(Buffer.from(await file.arrayBuffer()))
         .digest("hex"),
     );
+    await waitHealth((health) => health.status === "healthy");
+    await compose("stop", "postgres");
+    await waitHealth(
+      (health) =>
+        !health.database && health.workers === null && health.queues === null,
+    );
+    await compose("up", "-d", "--wait", "--wait-timeout", "90", "postgres");
+    await waitHealth((health) => health.status === "healthy");
+    console.log(
+      "Authenticated monitoring detected RustFS and PostgreSQL outages and recovered without stale healthy metrics",
+    );
     console.log(
       "Real RustFS outage: exhausted job reconciled; worker restart and authorized retry completed the same version",
     );
   } finally {
+    await compose("unpause", "worker").catch(() => {});
+    await compose("up", "-d", "--wait", "--wait-timeout", "90", "postgres");
     await compose("up", "-d", "--wait", "--wait-timeout", "90", "rustfs");
     await compose("start", "worker");
     await policy({ retryLimit: 3, retryDelay: 5, retryBackoff: true });

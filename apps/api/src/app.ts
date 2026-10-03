@@ -20,6 +20,7 @@ import { registerOrganizationRoutes } from "./organization-routes.js";
 import { registerTransformationRoutes } from "./transformation-routes.js";
 import { registerVardRoutes } from "./vard-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
+import { registerOperationsRoutes } from "./operations.js";
 
 // Async because @fastify/swagger only sees routes registered after its plugin
 // has loaded, and every route below is added in this same call.
@@ -101,6 +102,7 @@ export async function buildApp() {
   registerVardRoutes(app);
   registerTransformationRoutes(app);
   registerDeliveryRoutes(app);
+  registerOperationsRoutes(app);
 
   app.get(
     "/health",

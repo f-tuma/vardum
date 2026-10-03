@@ -10,6 +10,12 @@ const schema = z
   .object({
     HOST: z.string().default("0.0.0.0"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+    WORKER_HEALTH_PORT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(65_535)
+      .default(3001),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -20,6 +26,15 @@ const schema = z
     TRANSFORM_SECRET: z.string().min(32).default(developmentSecret),
     BETTER_AUTH_URL: z.url().default("http://localhost:3000"),
     WEB_URL: z.url().default("http://localhost:5173"),
+    MONITORING_TOKEN: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z
+        .string()
+        .min(32)
+        .max(256)
+        .regex(/^[A-Za-z0-9_-]+$/)
+        .optional(),
+    ),
     CUSTOM_DOMAIN_TARGET: optionalString,
     ORGANIZATION_CREATION: z
       .enum(["open", "allowlist", "disabled"])

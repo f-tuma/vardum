@@ -1,0 +1,245 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'vardum_workers_live{job="vardum",instance="app"}'
+        values: '1 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VardumNoWorkers
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumNoWorkers
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              severity: critical
+            exp_annotations:
+              summary: Vardum has no responsive worker
+              description: Inspect worker logs and restart failed processes. API readiness does not cover workers.
+      - eval_time: 4m
+        alertname: VardumNoWorkers
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'up{job="vardum",instance="app"}'
+        values: '0 0 0 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VardumMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumMonitoringUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              severity: critical
+            exp_annotations:
+              summary: Vardum monitoring cannot be scraped
+              description: Check the API, network and monitoring bearer token.
+      - eval_time: 3m
+        alertname: VardumMonitoringUnavailable
+        exp_alerts: []
+  # Stagger the probes so each dependency label fires and recovers independently.
+  - interval: 1m
+    input_series:
+      - series: 'vardum_dependency_up{job="vardum",instance="app",dependency="database"}'
+        values: '1 0 0 1 1'
+      - series: 'vardum_dependency_up{job="vardum",instance="app",dependency="storage"}'
+        values: '1 1 0 0 1'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: VardumDependencyUnavailable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: VardumDependencyUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumDependencyUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              dependency: database
+              severity: critical
+            exp_annotations:
+              summary: Vardum dependency probe failed
+              description: Check PostgreSQL or the configured S3 bucket and credentials.
+      - eval_time: 3m
+        alertname: VardumDependencyUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              dependency: storage
+              severity: critical
+            exp_annotations:
+              summary: Vardum dependency probe failed
+              description: Check PostgreSQL or the configured S3 bucket and credentials.
+      - eval_time: 4m
+        alertname: VardumDependencyUnavailable
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'vardum_queue_monitor_up{job="vardum",instance="app"}'
+        values: '1 0 0 1 0 1'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: VardumQueueMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: VardumQueueMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumQueueMonitoringUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              severity: critical
+            exp_annotations:
+              summary: Vardum cannot read worker or queue state
+              description: Check the database, migrations and limited runtime grants.
+      - eval_time: 3m
+        alertname: VardumQueueMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: VardumQueueMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: VardumQueueMonitoringUnavailable
+        exp_alerts: []
+  # Ready age: stay below 300s, reach the exact boundary for 1m, then recover.
+  # The final single sample at 300s must not survive the pending period.
+  - interval: 1m
+    input_series:
+      - series: 'vardum_queue_oldest_ready_seconds{job="vardum",instance="app",queue="asset-ingest"}'
+        values: '299 299 300 300 299 300 299'
+      - series: 'vardum_queue_oldest_active_seconds{job="vardum",instance="app",queue="asset-ingest"}'
+        values: '0+0x6'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: VardumQueueStalled
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              queue: asset-ingest
+              severity: warning
+            exp_annotations:
+              summary: Vardum queue is not making timely progress
+              description: Check worker availability, queue backlog and object storage before retrying failed uploads.
+      - eval_time: 4m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+  # Active age has its own 360s boundary; keep ready age healthy throughout.
+  - interval: 1m
+    input_series:
+      - series: 'vardum_queue_oldest_ready_seconds{job="vardum",instance="app",queue="asset-ingest"}'
+        values: '0+0x6'
+      - series: 'vardum_queue_oldest_active_seconds{job="vardum",instance="app",queue="asset-ingest"}'
+        values: '359 359 360 360 359 360 359'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: VardumQueueStalled
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              queue: asset-ingest
+              severity: warning
+            exp_annotations:
+              summary: Vardum queue is not making timely progress
+              description: Check worker availability, queue backlog and object storage before retrying failed uploads.
+      - eval_time: 4m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: VardumQueueStalled
+        exp_alerts: []
+  # This metric is already a 15-minute gauge, not a counter or retry status.
+  # Model a retained terminal failure, which can outlast a successful retry.
+  # Keep its gauge positive through the 15m age boundary, then recover at zero.
+  - interval: 1m
+    input_series:
+      - series: 'vardum_queue_failed_15m{job="vardum",instance="app",queue="asset-ingest"}'
+        values: '0 1+0x15 0'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: VardumQueueFailures
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: VardumQueueFailures
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: VardumQueueFailures
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              queue: asset-ingest
+              severity: warning
+            exp_annotations:
+              summary: Vardum jobs exhausted their retries
+              description: Inspect worker logs and the failed version history. This 15-minute gauge can remain positive after a successful retry.
+      - eval_time: 5m
+        alertname: VardumQueueFailures
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              queue: asset-ingest
+              severity: warning
+            exp_annotations:
+              summary: Vardum jobs exhausted their retries
+              description: Inspect worker logs and the failed version history. This 15-minute gauge can remain positive after a successful retry.
+      - eval_time: 15m
+        alertname: VardumQueueFailures
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              queue: asset-ingest
+              severity: warning
+            exp_annotations:
+              summary: Vardum jobs exhausted their retries
+              description: Inspect worker logs and the failed version history. This 15-minute gauge can remain positive after a successful retry.
+      - eval_time: 16m
+        alertname: VardumQueueFailures
+        exp_alerts:
+          - exp_labels:
+              job: vardum
+              instance: app
+              queue: asset-ingest
+              severity: warning
+            exp_annotations:
+              summary: Vardum jobs exhausted their retries
+              description: Inspect worker logs and the failed version history. This 15-minute gauge can remain positive after a successful retry.
+      - eval_time: 17m
+        alertname: VardumQueueFailures
+        exp_alerts: []

@@ -104,7 +104,9 @@ services:
 
   api:
     image: vardum-api:${VARDUM_VERSION:-local}
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      MONITORING_TOKEN: ${MONITORING_TOKEN:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -125,6 +127,12 @@ services:
     image: vardum-api:${VARDUM_VERSION:-local}
     environment: *app-environment
     command: ["node", "dist/worker.js"]
+    healthcheck:
+      test: ["CMD", "node", "dist/worker-healthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     depends_on:
       migrate:
         condition: service_completed_successfully

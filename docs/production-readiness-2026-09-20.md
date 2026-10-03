@@ -346,6 +346,55 @@ the stuck-processing/operator-retry gap. Worker health/queue alerts, never-final
 upload cleanup, backup/restore rehearsal, resource budgets and first-user acceptance
 remain open.
 
+### Step 7 — worker health and operational monitoring (2026-09-21)
+
+Implemented in source; no live production deployment or npm release. Additive
+migration `0012_worker_heartbeat.sql` stores expiring worker heartbeats, with no
+tenant data or job payloads. A heartbeat requires responsive queue pollers;
+process liveness alone is insufficient. All three production/Dokploy templates
+now include a container-local worker health check.
+
+The optional `MONITORING_TOKEN` enables private fleet health and Prometheus
+endpoints. They check PostgreSQL/queue state, S3 bucket reachability, live worker
+count, eligible waiting-job age, active-job age and recent terminal failures.
+Probes have bounded timeouts and a short shared cache; failed database observations
+omit unknown queue/worker metrics instead of reusing stale successful readings.
+Public API readiness retains its existing database-only meaning.
+
+Six Prometheus alert rules cover dependency failure, failed scrapes, missing queue
+observations, no workers, stalled queues and exhausted retries. Configuration and
+response instructions are in [operations](operations.md#worker-and-queue-monitoring).
+These are tested rules, not an installed monitoring/notification service: operators
+must configure the scrape target, secret and Alertmanager receivers, then verify
+real notification delivery.
+
+The database-outage drill also exposed an unhandled idle-connection pool error
+that terminated the API. The shared application pool now handles that event,
+leaving ordinary query errors visible and allowing subsequent connections to recover.
+
+Validation:
+
+- **81 unit tests**, workspace typecheck and production builds passed.
+- **49 integration checks** (38 private-delivery and 11 runtime-database) passed
+  in disposable PostgreSQL clusters. Monitoring checks use the limited runtime
+  role and cover multiple replicas, deferred retries, failure-window expiry,
+  aggregate-only responses and a blocked SQL query timing out and recovering.
+- **Production Compose smoke passed with real RustFS and PostgreSQL 17**: freeze
+  a worker until its heartbeat expires, resume it, stop/restart object storage,
+  exhaust/retry an upload, stop/restart the database and confirm monitoring recovery.
+  Existing installed CLI/MCP, transforms, private delivery and role checks passed.
+- All three Compose configurations and Prometheus rule validation passed. Alert
+  simulations check delayed firing and recovery; CI and release gates run them.
+
+The earlier recovery PR's hosted CI timeout was also corrected: its worker restart
+test now allows the production queue's 30-second fallback polling interval when
+the initial notification is missed. The rerun passed without changing worker behavior.
+
+Development data was retained; outage drills used disposable services. This closes
+the missing worker/queue visibility gap in source. Deployment, alert routing,
+never-finalized upload cleanup, matched backup/restore rehearsal, resource budgets
+and first-user acceptance remain operational/release work.
+
 ## Release blockers
 
 ### 1. Public npm CLI and MCP artifacts have unresolved workspace dependencies
@@ -474,10 +523,11 @@ Evidence: `scripts/smoke-test.js:119`, `.github/workflows/ci.yml`,
   versions stuck in `processing` after a persistent storage outage exhausted the
   queue retries. Terminal reconciliation, authorized retry and outage/restart
   tests now cover this path. Deploy the migration and matching worker/API/gateway
-  together; worker monitoring below is still separate work.
-- **Readiness and alerting:** `/ready` checks PostgreSQL only. The worker has no
-  health/heartbeat check in Compose. Add queue age/failure visibility and object-store
-  checks/alerts so healthy HTTP does not conceal a stopped ingest pipeline.
+  together; step 7 adds worker monitoring.
+- **Readiness and alerting (implemented in step 7):** worker heartbeat/Compose
+  health, queue age/failure metrics and storage probes now have dedicated protected
+  endpoints and tested alert rules. `/ready` still checks PostgreSQL only. Operators
+  must deploy these changes and configure/test external notification delivery.
 - **Resource budgets:** per-file limits exist, but no workspace storage quota,
   general delivery/transform admission limit or global transform concurrency cap
   was found. The in-process variant map only deduplicates identical work. Establish

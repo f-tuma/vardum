@@ -8,6 +8,7 @@ import { closeDatabase, pool } from "./db/index.js";
 import { config } from "./config.js";
 import { assertRuntimeDatabaseRole } from "./db/runtime-role.js";
 import { deleteExpiredDeliveryEvents } from "./delivery-analytics.js";
+import { startWorkerMonitoring } from "./worker-monitoring.js";
 import {
   assetDeleteQueue,
   assetIngestQueue,
@@ -17,7 +18,9 @@ import {
   stopQueue,
 } from "./queue.js";
 
+let stopMonitoring: (() => Promise<void>) | undefined;
 async function shutdown() {
+  await stopMonitoring?.();
   await stopQueue();
   await closeDatabase();
 }
@@ -55,6 +58,7 @@ try {
       if (job) await deleteAssetObjects(job.data);
     },
   );
+  stopMonitoring = await startWorkerMonitoring(() => queue.getWipData());
 } catch (error) {
   console.error("Worker failed to start", error);
   await shutdown();

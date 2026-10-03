@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { createServer } from "node:net";
 import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
@@ -356,6 +357,16 @@ export async function checkIngestRecovery(
   await t.test(
     "killed worker is recovered on restart and the same version can finish",
     async () => {
+      // Keep disposable worker processes independent of a running dev worker.
+      const portReservation = createServer();
+      await new Promise<void>((resolve) =>
+        portReservation.listen(0, "127.0.0.1", resolve),
+      );
+      const address = portReservation.address();
+      assert.ok(address && typeof address !== "string");
+      await new Promise<void>((resolve, reject) =>
+        portReservation.close((error) => (error ? reject(error) : resolve())),
+      );
       await boss.updateQueue(assetIngestQueue, {
         retryLimit: 0,
         expireInSeconds: 2,
@@ -378,7 +389,11 @@ export async function checkIngestRecovery(
             fileURLToPath(new URL("../src/worker.ts", import.meta.url)),
           ],
           {
-            env: { ...process.env, NODE_ENV: "production" },
+            env: {
+              ...process.env,
+              NODE_ENV: "production",
+              WORKER_HEALTH_PORT: String(address.port),
+            },
             stdio: ["ignore", "pipe", "pipe"],
           },
         );
