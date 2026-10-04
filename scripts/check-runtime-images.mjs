@@ -122,6 +122,21 @@ try {
     recorded.containerPolicies ??= {};
     recorded.containerPolicies[service] = { user: container.Config.User, capDrop: container.HostConfig.CapDrop, securityOpt: container.HostConfig.SecurityOpt, state: container.State.Status, exitCode: container.State.ExitCode };
   }
+  // Reuse the exact running service images after acceptance has verified the
+  // application identity, completed migration and privilege policies. Mutable
+  // Compose tags (especially postgres:17-alpine) are never TLS gate inputs.
+  for (const service of ["postgres", "rustfs"]) {
+    const ids = docker("ps", "-q", "--filter", `label=com.docker.compose.project=${project}`, "--filter", `label=com.docker.compose.service=${service}`).trim().split(/\s+/);
+    assert.equal(ids.length, 1, `Exactly one running ${service} is required for TLS acceptance`);
+    assert.match(ids[0], /^[a-f0-9]{12,64}$/);
+    const id = docker("inspect", "--format", "{{.Image}}", ids[0]).trim();
+    assert.match(id, /^sha256:[a-f0-9]{64}$/);
+    recorded.images[service] = { id };
+  }
+  run(process.execPath, ["scripts/smoke-runtime-tls.mjs", recorded.images.api.id, recorded.images.worker.id, migration.Image, recorded.images.postgres.id, recorded.images.rustfs.id, join(output, "runtime-tls")]);
+  const tlsSummary = JSON.parse(await readFile(join(output, "runtime-tls/summary.json"), "utf8"));
+  assert.equal(tlsSummary.status, "passed", "Actual application TLS matrix must pass before image acceptance");
+  recorded.runtimeTls = { status: tlsSummary.status, summarySha256: await hash(join(output, "runtime-tls/summary.json")), cases: tlsSummary.cases.length };
   for (const service of ["api", "gateway"]) {
     await save(`${service}-os.txt`, service === "api"
       ? docker("exec", containers.api, "node", "--input-type=module", "-e", 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync("/etc/os-release", "utf8"))')
