@@ -68,6 +68,8 @@ jobs:
                       ${{ runner.temp }}/vardum-runtime-images/*.txt
                       ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.json
                       ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.txt
+                      ${{ runner.temp }}/vardum-runtime-images/runtime-tls/*.json
+                      ${{ runner.temp }}/vardum-runtime-images/runtime-tls/*.txt
             - name: Preserve the exact tested archives
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:

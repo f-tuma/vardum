@@ -64,3 +64,5 @@ jobs:
                       ${{ runner.temp }}/vardum-runtime-images/*.txt
                       ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.json
                       ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.txt
+                      ${{ runner.temp }}/vardum-runtime-images/runtime-tls/*.json
+                      ${{ runner.temp }}/vardum-runtime-images/runtime-tls/*.txt
