@@ -8,6 +8,22 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 const script = fileURLToPath(new URL("./smoke-gateway-config.mjs", import.meta.url));
+test("gateway probes reject an invalid optional Dokploy image before creating evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vardum-gateway-identity-"));
+  try {
+    const destination = join(directory, "evidence");
+    const child = spawn(process.execPath, [script, `sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`, destination, "mutable:tag"], { stdio: "pipe" });
+    let output = "";
+    child.stderr.on("data", chunk => { output += chunk; });
+    const code = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    assert.equal(code, 1, output);
+    assert.match(output, /full immutable Docker image IDs/);
+    await assert.rejects(readFile(join(destination, "gateway-config-evidence.json")), { code: "ENOENT" });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 // Exercise the real child process, signal handling and ownership checks without
 // a Docker daemon. The fake CLI records external resources and refuses name reuse.
 const fakeDocker = `#!/usr/bin/env node

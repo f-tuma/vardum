@@ -5,6 +5,12 @@ const optionalString = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
 );
+// Compose emits optional environment keys as empty strings. AWS uses the SDK's
+// regional endpoint when these are unset; keep rejecting malformed nonempty URLs.
+const optionalUrl = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.url().optional(),
+);
 
 const schema = z
   .object({
@@ -101,8 +107,8 @@ const schema = z
       .default(15),
     S3_REGION: z.string().default("us-east-1"),
     S3_BUCKET: z.string().min(3).default("varda"),
-    S3_ENDPOINT: z.url().optional(),
-    S3_PUBLIC_ENDPOINT: z.url().optional(),
+    S3_ENDPOINT: optionalUrl,
+    S3_PUBLIC_ENDPOINT: optionalUrl,
     S3_ACCESS_KEY_ID: z.string().optional(),
     S3_SECRET_ACCESS_KEY: z.string().optional(),
     S3_FORCE_PATH_STYLE: z

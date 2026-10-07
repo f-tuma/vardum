@@ -8,11 +8,11 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 const execute = promisify(execFile);
-const [gatewayImage, apiImage, destination, ...extra] = process.argv.slice(2);
+const [gatewayImage, apiImage, destination, dokployImage, ...extra] = process.argv.slice(2);
 assert.equal(extra.length, 0, "Unexpected arguments");
-for (const id of [gatewayImage, apiImage])
+for (const id of [gatewayImage, apiImage, ...(dokployImage ? [dokployImage] : [])])
   assert.match(id ?? "", /^sha256:[a-f0-9]{64}$/, "Pass full immutable Docker image IDs");
-assert.ok(destination, "Usage: smoke-gateway-config.mjs GATEWAY_IMAGE_ID API_IMAGE_ID EMPTY_REPORT_DIRECTORY");
+assert.ok(destination, "Usage: smoke-gateway-config.mjs GATEWAY_IMAGE_ID API_IMAGE_ID EMPTY_REPORT_DIRECTORY [DOKPLOY_IMAGE_ID]");
 const output = resolve(destination);
 await mkdir(output, { mode: 0o700 });
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +36,7 @@ const evidence = {
   status: "incomplete",
   gatewayImage,
   apiImage,
+  ...(dokployImage ? { dokployImage } : {}),
   platform: "linux/amd64",
   owner,
   network,
@@ -99,7 +100,7 @@ const mock = `
 `;
 let failure;
 try {
-  for (const [name, id] of [["gateway", gatewayImage], ["api", apiImage]]) {
+  for (const [name, id] of [["gateway", gatewayImage], ["api", apiImage], ...(dokployImage ? [["dokploy", dokployImage]] : [])]) {
     const image = JSON.parse((await docker(["image", "inspect", id])).stdout)[0];
     assert.equal(`${image.Os}/${image.Architecture}`, "linux/amd64", "Gateway routing proof is bounded to linux/amd64");
     evidence[`${name}Identity`] = { id: image.Id, os: image.Os, architecture: image.Architecture, rootfs: image.RootFS };
@@ -117,10 +118,21 @@ try {
     const report = evidence.modes[mode] = { container: name, checks: [] };
     const args = ["--publish", "127.0.0.1::80"];
     if (mode !== "standard") {
-      args.push("--mount", `type=bind,src=${template},dst=/etc/nginx/templates/default.conf.template,readonly`, "--env", "API_UPSTREAM=api:3000", "--env", `MARKETING_UPSTREAM=${mode === "marketing" ? "marketing:3000" : "127.0.0.1:8080"}`);
+      if (!dokployImage)
+        args.push("--mount", `type=bind,src=${template},dst=/etc/nginx/templates/default.conf.template,readonly`);
+      args.push("--env", "API_UPSTREAM=api:3000", "--env", `MARKETING_UPSTREAM=${mode === "marketing" ? "marketing:3000" : "127.0.0.1:8080"}`);
     }
     // No entrypoint/command override: exercise the official nginx startup and envsubst hooks.
-    await createContainer(name, args, gatewayImage);
+    const image = mode !== "standard" && dokployImage ? dokployImage : gatewayImage;
+    report.image = image;
+    report.templateSource = mode === "standard" ? "none" : dokployImage ? "image" : "bind";
+    await createContainer(name, args, image);
+    if (mode !== "standard" && dokployImage) {
+      const baked = (await docker(["exec", name, "cat", "/etc/nginx/templates/default.conf.template"], { binary: true })).stdout;
+      assert.equal(hash(baked), evidence.templateSha256, "Built Dokploy image must contain the reviewed template");
+      const mounts = JSON.parse((await docker(["inspect", "--format", "{{json .Mounts}}", name])).stdout);
+      assert.equal(mounts.length, 0, "Dokploy routing must work without checkout mounts");
+    }
     const bindings = JSON.parse((await docker(["inspect", "--format", "{{json .NetworkSettings.Ports}}", name])).stdout)["80/tcp"];
     assert.equal(bindings?.length, 1);
     assert.equal(bindings[0].HostIp, "127.0.0.1");
