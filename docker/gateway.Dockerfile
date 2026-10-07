@@ -15,7 +15,7 @@ ARG VITE_UPLOAD_ORIGINS
 ENV VITE_UPLOAD_ORIGINS=$VITE_UPLOAD_ORIGINS
 RUN pnpm --filter "@vardum/gateway..." build
 
-FROM nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 AS runtime
+FROM nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 AS gateway-base
 # Fixed Alpine packages verified in the official 3.24 index on 2026-10-03.
 # Keep security upgrades exact and fail the build if that input is unavailable.
 RUN apk add --no-cache --upgrade \
@@ -26,3 +26,12 @@ RUN apk add --no-cache --upgrade \
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/apps/gateway/dist /usr/share/nginx/html
 EXPOSE 80
+
+# The configuration travels with the image; Dokploy replaces the Git checkout
+# on redeploy, so a bind mount from that checkout is not a durable config source.
+FROM gateway-base AS dokploy
+COPY docker/nginx.marketing.conf.template /etc/nginx/templates/default.conf.template
+ENV API_UPSTREAM=api:3000 MARKETING_UPSTREAM=127.0.0.1:8080
+
+# Keep the default build for self-hosted/dev deployments serving the SPA at /.
+FROM gateway-base AS runtime

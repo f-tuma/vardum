@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "check:compose": "node scripts/check-compose.mjs",
     "dev": "docker compose --profile storage up -d --wait && docker compose --profile storage run --rm rustfs-init && pnpm --filter @vardum/shared build && pnpm --filter @vardum/api db:migrate && pnpm -r --parallel dev",
     "dev:apps": "pnpm -r --parallel dev",
     "lint": "pnpm --filter @vardum/gateway lint",

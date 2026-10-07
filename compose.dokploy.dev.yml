@@ -5,11 +5,11 @@
 # the app directly from the baked-in docker/nginx.conf — exactly what a
 # self-hoster sees.
 #
-# Expose one Dokploy Domain in the UI: dev.vardum.com on service `gateway`,
+# Expose one Dokploy Domain in the UI: dev.example.com on service `gateway`,
 # container port 80.
 #
 # Required environment:
-#   APP_URL=https://dev.vardum.com
+#   APP_URL=https://dev.example.com
 #   BETTER_AUTH_SECRET / TRANSFORM_SECRET   (dev-only secrets)
 #   POSTGRES_PASSWORD / POSTGRES_APP_PASSWORD (different URL-safe secrets)
 #   S3_BUCKET / S3_REGION / S3_ENDPOINT / S3_PUBLIC_ENDPOINT
@@ -99,8 +99,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # The S3 API port is the only one Traefik should reach; the console stays on
-    # the project network.
+    # Give only the S3 API port a public Domain. The console has no host port
+    # or public router; other trusted peers on dokploy-network can still reach it.
     expose:
       - "9000"
       - "9001"

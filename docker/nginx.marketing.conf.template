@@ -1,5 +1,5 @@
 # Vardum gateway for a deployment whose apex belongs to a separate marketing
-# site. Mounted into /etc/nginx/templates/, so the nginx image substitutes
+# site. Baked into /etc/nginx/templates/ by the Dokploy target, so nginx substitutes
 # ${API_UPSTREAM} and ${MARKETING_UPSTREAM} at container start.
 #
 # WHY ONE ORIGIN: the client calls the API with relative /api/* URLs and the

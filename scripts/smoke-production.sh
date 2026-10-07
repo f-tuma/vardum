@@ -117,4 +117,17 @@ SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node "$(dirname "$0")/sm
 runtime_report="${SMOKE_IMAGE_REPORT_DIR:-$(mktemp -d)/runtime}"
 node scripts/check-runtime-images.mjs "$project" "$runtime_report"
 
+# Exercise Dokploy's baked routing template, independently of a Git checkout
+# mount, against the same API and built web bundle used above.
+docker build --target dokploy -f docker/gateway.Dockerfile \
+  --build-arg "VITE_UPLOAD_ORIGINS=$S3_PUBLIC_ENDPOINT" \
+  --tag "vardum-dokploy-gateway:$project" .
+dokploy_image="$(docker image inspect --format '{{.Id}}' "vardum-dokploy-gateway:$project")"
+gateway_image="$("${compose[@]}" images -q gateway | head -n 1)"
+gateway_image="$(docker image inspect --format '{{.Id}}' "$gateway_image")"
+api_image="$("${compose[@]}" images -q api | head -n 1)"
+api_image="$(docker image inspect --format '{{.Id}}' "$api_image")"
+node scripts/smoke-gateway-config.mjs "$gateway_image" "$api_image" \
+  "$runtime_report/dokploy-gateway-config" "$dokploy_image"
+
 # Cleanup is handled by trap

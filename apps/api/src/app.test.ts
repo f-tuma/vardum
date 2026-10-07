@@ -68,6 +68,30 @@ test("S3 credentials must be provided together", () => {
   );
 });
 
+test("S3 endpoint configuration accepts AWS blanks without hiding invalid URLs", () => {
+  for (const value of [undefined, ""]) {
+    const parsed = parseConfig({
+      NODE_ENV: "test",
+      S3_ENDPOINT: value,
+      S3_PUBLIC_ENDPOINT: value,
+    });
+    assert.equal(parsed.S3_ENDPOINT, undefined);
+    assert.equal(parsed.S3_PUBLIC_ENDPOINT, undefined);
+  }
+  const parsed = parseConfig({
+    NODE_ENV: "test",
+    S3_ENDPOINT: "http://rustfs:9000",
+    S3_PUBLIC_ENDPOINT: "https://storage.example.com",
+  });
+  assert.equal(parsed.S3_ENDPOINT, "http://rustfs:9000");
+  assert.equal(parsed.S3_PUBLIC_ENDPOINT, "https://storage.example.com");
+  for (const name of ["S3_ENDPOINT", "S3_PUBLIC_ENDPOINT"]) {
+    for (const value of [" ", "not-a-url", "https://"]) {
+      assert.throws(() => parseConfig({ NODE_ENV: "test", [name]: value }));
+    }
+  }
+});
+
 test("legacy asset URLs validate transformation queries before lookup", async (context) => {
   const app = await buildApp();
   context.after(() => app.close());

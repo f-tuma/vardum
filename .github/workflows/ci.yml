@@ -44,9 +44,7 @@ jobs:
             - run: pnpm build
             - name: Validate operational alert rules
               run: docker run --rm -v "$PWD/docker/monitoring:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996 test rules alerts.test.yml
-            - run: docker compose --env-file .env.production.example -f compose.production.yml config --quiet
-            - run: docker compose --env-file .env.dokploy.example -f compose.dokploy.yml config --quiet
-            - run: docker compose --env-file .env.dokploy.example -f compose.dokploy.dev.yml config --quiet
+            - run: pnpm check:compose
             - run: bash scripts/smoke-publish.sh
             - name: Check production services and clean-stack backup restore
               env:
@@ -64,5 +62,7 @@ jobs:
                       ${{ runner.temp }}/vardum-runtime-images/*.txt
                       ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.json
                       ${{ runner.temp }}/vardum-runtime-images/gateway-config/*.txt
+                      ${{ runner.temp }}/vardum-runtime-images/dokploy-gateway-config/*.json
+                      ${{ runner.temp }}/vardum-runtime-images/dokploy-gateway-config/*.txt
                       ${{ runner.temp }}/vardum-runtime-images/runtime-tls/*.json
                       ${{ runner.temp }}/vardum-runtime-images/runtime-tls/*.txt
