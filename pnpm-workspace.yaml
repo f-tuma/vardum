@@ -15,10 +15,16 @@ overrides:
   "nanostores": "1.4.2"
   "rolldown": "1.2.4"
   "semver": "7.8.5"
+  # Exact patches for GHSA-jqcg-44mw-7w3h, GHSA-jp82-f5mq-hwhp and GHSA-68fv-2mgg-jv7q.
+  "proxy-addr": "2.0.8"
+  "seroval": "1.6.3"
+  "source-map-js": "1.2.2"
 
 blockExoticSubdeps: true
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
+  # GHSA-68fv-2mgg-jv7q: reviewed exact security patch, published 2026-09-30.
+  - "source-map-js@1.2.2"
   - "@better-auth/api-key@1.7.1"
   - "@better-auth/core@1.7.1"
   - "@better-auth/drizzle-adapter@1.7.1"
