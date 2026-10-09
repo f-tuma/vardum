@@ -51,7 +51,11 @@ baseline rather than assuming fonts are installed. Nginx and OS reports record
 the running native environment. Migration image identity, successful exit and
 container capability/security settings are also required. `gateway-config/` contains the
 normal-entrypoint, envsubst and HTTP checks for standard, marketing and loopback
-fallback configurations. SIGINT/SIGTERM abort active probes, clean up only the
+fallback configurations. The same probes replace API and marketing mocks with
+new IPs, reserve old addresses without listeners and require recovery without
+container, master or worker restarts/reloads. They also start a gateway with
+absent DNS aliases and verify later recovery; encoded paths, queries and POST
+bodies remain unchanged. SIGINT/SIGTERM abort active probes, clean up only the
 invocation's labelled resources, retain interrupted evidence and exit nonzero.
 SIGKILL or host failure cannot run cleanup; use the recorded owner/network to
 inspect and remove only that invocation's remaining resources.

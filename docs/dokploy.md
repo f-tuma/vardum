@@ -98,8 +98,10 @@ For an existing installation, follow the
 verify an off-host database/object/secrets backup, stop gateway/API/worker to
 close writers, build the selected commit, and run its migration successfully
 before recreating those services. `depends_on` gates startup; it does not stop
-already-running old services during migrations. Recreate the gateway too, so
-nginx resolves the new API container address. Inspect migration logs from this
+already-running old services during migrations. Recreate the gateway too when
+deploying a gateway image/configuration change. The gateway refreshes Docker DNS
+for API and marketing upstreams, so replacing an upstream container does not
+require a gateway restart to adopt its new IP. Inspect migration logs from this
 deployment, not a previous successful run. Do not enable unattended AutoDeploy
 for upgrades requiring this maintenance sequence. Keep the project name and
 named volumes; `down -v` destroys them. Forward-only migrations mean rollback
@@ -107,3 +109,13 @@ may require the pre-upgrade backup, not merely an older image tag.
 
 Dokploy references: [Compose setup](https://docs.dokploy.com/docs/core/docker-compose),
 [Domains and Preview Compose](https://docs.dokploy.com/docs/core/docker-compose/domains).
+
+## Recover an older gateway after an API redeploy
+
+If the API reports `/ready` 200 on its new container IP but gateway logs show
+`Connection refused` on an old IP, restart only the **gateway** service in
+Dokploy. Older images resolved upstream addresses once at startup; rebuilding
+and deploying the current gateway adds automatic Docker DNS refresh. This does
+not restart PostgreSQL, run migrations or change storage. A brief 502 while the
+API is actually unavailable during replacement is still possible; DNS refresh
+cannot make an unavailable backend healthy.
