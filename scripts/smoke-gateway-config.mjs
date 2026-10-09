@@ -341,11 +341,38 @@ try {
   }
   assert.equal(coldApp?.response.status, 200, "Absent upstream aliases must not prevent gateway startup");
   assert.deepEqual(coldApp.bytes, app);
+  evidence.coldStart = { container: coldName, endpoints: [], dnsQueries: [], passed: false };
+  const networkOwner = (await docker(["network", "inspect", "--format", `{{index .Labels "${label}"}}`, network])).stdout.trim();
+  assert.equal(networkOwner, owner);
+  const endpoints = JSON.parse((await docker(["network", "inspect", "--format", "{{json .Containers}}", network])).stdout);
+  assert.ok(endpoints && typeof endpoints === "object" && !Array.isArray(endpoints));
+  assert.ok(Object.keys(endpoints).length > 0, "Cold gateway must be present in the inspected network");
+  for (const [id, endpoint] of Object.entries(endpoints)) {
+    const attachment = JSON.parse((await docker(["inspect", "--format", `{{json (index .NetworkSettings.Networks "${network}")}}`, id])).stdout);
+    assert.ok(attachment && typeof attachment === "object");
+    // Older engines omit DNSNames; newer engines keep only explicit aliases in
+    // Aliases. Inspect both fields and the endpoint name without reading env.
+    for (const values of [attachment.Aliases, attachment.DNSNames])
+      assert.ok(values == null || (Array.isArray(values) && values.every(value => typeof value === "string")));
+    const advertised = [endpoint.Name, ...(attachment.Aliases ?? []), ...(attachment.DNSNames ?? [])];
+    evidence.coldStart.endpoints.push({ id, name: endpoint.Name, aliases: attachment.Aliases ?? [], dnsNames: attachment.DNSNames ?? [] });
+    for (const alias of ["api", "vardum-api-internal", "marketing"])
+      assert.ok(!advertised.includes(alias), `Cold-start network must not advertise ${alias}`);
+  }
   for (const alias of ["vardum-api-internal", "marketing"]) {
-    let result;
-    try { result = (await docker(["exec", coldName, "nslookup", "-type=A", alias, "127.0.0.11"])).stdout; }
-    catch (error) { result = `${error.stdout ?? ""}\n${error.stderr ?? ""}`; }
-    assert.match(result, /NXDOMAIN|can't resolve/, "Cold start must prove DNS alias absence, not only an unavailable port");
+    let stdout, stderr, exitCode = 0;
+    try { ({ stdout, stderr } = await docker(["exec", coldName, "nslookup", "-type=A", alias, "127.0.0.11"])); }
+    catch (error) {
+      cancellation.signal.throwIfAborted();
+      if (error.code !== 1 || error.killed || error.signal) throw error;
+      ({ stdout, stderr } = error);
+      exitCode = error.code;
+    }
+    const result = `${stdout ?? ""}\n${stderr ?? ""}`;
+    evidence.coldStart.dnsQueries.push({ alias, stdout, stderr, exitCode });
+    // Docker may report either code when its local alias is absent. The network
+    // inventory above proves absence; an unrelated error is never accepted.
+    assert.ok(result.split(/\r?\n/).some(line => ["NXDOMAIN", "SERVFAIL"].some(code => line.trim() === `** server can't find ${alias}: ${code}`)), "Cold DNS query must return a recognized unresolved-host response");
   }
   for (const path of ["/health", "/"]) {
     const { response } = await fetchBounded(coldBase, path);
@@ -360,7 +387,7 @@ try {
   const marketingRecoveredMs = await waitGeneration(coldBase, "/", "marketing", lateMarketing);
   const coldAfter = await gatewayIdentity(coldName);
   assert.deepEqual(coldAfter, coldIdentity, "Late DNS recovery must not restart or reload nginx");
-  evidence.coldStart = { container: coldName, apiRecoveredMs, marketingRecoveredMs, before: coldIdentity, after: coldAfter, passed: true };
+  Object.assign(evidence.coldStart, { apiRecoveredMs, marketingRecoveredMs, before: coldIdentity, after: coldAfter, passed: true });
   console.log("Gateway cold start: absent aliases and late API/marketing recovery passed.");
   cancellation.signal.throwIfAborted();
   evidence.status = "passed";
