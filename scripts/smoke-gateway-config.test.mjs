@@ -46,8 +46,14 @@ if (args[0] === "image" && args[1] === "inspect") {
   value = name;
 } else if (args[0] === "inspect") {
   const resource = state.resources[args.at(-1)];
+  if (!resource) throw new Error("error: no such object: " + args.at(-1));
   const format = args[args.indexOf("--format") + 1];
+  if (format.includes(".NetworkSettings.Ports") && process.env.FAKE_REMOVE_API === "true") {
+    const backend = Object.keys(state.resources).find(name => name.endsWith("-backend-api"));
+    delete state.resources[backend];
+  }
   if (format.includes(".Image")) value = resource.image;
+  else if (format.includes(".IPAddress")) value = "172.29.0.2";
   else if (format.includes(".NetworkSettings.Ports")) value = JSON.stringify({ "80/tcp": process.env.FAKE_MODE === "assertion" ? [] : [{ HostIp: "127.0.0.1", HostPort: "9" }] });
   else value = resource.owner;
 } else if (args[0] === "network" && args[1] === "inspect") {
@@ -64,8 +70,8 @@ fs.renameSync(temporary, path);
 fs.writeSync(1, value + "\\n");
 `;
 
-for (const signal of [null, "SIGINT", "SIGTERM"]) {
-  test(`gateway probes clean owned resources after ${signal ?? "assertion failure"}`, { timeout: 15_000 }, async (t) => {
+for (const { signal, removeApi = false } of [{ signal: null }, { signal: null, removeApi: true }, { signal: "SIGINT" }, { signal: "SIGTERM" }]) {
+  test(`gateway probes clean owned resources after ${signal ?? "assertion failure"}${removeApi ? " with an already removed backend" : ""}`, { timeout: 15_000 }, async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "vardum-gateway-signal-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const bin = join(directory, "bin");
@@ -76,7 +82,7 @@ for (const signal of [null, "SIGINT", "SIGTERM"]) {
     await writeFile(statePath, JSON.stringify({ resources: { unrelated: foreign }, commands: [] }));
     const destination = join(directory, "evidence");
     const child = spawn(process.execPath, [script, `sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`, destination], {
-      env: { ...process.env, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH}`, FAKE_STATE: statePath, FAKE_MODE: signal ? "signal" : "assertion" },
+      env: { ...process.env, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH}`, FAKE_STATE: statePath, FAKE_MODE: signal ? "signal" : "assertion", FAKE_REMOVE_API: String(removeApi) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
@@ -108,6 +114,7 @@ for (const signal of [null, "SIGINT", "SIGTERM"]) {
     assert.equal(evidence.status, signal ? "interrupted" : "incomplete");
     assert.equal(evidence.interruptedSignal, signal ?? undefined);
     assert.equal(evidence.cleanup.length, 4);
-    assert.ok(evidence.cleanup.every(resource => resource.removed === true));
+    assert.ok(evidence.cleanup.every(resource => resource.removed === true || resource.absent === true));
+    if (removeApi) assert.equal(evidence.cleanup.filter(resource => resource.absent).length, 1);
   });
 }

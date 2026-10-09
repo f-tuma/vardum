@@ -11,6 +11,21 @@
 #
 # The self-hosted stack uses docker/nginx.conf instead, where `/` is the app.
 
+# Docker service addresses change when containers are replaced. Keep upstream
+# state shared between workers and refresh Docker DNS without an nginx reload.
+resolver 127.0.0.11 valid=5s ipv6=off;
+resolver_timeout 5s;
+
+upstream vardum_api {
+  zone vardum_api 64k;
+  server ${API_UPSTREAM} resolve;
+}
+
+upstream vardum_marketing {
+  zone vardum_marketing 64k;
+  server ${MARKETING_UPSTREAM} resolve;
+}
+
 server {
   listen 80;
   server_name _;
@@ -20,14 +35,14 @@ server {
   # The API owns its REST surface, asset delivery and the health probes. These
   # come first so nothing below can shadow them.
   location ^~ /api/ {
-    proxy_pass http://${API_UPSTREAM};
+    proxy_pass http://vardum_api;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 
   location ~ ^/(?:v|w)/ {
-    proxy_pass http://${API_UPSTREAM};
+    proxy_pass http://vardum_api;
     proxy_buffering off;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -35,11 +50,11 @@ server {
   }
 
   location = /health {
-    proxy_pass http://${API_UPSTREAM};
+    proxy_pass http://vardum_api;
   }
 
   location = /ready {
-    proxy_pass http://${API_UPSTREAM};
+    proxy_pass http://vardum_api;
   }
 
   # The built bundle, with the legacy /assets/ delivery prefix as the fallback.
@@ -48,7 +63,7 @@ server {
   }
 
   location @legacy_assets {
-    proxy_pass http://${API_UPSTREAM};
+    proxy_pass http://vardum_api;
     proxy_buffering off;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -78,7 +93,7 @@ server {
   # loopback server below, so an install with no marketing site yet opens the
   # app on the apex instead of failing to start.
   location / {
-    proxy_pass http://${MARKETING_UPSTREAM};
+    proxy_pass http://vardum_marketing;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
