@@ -108,7 +108,25 @@ try {
   }
   evidence.templateSha256 = hash(await readFile(template));
   resources.push({ type: "network", name: network });
-  await docker(["network", "create", "--label", `${label}=${owner}`, network]);
+  // Let Docker choose an available pool, then declare it explicitly: older
+  // engines reject --ip reservations on automatically allocated networks.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await docker(["network", "create", "--label", `${label}=${owner}`, network]);
+    const subnet = (await docker(["network", "inspect", "--format", "{{(index .IPAM.Config 0).Subnet}}", network])).stdout.trim();
+    assert.match(subnet, /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}\/(?:[0-9]|[12][0-9]|3[0-2])$/);
+    const actualOwner = (await docker(["network", "inspect", "--format", `{{index .Labels "${label}"}}`, network])).stdout.trim();
+    assert.equal(actualOwner, owner, "Only this invocation's empty network may be recreated");
+    await docker(["network", "rm", network]);
+    try {
+      await docker(["network", "create", "--subnet", subnet, "--label", `${label}=${owner}`, network]);
+      evidence.networkSubnet = subnet;
+      break;
+    } catch (error) {
+      // Another invocation can claim the released pool; ask Docker for a new
+      // one instead of guessing a fixed subnet or changing global IPAM pools.
+      if (attempt === 2 || !/Pool overlaps with other one on this address space/i.test(String(error.stderr ?? error.message))) throw error;
+    }
+  }
   const backends = new Map();
   async function startBackend(role, generation = "") {
     const name = `${network}-backend-${role}${generation ? `-${generation}` : ""}`;
@@ -325,7 +343,7 @@ try {
   assert.deepEqual(coldApp.bytes, app);
   for (const alias of ["vardum-api-internal", "marketing"]) {
     let result;
-    try { result = (await docker(["exec", coldName, "nslookup", alias, "127.0.0.11"])).stdout; }
+    try { result = (await docker(["exec", coldName, "nslookup", "-type=A", alias, "127.0.0.11"])).stdout; }
     catch (error) { result = `${error.stdout ?? ""}\n${error.stderr ?? ""}`; }
     assert.match(result, /NXDOMAIN|can't resolve/, "Cold start must prove DNS alias absence, not only an unavailable port");
   }
