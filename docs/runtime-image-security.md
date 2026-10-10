@@ -60,12 +60,38 @@ invocation's labelled resources, retain interrupted evidence and exit nonzero.
 SIGKILL or host failure cannot run cleanup; use the recorded owner/network to
 inspect and remove only that invocation's remaining resources.
 
-PR/main CI and release validation retain JSON/text reports as
-`runtime-image-evidence` for seven days.
-It does not upload application image archives or the database snapshot.
-Consequently, downloaded CI reports establish recorded findings and identities,
-not a self-contained offline replay. The local evidence directory keeps the
-exports and exact database for replay; preserve these locally when needed.
+PR/main CI and npm release validation retain exactly `runtime-summary.json`,
+`runtime-summary.txt` and `checksums.txt` as `runtime-image-evidence` for seven
+days. `scripts/runtime-evidence.mjs` reconstructs approved fields from named,
+bounded report snapshots and hashes the same bytes it parses. Raw Trivy image
+configurations, environment, invocation arguments, effective Nginx configuration,
+errors, logs, request details, assets, archives, scanner database contents and
+unknown files are excluded. Symlinks, hardlinks, nonregular files and oversized
+reports are rejected. Recorded image/platform/RootFS identities, archive/report/
+database hashes, every finding severity (including unfixed rows), runtime/native
+versions, privileges, trust inventories, SVG-text results, and gateway/TLS results
+remain available. Effective configuration is represented by its hash only.
+
+The production-smoke step outcome and pre-projection job status are separate
+from evidence completeness and individual reported checks. Missing, unsafe,
+malformed or mismatched inputs produce partial evidence, never a passing smoke
+claim. Projection failure skips this evidence upload and has no raw fallback;
+it does not introduce a new acceptance or npm publication gate. Existing npm
+archive validation, artifact handling, tag policy and publishing remain separate.
+The checkout tree is explicitly the tracked Git commit tree; source status is
+only a dirty boolean or unknown, not a hash of a dirty build context. API/worker
+inventories are associated through the aggregate report, while gateway reports
+bind through matching runtime image IDs. Scan and TLS report hashes are checked
+against the aggregate's recorded hashes.
+
+Deployed SVG rasterization, AVIF encode/decode and database-role checks currently
+print their individual results to smoke stdout; the projection does not claim
+separate saved results for them. Ordinary SVG-text output is separately recorded
+by the runtime inventory. Neither complete evidence nor a passing smoke clears
+the vendor assessment/release hold or certifies safety. Downloaded summaries
+establish recorded findings and identities, not self-contained offline replay.
+The local evidence directory keeps exports and the exact database for replay;
+preserve these locally when needed.
 
 For local replay, verify the recorded archive and database hashes, then use the
 recorded scanner digest and unchanged evidence directory:

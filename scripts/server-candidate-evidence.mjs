@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { validateCandidate } from "./server-candidate.mjs";
+import { readEvidenceSnapshot } from "./evidence-snapshot.mjs";
 
 export const evidenceFiles = Object.freeze(["candidate-summary.json", "acceptance-summary.json", "checksums.txt"]);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -70,19 +70,8 @@ export function projectGatewayReport(report) {
 const rawFiles = ["runtime-evidence.json", "api-runtime.json", "worker-runtime.json", "api-scan.json", "gateway-scan.json",
   "gateway-config/gateway-config-evidence.json", "dokploy-gateway-config/gateway-config-evidence.json", "runtime-tls/summary.json"];
 async function readEvidenceFile(directory, name, json) {
-  // Every selected path component must be ordinary; unknown files are never read.
-  let path = directory;
-  assert.ok((await lstat(path)).isDirectory(), "Reports must be an ordinary directory");
-  for (const [index, component] of name.split("/").entries()) {
-    path = join(path, component);
-    const info = await lstat(path);
-    assert.ok(!info.isSymbolicLink(), "Report symlinks are unsupported");
-    if (index < name.split("/").length - 1) assert.ok(info.isDirectory());
-    else assert.ok(info.isFile() && info.nlink === 1 && info.size <= (json ? 16 : 512) * 1024 ** 2, "Invalid or oversized report");
-  }
-  const hash = createHash("sha256");
-  for await (const bytes of createReadStream(path)) hash.update(bytes);
-  return { sha256: hash.digest("hex"), ...(json ? { data: JSON.parse(await readFile(path, "utf8")) } : {}) };
+  const report = await readEvidenceSnapshot(directory, name, rawFiles);
+  return { sha256: report.sha256, ...(json ? { data: JSON.parse(report.bytes.toString("utf8")) } : {}) };
 }
 function inside(root, path) {
   const rel = relative(root, path);
