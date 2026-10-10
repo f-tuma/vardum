@@ -145,6 +145,7 @@ export type AssetPageRow = AssetPagePosition & {
   latestVersionId: string | null;
   status: "pending" | "processing" | "ready" | "failed" | null;
   error: string | null;
+  hasUnfinishedUploads: boolean | null;
   slug: string | null;
   customDomain: string | null;
 };
@@ -249,7 +250,13 @@ export function assetPageSql(
         ON current.id = a.current_version_id AND current.workspace_id = ${workspaceId}
     ),
     page_assets AS MATERIALIZED (
-      SELECT p.*, latest.id AS latest_version_id, latest.status, latest.error
+      SELECT p.*, latest.id AS latest_version_id, latest.status, latest.error,
+        EXISTS (
+          SELECT 1 FROM ${assetVersion} unfinished
+          WHERE unfinished.asset_id = p.id AND unfinished.workspace_id = ${workspaceId}
+            AND (unfinished.status IN ('pending', 'processing') OR
+              (unfinished.status = 'failed' AND unfinished.retryable))
+        ) AS has_unfinished_uploads
       FROM page_asset_inputs p
       LEFT JOIN LATERAL (
         SELECT v.id, v.status, v.error FROM ${assetVersion} v
@@ -268,6 +275,7 @@ export function assetPageSql(
       a.current_version_id AS "currentVersionId", a.mime_type AS "mimeType", a.size,
       a.width, a.height, a.updated_at AS "updatedAt",
       a.latest_version_id AS "latestVersionId", a.status, a.error,
+      a.has_unfinished_uploads AS "hasUnfinishedUploads",
       w.slug, w.custom_domain AS "customDomain"
     FROM candidate_page p
     LEFT JOIN page_assets a ON a.id = p.asset_id

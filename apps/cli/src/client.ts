@@ -11,6 +11,15 @@ export type Manifest = VardManifest;
 export type ManifestItem = VardItem;
 export type { SyncAsset };
 
+export type AssetIdentity = {
+  id: string;
+  key: string;
+  displayName: string;
+  latestVersionId?: string | null;
+  status?: "pending" | "processing" | "ready" | "failed" | null;
+  hasUnfinishedUploads?: boolean;
+};
+
 export type VardConfig = {
   schema: 1;
   server: string;
@@ -22,6 +31,36 @@ type Upload = {
   id: string;
   upload: { method: "POST"; url: string; fields: Record<string, string> };
 };
+
+export type FolderVersion = {
+  id: string;
+  number: number;
+  status: "pending" | "processing" | "ready" | "failed";
+  checksum: string | null;
+  expectedChecksum: string | null;
+  filename: string;
+  mimeType: string;
+  size: number;
+  retryable: boolean;
+  error: string | null;
+  expiresAt: string | null;
+  upload?: Upload["upload"];
+};
+
+export type FolderVersionIntent = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  expectedChecksum: string;
+  expectedCurrentVersionId: string | null;
+};
+
+export class VardumHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(`${message} (${status})`);
+  }
+}
 
 export class VardumClient {
   readonly server: string;
@@ -44,6 +83,13 @@ export class VardumClient {
       validateUploadLimits,
     );
     return this.limits;
+  }
+
+  async requireFolderUploadResume() {
+    const capabilities = await this.request<unknown>("/api/capabilities");
+    if (!capabilities || typeof capabilities !== "object" ||
+        (capabilities as Record<string, unknown>).folderUploadResume !== 1)
+      throw new Error("This server does not support resumable folder uploads (folderUploadResume: 1); upgrade the server before pushing this folder");
   }
 
   /** Revokes the key this client is holding. */
@@ -85,14 +131,14 @@ export class VardumClient {
 
   /** Identity lookup includes empty/pending assets, unlike the ready-only sync feed. */
   async assetIdentities(workspaceId: string, prefixes: string[]) {
-    const assets: Array<{ id: string; key: string; displayName: string }> = [];
+    const assets: AssetIdentity[] = [];
     for (const prefix of new Set(prefixes)) {
       let cursor: string | null = null;
       do {
         const query = new URLSearchParams({ prefix, pagination: "cursor", limit: "100" });
         if (cursor) query.set("cursor", cursor);
         const page = await this.request<{
-          assets: Array<{ id: string; key: string; displayName: string }>;
+          assets: AssetIdentity[];
           nextCursor: string | null;
         }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/assets?${query}`);
         assets.push(...page.assets);
@@ -102,13 +148,13 @@ export class VardumClient {
     return assets;
   }
 
-  createAsset(workspaceId: string, key: string, displayName: string) {
+  createAsset(workspaceId: string, key: string, displayName: string, id?: string) {
     return this.request<{ id: string; key: string; displayName: string }>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/assets`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key, displayName }),
+        body: JSON.stringify({ key, displayName, ...(id ? { id } : {}) }),
       },
     );
   }
@@ -118,6 +164,46 @@ export class VardumClient {
       `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(assetId)}`,
       { method: "DELETE" },
     );
+  }
+
+  async createFolderVersion(workspaceId: string, assetId: string, intent: FolderVersionIntent) {
+    checkUploadSize(intent.filename, intent.size, uploadLimitFor(await this.uploadLimits(), intent.mimeType));
+    return validateFolderVersion(await this.request<unknown>(this.versionPath(workspaceId, assetId), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(intent),
+    }));
+  }
+
+  async folderVersion(workspaceId: string, assetId: string, versionId: string) {
+    return validateFolderVersion(await this.request<unknown>(this.versionPath(workspaceId, assetId, versionId)));
+  }
+
+  finalizeVersion(workspaceId: string, assetId: string, versionId: string) {
+    return this.request(this.versionPath(workspaceId, assetId, versionId) + "/finalize", { method: "POST" });
+  }
+
+  retryVersion(workspaceId: string, assetId: string, versionId: string) {
+    return this.request(this.versionPath(workspaceId, assetId, versionId) + "/retry", { method: "POST" });
+  }
+
+  private versionPath(workspaceId: string, assetId: string, versionId?: string) {
+    return `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(assetId)}/versions${versionId ? `/${encodeURIComponent(versionId)}` : ""}`;
+  }
+
+  async storeVersion(upload: Upload["upload"], filename: string, mimeType: string, bytes: Uint8Array) {
+    checkUploadSize(filename, bytes.byteLength, uploadLimitFor(await this.uploadLimits(), mimeType));
+    const form = new FormData();
+    for (const [key, value] of Object.entries(upload.fields)) form.append(key, value);
+    const body = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(body).set(bytes);
+    form.append("file", new Blob([body], { type: mimeType }), filename);
+    const stored = await fetch(safeHttpUrl(upload.url), {
+      method: upload.method,
+      redirect: "error",
+      body: form,
+    });
+    if (!stored.ok) throw new Error(`Storage upload failed (${stored.status})`);
   }
 
   async uploadVersion(
@@ -190,7 +276,7 @@ export class VardumClient {
       } catch {
         // Keep the response body.
       }
-      throw new Error(`${message} (${response.status})`);
+      throw new VardumHttpError(message, response.status);
     }
     try {
       return JSON.parse(text) as T;
@@ -218,6 +304,33 @@ function safeHttpUrl(value: string) {
   )
     throw new Error("Upload URL must be HTTP(S) without embedded credentials");
   return url;
+}
+
+function validateFolderVersion(value: unknown): FolderVersion {
+  const invalid = () => new Error("Vardum returned an invalid resumable upload version response");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const version = value as Record<string, unknown>;
+  const hash = (input: unknown) => input === null || typeof input === "string" && /^[a-f0-9]{64}$/.test(input);
+  if (typeof version.id !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(version.id) ||
+      !Number.isSafeInteger(version.number) || (version.number as number) < 1 ||
+      !["pending", "processing", "ready", "failed"].includes(version.status as string) ||
+      !hash(version.checksum) || !hash(version.expectedChecksum) ||
+      typeof version.filename !== "string" || !version.filename ||
+      typeof version.mimeType !== "string" || !version.mimeType ||
+      !Number.isSafeInteger(version.size) || (version.size as number) <= 0 ||
+      typeof version.retryable !== "boolean" ||
+      !(version.error === null || typeof version.error === "string") ||
+      !(version.expiresAt === null || typeof version.expiresAt === "string" && Number.isFinite(Date.parse(version.expiresAt))))
+    throw invalid();
+  if (version.upload !== undefined) {
+    const upload = version.upload as Record<string, unknown> | null;
+    if (version.status !== "pending" || !upload || upload.method !== "POST" ||
+        typeof upload.url !== "string" || !upload.fields || typeof upload.fields !== "object" ||
+        Array.isArray(upload.fields) || Object.values(upload.fields).some((field) => typeof field !== "string"))
+      throw invalid();
+    safeHttpUrl(upload.url);
+  }
+  return value as FolderVersion;
 }
 
 /** Delivery is same-origin only; never send workspace keys to supplied hosts. */

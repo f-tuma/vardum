@@ -15,6 +15,7 @@ export function registerCapabilityRoutes(app: FastifyInstance) {
             passwordRecovery: z.boolean(),
             emailChange: z.boolean(),
             invitations: z.boolean(),
+            folderUploadResume: z.literal(1),
           }),
         },
       },
@@ -25,6 +26,7 @@ export function registerCapabilityRoutes(app: FastifyInstance) {
         passwordRecovery: smtpEnabled,
         emailChange: smtpEnabled,
         invitations: smtpEnabled,
+        folderUploadResume: 1 as const,
       };
     },
   );

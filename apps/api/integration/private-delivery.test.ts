@@ -1775,6 +1775,10 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       );
     },
   );
+  await t.test("upload resume and planned checksum under the production database role", async (resumeTest) => {
+    const { checkUploadResume } = await import("./upload-resume.fixture.js");
+    await checkUploadResume(resumeTest, { admin: admin!, app, objects, keyHeaders, cookies });
+  });
   await t.test("ingest recovery and retry under the production database role", async (recoveryTest) => {
     const { checkIngestRecovery } = await import("./ingest-recovery.fixture.js");
     await checkIngestRecovery(recoveryTest, {
