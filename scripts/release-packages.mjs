@@ -3,6 +3,8 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import {
+  access,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -10,10 +12,13 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+import { boundedBytes } from "./github-release-api.mjs";
 
 export const run = promisify(execFile);
 const repo = fileURLToPath(new URL("../", import.meta.url));
@@ -28,13 +33,28 @@ const json = async (path) => JSON.parse(await readFile(path, "utf8"));
 const integrity = (bytes) =>
   `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
-export async function validateRelease(directory) {
-  const release = await json(join(directory, "release.json"));
+export async function validateRelease(directory, {
+  expectedPackages, expectedManifestSha256, expectedManifestBytes,
+} = {}) {
+  const manifestBytes = await readFile(join(directory, "release.json"));
+  if (expectedManifestSha256) {
+    assert.equal(createHash("sha256").update(manifestBytes).digest("hex"), expectedManifestSha256,
+      "Release manifest differs from the reviewed origin");
+    assert.equal(manifestBytes.length, expectedManifestBytes);
+    const files = ["release.json", ...expectedPackages.map(pkg => pkg.file)];
+    assert.deepEqual((await readdir(directory)).sort(), files.sort(), "Unexpected retained release files");
+    for (const file of files) assert.ok((await lstat(join(directory, file))).isFile(), "Retained files must be regular files");
+  }
+  const release = JSON.parse(manifestBytes);
   assert.equal(release.schema, 1);
   assert.equal(release.packages.length, directories.length);
   for (const [index, path] of directories.entries()) {
-    const source = await json(join(repo, path, "package.json"));
+    const source = expectedPackages?.[index] ?? await json(join(repo, path, "package.json"));
     const entry = release.packages[index];
+    if (expectedPackages) {
+      assert.equal(entry.integrity, source.integrity, "Untrusted manifest integrity");
+      assert.equal((await lstat(join(directory, source.file))).size, source.bytes);
+    }
     assert.equal(entry.name, source.name);
     assert.equal(entry.version, source.version);
     assert.equal(
@@ -42,8 +62,10 @@ export async function validateRelease(directory) {
       `${source.name.replace("@", "").replace("/", "-")}-${source.version}.tgz`,
     );
     const archive = join(directory, entry.file);
+    const archiveBytes = await readFile(archive);
+    entry.bytes = archiveBytes.length;
     assert.equal(
-      integrity(await readFile(archive)),
+      integrity(archiveBytes),
       entry.integrity,
       "Release archive changed after packing",
     );
@@ -142,13 +164,13 @@ async function packRelease(directory) {
 export async function withInstalledRelease(
   directory,
   action,
-  { publicRegistry = false } = {},
+  { publicRegistry = false, expectedContract } = {},
 ) {
   // Server candidates reuse already-published client versions. They do not
   // repack npm artifacts (README-only changes can change archive integrity).
   const release = publicRegistry && !directory
     ? publicCompatibilityRelease()
-    : await validateRelease(directory);
+    : await validateRelease(directory, expectedContract);
   const root = await mkdtemp(join(tmpdir(), "vardum-consumer-"));
   const archives = new Map(
     await Promise.all(
@@ -232,6 +254,7 @@ export async function withInstalledRelease(
         "node_modules/.bin",
         kind === "cli" ? "vardum" : "vardum-mcp",
       );
+      await access(binary, constants.X_OK);
       const result = await run(
         process.execPath,
         [binary, kind === "cli" ? "version" : "--version"],
@@ -289,10 +312,10 @@ export const smokeClientOptions = () => ({
   publicRegistry: process.env.SMOKE_PUBLIC_CLIENTS === "1",
 });
 
-async function registryState(release) {
+export async function registryState(release, { fetchImpl = fetch } = {}) {
   const states = [];
   for (const pkg of release.packages) {
-    const response = await fetch(
+    const response = await fetchImpl(
       `https://registry.npmjs.org/${encodeURIComponent(pkg.name)}/${pkg.version}`,
       { signal: AbortSignal.timeout(15_000) },
     );
@@ -304,12 +327,21 @@ async function registryState(release) {
       throw new Error(
         `Registry check failed: ${pkg.name} (${response.status})`,
       );
-    const published = await response.json();
+    const published = JSON.parse((await boundedBytes(response, 2_000_000)).toString("utf8"));
     assert.equal(
       published.dist?.integrity,
       pkg.integrity,
       `${pkg.name}@${pkg.version} already exists with different bytes; use a new version`,
     );
+    assert.ok(Number.isSafeInteger(pkg.bytes) && pkg.bytes > 0, "Expected archive byte size is required");
+    const tarballUrl = new URL(published.dist?.tarball);
+    assert.ok(tarballUrl.protocol === "https:" && tarballUrl.hostname === "registry.npmjs.org" &&
+      !tarballUrl.username && !tarballUrl.password && !tarballUrl.port && !tarballUrl.hash, "Unexpected npm tarball URL");
+    const tarball = await fetchImpl(tarballUrl.href, { redirect: "error", signal: AbortSignal.timeout(60_000) });
+    assert.ok(tarball.ok, `Registry archive download failed: ${pkg.name} (${tarball.status})`);
+    const bytes = await boundedBytes(tarball, pkg.bytes);
+    assert.equal(bytes.length, pkg.bytes, "Registry archive size differs");
+    assert.equal(integrity(bytes), pkg.integrity, "Registry tarball bytes differ from the tested archive");
     states.push({ ...pkg, published: true });
   }
   return states;
@@ -336,6 +368,28 @@ export async function waitForPublishedRelease(
   throw new Error("Not all release archives are available on npm yet");
 }
 
+// Preflight every package before the first write, including interrupted retries.
+export async function publishRelease(directory, release, {
+  validationOnly = false, readState = registryState,
+  publish = async pkg => {
+    const result = await run("npm", ["publish", join(directory, pkg.file), "--access", "public",
+      "--registry", "https://registry.npmjs.org/"], { cwd: repo, timeout: 120_000 });
+    process.stdout.write(result.stdout);
+  },
+} = {}) {
+  const states = await readState(release);
+  assert.equal(states.length, release.packages.length);
+  for (const [index, pkg] of states.entries()) {
+    assert.equal(pkg.name, release.packages[index].name);
+    assert.equal(pkg.integrity, release.packages[index].integrity);
+    assert.equal(typeof pkg.published, "boolean");
+  }
+  for (const pkg of states) {
+    console.log(`${pkg.name}@${pkg.version}: ${pkg.published ? "identical archive already published" : "version available"}`);
+    if (!validationOnly && !pkg.published) await publish(pkg);
+  }
+}
+
 async function main() {
   const [command, argument] = process.argv.slice(2);
   if (!argument)
@@ -359,27 +413,7 @@ async function main() {
       publicRegistry: true,
     });
   }
-  const states = await registryState(release);
-  for (const pkg of states) {
-    console.log(
-      `${pkg.name}@${pkg.version}: ${pkg.published ? "identical archive already published" : "version available"}`,
-    );
-    if (command === "publish" && !pkg.published) {
-      const result = await run(
-        "npm",
-        [
-          "publish",
-          join(directory, pkg.file),
-          "--access",
-          "public",
-          "--registry",
-          "https://registry.npmjs.org/",
-        ],
-        { cwd: repo, timeout: 120_000 },
-      );
-      process.stdout.write(result.stdout);
-    }
-  }
+  return publishRelease(directory, release, { validationOnly: command === "preflight" });
 }
 
 if (
