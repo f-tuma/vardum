@@ -475,8 +475,12 @@ test(
         assert.equal(listed.customDomain, "assets.pagination.test");
         assert.match(
           listed.thumbnailUrl!,
-          /^https:\/\/assets\.pagination\.test\/w\/bulk\/asset-000\.png\?/,
+          /^https:\/\/assets\.pagination\.test\/w\/__v\/[^/]+\/bulk\/asset-000\.png\?/,
         );
+        const thumbnailQuery = new URL(listed.thumbnailUrl!).searchParams;
+        assert.equal(thumbnailQuery.get("w"), "16");
+        assert.equal(thumbnailQuery.get("h"), "10");
+        assert.equal(thumbnailQuery.get("fit"), "inside");
         const legacy = await app.inject({
           method: "GET",
           url: "/api/workspaces/paging-ws/assets?prefix=bulk/&search=Asset%20000",
@@ -490,7 +494,7 @@ test(
         assert.equal(privateImage.isPublic, false);
         assert.match(
           privateImage.thumbnailUrl!,
-          /^\/w\/paging\/bulk\/asset-001\.png\?/,
+          /^\/w\/paging\/__v\/[^/]+\/bulk\/asset-001\.png\?/,
         );
         const video = (await getPage({ prefix: "hydration/" })).assets[0]!;
         assert.equal(
@@ -616,6 +620,58 @@ test(
         );
       },
     );
+
+    await t.test("asset rename preserves identity, versions, mappings and URL keys with auth and concurrency guards", async () => {
+      const id = await insertAsset("rename/favicon.png", "favicon.png");
+      const versionId = randomUUID();
+      const vardId = randomUUID();
+      await sql("INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,created_by,updated_by) VALUES ($1,'paging-ws',$2,1,'ready',$3,'favicon.png','image/png',4,'fixture','fixture','fixture')", [versionId, id, `rename/${versionId}`]);
+      await sql("UPDATE asset SET current_version_id=$1 WHERE id=$2", [versionId, id]);
+      await sql("INSERT INTO vard(id,workspace_id,name,created_by,updated_by) VALUES ($1,'paging-ws','Rename fixture','fixture','fixture')", [vardId]);
+      await sql("INSERT INTO vard_item(workspace_id,vard_id,asset_id,output_path,created_by,updated_by) VALUES ('paging-ws',$1,$2,'images/favicon.png','fixture','fixture')", [vardId, id]);
+      const url = `/api/workspaces/paging-ws/assets/${id}`;
+      const snapshot = async () => ({
+        asset: (await sql("SELECT * FROM asset WHERE id=$1", [id])).rows,
+        versions: (await sql("SELECT * FROM asset_version WHERE asset_id=$1", [id])).rows,
+        mappings: (await sql("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows,
+        audit: (await sql("SELECT * FROM audit_event WHERE target_id=$1", [id])).rows,
+      });
+      const before = await snapshot();
+      const readonlyKey = await app.inject({ method: "POST", url: "/api/workspaces/paging-ws/api-keys", headers: { cookie: cookies.owner! }, payload: { name: "rename read only", access: "read" } });
+      assert.equal(readonlyKey.statusCode, 200, readonlyKey.body);
+      for (const [headers, status] of [[{}, 401], [{ cookie: cookies.viewer! }, 403], [{ "x-api-key": readonlyKey.json().key as string }, 401], [{ cookie: cookies.outsider! }, 403]] as const) {
+        const response = await app.inject({ method: "PATCH", url, headers, payload: { displayName: "favicon" } });
+        assert.equal(response.statusCode, status, response.body);
+      }
+      for (const payload of [{}, { displayName: " " }, { displayName: "x".repeat(256) }, { displayName: "favicon", key: "other" }, { displayName: "favicon", currentVersionId: randomUUID() }, { displayName: "favicon", isPublic: true }]) {
+        assert.equal((await app.inject({ method: "PATCH", url, headers: { cookie: cookies.owner! }, payload })).statusCode, 400);
+      }
+      assert.deepEqual(await snapshot(), before);
+      const result = await app.inject({ method: "PATCH", url, headers: { cookie: cookies.owner! }, payload: { displayName: " favicon ", expectedDisplayName: "favicon.png" } });
+      assert.equal(result.statusCode, 200, result.body);
+      assert.deepEqual(result.json(), { id, displayName: "favicon" });
+      const after = await snapshot();
+      assert.deepEqual(after.versions, before.versions);
+      assert.deepEqual(after.mappings, before.mappings);
+      assert.deepEqual({ ...after.asset[0], display_name: before.asset[0].display_name, updated_at: before.asset[0].updated_at, updated_by: before.asset[0].updated_by }, before.asset[0]);
+      assert.equal(after.audit.length, 1);
+      assert.equal(after.audit[0].action, "asset.renamed");
+      assert.deepEqual(after.audit[0].metadata, { previousDisplayName: "favicon.png", displayName: "favicon" });
+      // Repeating after a lost response is idempotent, even with the old expected name.
+      const repeat = await app.inject({ method: "PATCH", url, headers: { cookie: cookies.owner! }, payload: { displayName: "favicon", expectedDisplayName: "favicon.png" } });
+      assert.equal(repeat.statusCode, 200, repeat.body);
+      assert.deepEqual(await snapshot(), after);
+      const stale = await app.inject({ method: "PATCH", url, headers: { cookie: cookies.owner! }, payload: { displayName: "different", expectedDisplayName: "favicon.png" } });
+      assert.equal(stale.statusCode, 409, stale.body);
+      assert.deepEqual(await snapshot(), after);
+      const competing = await Promise.all(["first", "second"].map((displayName) => app.inject({ method: "PATCH", url, headers: { cookie: cookies.owner! }, payload: { displayName, expectedDisplayName: "favicon" } })));
+      assert.deepEqual(competing.map((response) => response.statusCode).sort(), [200, 409]);
+      const missing = await app.inject({ method: "PATCH", url: `/api/workspaces/paging-ws/assets/${randomUUID()}`, headers: { cookie: cookies.owner! }, payload: { displayName: "missing" } });
+      assert.equal(missing.statusCode, 404);
+      const foreign = await insertAsset("rename/foreign", "Foreign", "other-ws");
+      assert.equal((await app.inject({ method: "PATCH", url: `/api/workspaces/paging-ws/assets/${foreign}`, headers: { cookie: cookies.owner! }, payload: { displayName: "hijacked" } })).statusCode, 404);
+      assert.equal((await sql("SELECT display_name FROM asset WHERE id=$1", [foreign])).rows[0].display_name, "Foreign");
+    });
 
     await t.test(
       "live traversal supports inserts, deleting a cursor row and renames in both directions",

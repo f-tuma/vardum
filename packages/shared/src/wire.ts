@@ -21,6 +21,8 @@ export type VardItem = {
  transformation: Transformation | null;
  versionId: string | null;
  sourceChecksum: string | null;
+ /** Original selected version's type, before any output transformation. */
+ sourceMimeType?: string | null;
  mimeType: string | null;
  size: number | null;
  fingerprint: string | null;

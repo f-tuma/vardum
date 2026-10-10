@@ -597,6 +597,17 @@ export function setAssetVisibility(
   );
 }
 
+export function renameAsset(workspaceId: string, assetId: string, displayName: string, expectedDisplayName: string) {
+  return request<{ id: string; displayName: string }>(
+    `/api/workspaces/${workspaceId}/assets/${assetId}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ displayName, expectedDisplayName }),
+    },
+  );
+}
+
 export function deleteAsset(workspaceId: string, assetId: string) {
   return request<void>(`/api/workspaces/${workspaceId}/assets/${assetId}`, {
     method: "DELETE",

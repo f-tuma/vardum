@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
-import { mimeForFilename } from "@vardum/shared";
+import { mediaStem, mimeForFilename } from "@vardum/shared";
 import { stdin, stdout } from "node:process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
@@ -18,6 +18,9 @@ import { maybeWarnOutdated, updateVardum, VERSION } from "./update.js";
 import { readUploadFile } from "./upload-file.js";
 import {
   assetKey,
+  assetPrefix,
+  folderAssetKey,
+  folderAssetDirectories,
   atomicWrite,
   checksum,
   checksumFile,
@@ -599,20 +602,24 @@ async function pushFolder(options: Options) {
       `No images found in ${relative(process.cwd(), directory) || "."}`,
     );
 
-  const prefix = await resolveFolderPrefix(
+  const selectedPrefix = await resolveFolderPrefix(
     options,
     positionalPrefix,
     context,
     directory,
     files,
   );
-  if (prefix === null) return summary(options, 0);
+  if (selectedPrefix === null) return summary(options, 0);
+  const prefix = assetPrefix(selectedPrefix);
 
   const remote = await context.client.syncAssets(
     context.config.workspace,
     prefix,
   );
   const byKey = new Map(remote.assets.map((asset) => [asset.key, asset]));
+  const identities = await context.client.assetIdentities(context.config.workspace,
+    folderAssetDirectories(prefix, files.map((file) => file.relative)));
+  const existingKeys = new Set(identities.map((asset) => asset.key));
   const limits = await context.client.uploadLimits();
   const local = [] as Array<{
     key: string;
@@ -621,8 +628,21 @@ async function pushFolder(options: Options) {
     mimeType: string;
     checksum: string;
   }>;
+  const plannedKeys = new Set<string>();
+  const resolvedKeys = new Set<string>();
   for (const file of files) {
-    const key = assetKey(prefix, file.relative);
+    const stemKey = assetKey(prefix, file.relative);
+    if (plannedKeys.has(stemKey))
+      throw new Error(`Files normalize to the same asset key: ${stemKey}`);
+    plannedKeys.add(stemKey);
+    // Published CLI versions kept the suffix. Reuse that exact key rather than
+    // creating a second asset or changing historical snapshot URLs.
+    const key = folderAssetKey(prefix, file.relative, existingKeys);
+    if (resolvedKeys.has(key))
+      throw new Error(`Files resolve to the same asset key: ${key}`);
+    resolvedKeys.add(key);
+    if (existingKeys.has(key) && !byKey.has(key))
+      throw new Error(`${key} exists without a ready current version; finish or retry its upload before pushing this folder`);
     const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
     local.push({
       ...file,
@@ -634,8 +654,17 @@ async function pushFolder(options: Options) {
   const pushLockPath = join(context.directory, ".vardum.push.lock");
   const pushLock = await readPushLock(pushLockPath, context.config.workspace);
   const lockKey = `${relative(context.directory, directory) || "."}:${prefix}`;
-  const previous = pushLock.entries[lockKey]?.assets ?? {};
-  const currentAssets: Record<string, string> = {};
+  const trackedDirectory = relative(context.directory, directory) || ".";
+  const aliases = Object.entries(pushLock.entries).filter(([, entry]) =>
+    entry.directory === trackedDirectory && assetPrefix(entry.prefix) === prefix);
+  const previous: Record<string, string> = Object.create(null);
+  for (const [, entry] of aliases)
+    for (const [key, id] of Object.entries(entry.assets)) {
+      if (previous[key] && previous[key] !== id)
+        throw new Error(`Conflicting folder tracking for ${key}; resolve the push lock before continuing`);
+      previous[key] = id;
+    }
+  const currentAssets: Record<string, string> = Object.create(null);
   const outdated = local.filter((file) => {
     const existing = byKey.get(file.key);
     if (existing?.checksum !== file.checksum) return true;
@@ -666,7 +695,7 @@ async function pushFolder(options: Options) {
       (await context.client.createAsset(
         context.config.workspace,
         file.key,
-        basename(file.relative),
+        mediaStem(basename(file.relative)),
       ));
     processing.set(
       file.key,
@@ -723,6 +752,8 @@ async function pushFolder(options: Options) {
       prefix,
       assets: currentAssets,
     };
+    for (const [alias] of aliases)
+      if (alias !== lockKey) delete pushLock.entries[alias];
     await atomicWrite(
       pushLockPath,
       Buffer.from(`${JSON.stringify(pushLock, null, 2)}\n`),

@@ -608,12 +608,12 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
           url: detail.json().thumbnailUrl,
           headers: { cookie: cookies.viewer! },
         });
-        assert.equal(preview.statusCode, 302);
-        const content = await app.inject({
+        assert.equal(preview.statusCode, mime.startsWith("video") ? 302 : 200);
+        const content = mime.startsWith("video") ? await app.inject({
           url: preview.headers.location!,
           headers: { cookie: cookies.viewer! },
           ...(mime.startsWith("video") ? { method: "GET" as const } : {}),
-        });
+        }) : preview;
         assert.equal(content.statusCode, 200);
         privateHeaders(content);
         if (mime.startsWith("video")) {
@@ -1037,6 +1037,25 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       url: `${folderBase}/${id}${manifest ? "/manifest" : ""}`,
       headers: keyHeaders.read,
     });
+  await t.test("folder originals infer suffixes for extensionless keys and retain legacy suffixes", async (subtest) => {
+    const assets: string[] = [];
+    subtest.after(async () => {
+      await sql("DELETE FROM asset WHERE workspace_id='ws' AND id=ANY($1::uuid[])", [assets]);
+    });
+    assets.push((await folderAsset("stem-outputs/logo.v2")).id);
+    assets.push((await folderAsset("stem-outputs/nested/icon")).id);
+    assets.push((await folderAsset("stem-outputs/legacy.svg")).id);
+    const id = await createFolderVard("Stem outputs", [{ sourcePrefix: "stem-outputs/", outputPrefix: "images/" }]);
+    const manifest = await folderGet(id, true);
+    assert.equal(manifest.statusCode, 200, manifest.body);
+    assert.deepEqual(manifest.json().items.map((item: { outputPath: string }) => item.outputPath).sort(),
+      ["images/legacy.svg", "images/logo.v2.svg", "images/nested/icon.svg"]);
+    assert.ok(manifest.json().items.every((item: { sourceMimeType: string }) => item.sourceMimeType === "image/svg+xml"));
+    assets.push((await folderAsset("stem-outputs/logo.v2.svg")).id);
+    const collision = await folderGet(id, true);
+    assert.equal(collision.statusCode, 409, collision.body);
+  });
+
   async function setRules(
     id: string,
     folderRules: Array<{ sourcePrefix: string; outputPrefix: string }>,

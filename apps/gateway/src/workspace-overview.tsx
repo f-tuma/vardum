@@ -36,6 +36,7 @@ import type { WorkspaceRef } from "./workspace";
 export const activityLabels: Record<string, string> = {
   "asset.created": "Asset created",
   "asset.visibility_updated": "Visibility changed",
+  "asset.renamed": "Asset renamed",
   "asset.upload_expired": "Upload expired",
   "asset.deleted": "Asset deleted",
   "asset.version_created": "Version created",

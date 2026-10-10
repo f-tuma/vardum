@@ -1,14 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { mediaStem } from "@vardum/shared";
 import { toast } from "sonner";
 import { errorMessage, toKey } from "@/lib/format";
 import { createAsset, uploadVersion, validateUploadFile } from "./asset-api";
 
 function percent(fraction: number) {
   return `${Math.round(Math.min(Math.max(fraction, 0), 1) * 100)}%`;
-}
-
-function basename(filename: string) {
-  return filename.replace(/\.[^.]+$/, "");
 }
 
 /**
@@ -54,8 +51,8 @@ export function useUploader(workspaceId: string) {
   ) {
     await validateUploadFile(file);
     const created = await createAsset(workspaceId, {
-      key: `${prefix}${key || toKey(basename(file.name))}`,
-      displayName: displayName || basename(file.name),
+      key: `${prefix}${key || toKey(mediaStem(file.name))}`,
+      displayName: displayName || mediaStem(file.name),
     });
     await refresh();
     void transfer(created.id, file);
@@ -63,6 +60,10 @@ export function useUploader(workspaceId: string) {
   }
 
   async function uploadMany(files: File[], prefix: string) {
+    const keys = files.map((file) => `${prefix}${toKey(mediaStem(file.name))}`);
+    if (new Set(keys).size !== keys.length)
+      throw new Error("Some files have the same name without their extension. Upload them separately with different names.");
+    await Promise.all(files.map(validateUploadFile));
     await Promise.all(
       files.map(async (file) => {
         try {

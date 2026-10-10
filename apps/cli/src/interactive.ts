@@ -1,7 +1,7 @@
 import type { Interface } from "node:readline/promises";
 import { relative, resolve } from "node:path";
 import type { SyncAsset, VardumClient } from "./client.js";
-import { assetKey, assetPrefix } from "./sync.js";
+import { assetKey, assetPrefix, folderAssetDirectories, folderAssetKey } from "./sync.js";
 
 type ScannedFile = {
   absolute: string;
@@ -114,11 +114,18 @@ async function buildPlan(
   prefix: string,
   files: ScannedFile[],
 ): Promise<Plan> {
-  const under = await client.syncAssets(workspaceId, prefix);
-  const keys = new Set(under.assets.map((asset) => asset.key));
+  const under = await client.assetIdentities(workspaceId, folderAssetDirectories(prefix, files.map((file) => file.relative)));
+  const keys = new Set(under.map((asset) => asset.key));
+  const stems = new Set<string>();
+  const resolved = new Set<string>();
   return {
     rows: files.map((file) => {
-      const key = assetKey(prefix, file.relative);
+      const key = folderAssetKey(prefix, file.relative, keys);
+      const stem = assetKey(prefix, file.relative);
+      if (stems.has(stem) || resolved.has(key))
+        throw new Error(`Files resolve to the same asset key: ${key}`);
+      stems.add(stem);
+      resolved.add(key);
       return { key, replaces: keys.has(key) };
     }),
     bytes: files.reduce((total, file) => total + file.size, 0),

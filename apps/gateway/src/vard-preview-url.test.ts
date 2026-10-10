@@ -30,3 +30,11 @@ test("source previews stay on the app origin and honor pinned versions", () => {
     null,
   );
 });
+
+test("a pinned transformed output previews and restores its actual original source MIME", () => {
+  const item = { key: "logo.png", versionId: "old" } as DraftItem;
+  const source = { versionId: "new", mimeType: "image/jpeg" } as SyncAsset;
+  const saved = { versionId: "old", mimeType: "image/webp", sourceMimeType: "image/png",
+    transformation: { format: "webp" } } as VardItem;
+  assert.equal(sourcePreview(item, "demo", source, saved).mimeType, "image/png");
+});

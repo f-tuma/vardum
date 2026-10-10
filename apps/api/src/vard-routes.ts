@@ -1,4 +1,5 @@
 import { and, asc, count, eq, gt, inArray, or, sql } from "drizzle-orm";
+import { mediaOutputPath, mimeForFilename } from "@vardum/shared";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -576,6 +577,7 @@ async function buildVardPayload(
           key: asset.key,
           isPublic: asset.isPublic,
           currentVersionId: asset.currentVersionId,
+          sourceMimeType: assetVersion.mimeType,
         })
         .from(asset)
         .innerJoin(assetVersion, eq(assetVersion.id, asset.currentVersionId))
@@ -587,8 +589,11 @@ async function buildVardPayload(
       for (const member of members) {
         for (const rule of record.folderRules) {
           if (!member.key.startsWith(rule.sourcePrefix)) continue;
-          const outputPath =
+          const relativePath =
             rule.outputPrefix + member.key.slice(rule.sourcePrefix.length);
+          const outputPath = mimeForFilename(relativePath)
+            ? relativePath
+            : mediaOutputPath(relativePath, member.sourceMimeType);
           items.push({
             ...member,
             id: folderItemId(member.assetId, outputPath),
@@ -661,6 +666,7 @@ async function buildVardPayload(
           transformation,
           versionId: version?.status === "ready" ? version.id : null,
           sourceChecksum: version?.status === "ready" ? version.checksum : null,
+          sourceMimeType: version?.mimeType ?? null,
           mimeType: outputMimeType(version?.mimeType ?? null, transformation),
           size: transformation ? null : (version?.size ?? null),
           fingerprint:

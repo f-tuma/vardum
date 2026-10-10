@@ -8,13 +8,11 @@ export function AssetThumb({
   mimeType,
   label = "",
   controls = false,
-  fit = "cover",
 }: {
   url: string | null | undefined;
   mimeType: string | null | undefined;
   label?: string;
   controls?: boolean;
-  fit?: "cover" | "contain";
 }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const available = url && url !== failedUrl;
@@ -37,8 +35,7 @@ export function AssetThumb({
         aria-label={label || undefined}
         aria-hidden={!controls || undefined}
         tabIndex={controls ? 0 : -1}
-        data-fit={fit}
-        className="size-full data-[fit=contain]:object-contain data-[fit=cover]:object-cover"
+        className="size-full object-scale-down"
         onError={() => setFailedUrl(url)}
       />
     );
@@ -47,8 +44,7 @@ export function AssetThumb({
       src={url}
       alt={label}
       loading="lazy"
-      data-fit={fit}
-      className="size-full data-[fit=contain]:object-contain data-[fit=cover]:object-cover"
+      className="size-full object-scale-down"
       onError={() => setFailedUrl(url)}
     />
   );

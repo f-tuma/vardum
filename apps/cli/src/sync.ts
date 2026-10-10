@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { safeDownloadUrl, type VardConfig } from "./client.js";
-import { mimeForFilename } from "@vardum/shared";
+import { mediaStem, mimeForFilename } from "@vardum/shared";
 import {
   lstat,
   mkdir,
@@ -304,7 +304,25 @@ export function assetPrefix(prefix: string) {
 }
 
 export function assetKey(prefix: string, path: string) {
-  const key = `${assetPrefix(prefix)}${path}`;
+  return validateAssetKey(`${assetPrefix(prefix)}${mediaStem(path)}`);
+}
+
+export function folderAssetKey(prefix: string, path: string, existing: ReadonlySet<string>) {
+  const stemKey = assetKey(prefix, path);
+  const legacyKey = validateAssetKey(`${assetPrefix(prefix)}${path}`);
+  if (legacyKey !== stemKey && existing.has(stemKey) && existing.has(legacyKey))
+    throw new Error(`Both ${stemKey} and ${legacyKey} exist; choose which asset to keep before pushing`);
+  return existing.has(legacyKey) ? legacyKey : stemKey;
+}
+
+export function folderAssetDirectories(prefix: string, paths: string[]) {
+  return [...new Set(paths.map((path) => {
+    const directory = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+    return `${assetPrefix(prefix)}${directory}`;
+  }))];
+}
+
+function validateAssetKey(key: string) {
   if (
     key.length > 255 ||
     !/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/.test(key)

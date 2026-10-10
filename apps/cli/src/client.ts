@@ -83,6 +83,25 @@ export class VardumClient {
     return { workspaceSlug, assets };
   }
 
+  /** Identity lookup includes empty/pending assets, unlike the ready-only sync feed. */
+  async assetIdentities(workspaceId: string, prefixes: string[]) {
+    const assets: Array<{ id: string; key: string; displayName: string }> = [];
+    for (const prefix of new Set(prefixes)) {
+      let cursor: string | null = null;
+      do {
+        const query = new URLSearchParams({ prefix, pagination: "cursor", limit: "100" });
+        if (cursor) query.set("cursor", cursor);
+        const page = await this.request<{
+          assets: Array<{ id: string; key: string; displayName: string }>;
+          nextCursor: string | null;
+        }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/assets?${query}`);
+        assets.push(...page.assets);
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+    return assets;
+  }
+
   createAsset(workspaceId: string, key: string, displayName: string) {
     return this.request<{ id: string; key: string; displayName: string }>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/assets`,

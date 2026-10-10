@@ -37,7 +37,7 @@ import {
 import {
   originalAssetUrl,
   transformedAssetUrl,
-  type Transformation,
+  transformedVersionUrl,
 } from "./transformation.js";
 import {
   reserveUpload,
@@ -48,6 +48,7 @@ import {
 } from "./upload-lifecycle.js";
 import { maximumUploadSize, uploadLimits } from "./upload-limits.js";
 import { config } from "./config.js";
+import { thumbnailTransformation } from "./asset-thumbnail.js";
 import {
   assetPaginationQuery,
   assetPageSql,
@@ -57,13 +58,6 @@ import {
   type AssetPageRow,
 } from "./asset-pagination.js";
 
-const thumbnailTransformation = {
-  w: 640,
-  h: 400,
-  fit: "cover",
-  format: "webp",
-  q: 72,
-} satisfies Transformation;
 const workspaceParams = z.object({ workspaceId: z.string().min(1) });
 const folderName = z
   .string()
@@ -202,6 +196,8 @@ function thumbnailUrl(
     key: string;
     mimeType: string | null;
     currentVersionId: string | null;
+    width: number | null;
+    height: number | null;
   },
 ) {
   if (!workspace || !item.currentVersionId) return null;
@@ -211,10 +207,11 @@ function thumbnailUrl(
         item.key,
         item.isPublic ? workspace.customDomain : null,
       )
-    : transformedAssetUrl(
+    : transformedVersionUrl(
         workspace.slug,
         item.key,
-        thumbnailTransformation,
+        item.currentVersionId,
+        thumbnailTransformation(item),
         item.isPublic ? workspace.customDomain : null,
       );
 }
@@ -991,6 +988,59 @@ export function registerAssetRoutes(app: FastifyInstance) {
         };
       });
 
+      return result ?? reply.code(404).send({ error: "Asset not found" });
+    },
+  );
+
+  api.patch(
+    "/api/workspaces/:workspaceId/assets/:assetId",
+    {
+      schema: {
+        params: assetParams,
+        body: z.object({
+          displayName: z.string().trim().min(1).max(255),
+          expectedDisplayName: z.string().min(1).max(255).optional(),
+        }).strict(),
+      },
+    },
+    async (request, reply) => {
+      reply.header("cache-control", "private, no-store");
+      const { workspaceId, assetId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, ["update"]);
+      if (!("principal" in authorization))
+        return reply.code(authorization.statusCode).send({ error: authorization.error });
+
+      const result = await inWorkspace(workspaceId, async (transaction) => {
+        const [target] = await transaction
+          .select({ displayName: asset.displayName })
+          .from(asset)
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
+          .for("update");
+        if (!target) return null;
+        if (request.body.expectedDisplayName !== undefined &&
+            target.displayName !== request.body.expectedDisplayName &&
+            target.displayName !== request.body.displayName)
+          return { conflict: true as const };
+        if (target.displayName !== request.body.displayName) {
+          await transaction.update(asset).set({
+            displayName: request.body.displayName,
+            updatedBy: authorization.principal.reference,
+          }).where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)));
+          await transaction.insert(auditEvent).values({
+            workspaceId,
+            actorType: authorization.principal.actorType,
+            actorId: authorization.principal.actorId,
+            action: "asset.renamed",
+            targetType: "asset",
+            targetId: assetId,
+            metadata: { previousDisplayName: target.displayName, displayName: request.body.displayName },
+            requestId: request.id,
+          });
+        }
+        return { id: assetId, displayName: request.body.displayName };
+      });
+      if (result && "conflict" in result)
+        return reply.code(409).send({ error: "Asset name changed; reload and try again" });
       return result ?? reply.code(404).send({ error: "Asset not found" });
     },
   );
