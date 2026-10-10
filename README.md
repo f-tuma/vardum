@@ -105,6 +105,9 @@ Run the disposable fresh-install check with:
 bash scripts/smoke-production.sh
 ```
 
+The [server candidate procedure](docs/server-release.md) prepares and validates
+a portable bundle with the already-published clients, without publishing npm packages.
+
 Backup, restore and upgrade procedures are documented in
 [`docs/operations.md`](docs/operations.md).
 

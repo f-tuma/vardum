@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { run, withInstalledRelease } from "./release-packages.mjs";
+import { assertRunningCandidate, candidateComposeArgs } from "./server-candidate.mjs";
+import { run, smokeClientOptions, withInstalledRelease } from "./release-packages.mjs";
 
 // Never accepts a deployed project. The outer smoke owns both disposable stacks.
 export async function checkBackupRestore({
@@ -27,8 +28,8 @@ export async function checkBackupRestore({
         "-p",
         project,
         "-f",
-        "compose.production.yml",
-        ...args,
+        process.env.SMOKE_COMPOSE_FILE ?? "compose.production.yml",
+        ...candidateComposeArgs(args),
       ],
       { timeout: 180_000, maxBuffer: 4 * 1024 * 1024 },
     );
@@ -208,6 +209,8 @@ export async function checkBackupRestore({
             [
               "scripts/backup.mjs",
               action,
+              "--compose-file",
+              process.env.SMOKE_COMPOSE_FILE ?? "compose.production.yml",
               "--project",
               projectName,
               "--env-file",
@@ -308,6 +311,9 @@ export async function checkBackupRestore({
           "gateway",
         );
 
+        if (process.env.SMOKE_SERVER_CANDIDATE)
+          await assertRunningCandidate(process.env.SMOKE_SERVER_CANDIDATE, target);
+
         const historyAfter = await api(
           `/api/workspaces/${workspaceId}/assets/${assetId}/versions`,
         );
@@ -382,6 +388,7 @@ export async function checkBackupRestore({
           `Backup/restore drill passed: ${manifest.objects.length} objects, ${manifest.objects.reduce((sum, item) => sum + item.size, 0)} object bytes; backup ${backupMs}ms, clean-stack restore and acceptance ${Date.now() - restoreStarted}ms. Auth, private delivery, signed transforms, version history, Vard, API key, installed frozen CLI and queued ingest survived.`,
         );
       },
+      smokeClientOptions(),
     );
   } catch (error) {
     if (targetCreated)

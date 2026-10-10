@@ -23,13 +23,27 @@ export S3_ENDPOINT="http://rustfs:9000"
 export S3_FORCE_PATH_STYLE="true"
 export SMTP_HOST=""
 export SMTP_FROM=""
-# Keep concurrent disposable smoke builds from replacing each other's images.
-export VARDUM_VERSION="$project"
-compose=(docker compose -p "$project" -f compose.production.yml)
+export SMOKE_COMPOSE_FILE="${SMOKE_COMPOSE_FILE:-$PWD/compose.production.yml}"
+startup=(--build)
+if [[ -n "${SMOKE_SERVER_CANDIDATE:-}" ]]; then
+  export SMOKE_SERVER_CANDIDATE="$(realpath -s "$SMOKE_SERVER_CANDIDATE")"
+  export SMOKE_COMPOSE_FILE="$SMOKE_SERVER_CANDIDATE/compose.production.yml"
+  export SMOKE_PUBLIC_CLIENTS=1
+  candidate_options=(--expected-commit "$(git rev-parse HEAD)")
+  if [[ "${SMOKE_ALLOW_DIRTY_CANDIDATE:-}" == 1 ]]; then candidate_options+=(--allow-dirty); fi
+  # Validation and collision checks finish before load or any Compose mutation.
+  # Unique saved tags are used verbatim; never rebuild vardum-api:smoke.
+  node scripts/server-candidate.mjs load "$SMOKE_SERVER_CANDIDATE" "${candidate_options[@]}"
+  startup=(--no-build --pull never)
+else
+  # Isolate normal smoke tags across concurrent disposable builds.
+  export VARDUM_VERSION="$project"
+fi
+compose=(docker compose --env-file /dev/null -p "$project" -f "$SMOKE_COMPOSE_FILE")
 # The bundled object store is a profile, so it gets its own command line. The
 # app services must be waited on without it: `up --wait` aborts when any
 # container in the wait set has exited, and rustfs-init always has.
-storage=(docker compose -p "$project" --profile rustfs -f compose.production.yml)
+storage=(docker compose --env-file /dev/null -p "$project" --profile rustfs -f "$SMOKE_COMPOSE_FILE")
 temporary_release=""
 
 cleanup() {
@@ -39,7 +53,7 @@ cleanup() {
     "${compose[@]}" logs --no-color
   fi
   # Also own the recovery drill's independent target if its Node process exits early.
-  docker compose -p "${project}-restore" --profile rustfs -f compose.production.yml \
+  docker compose --env-file /dev/null -p "${project}-restore" --profile rustfs -f "$SMOKE_COMPOSE_FILE" \
     down -v --remove-orphans >/dev/null 2>&1 || true
   "${storage[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ -n "$temporary_release" ]]; then rm -rf "$temporary_release"; fi
@@ -49,7 +63,9 @@ trap cleanup EXIT
 
 # Test the same archives that the release workflow will publish. Standalone
 # smoke runs prepare their own disposable candidate archives.
-if [[ -z "${SMOKE_RELEASE_DIR:-}" ]]; then
+if [[ "${SMOKE_PUBLIC_CLIENTS:-}" == 1 ]]; then
+  unset SMOKE_RELEASE_DIR
+elif [[ -z "${SMOKE_RELEASE_DIR:-}" ]]; then
   temporary_release="$(mktemp -d)"
   export SMOKE_RELEASE_DIR="$temporary_release"
   node scripts/release-packages.mjs pack "$SMOKE_RELEASE_DIR"
@@ -60,11 +76,18 @@ fi
 # The bundled object store comes up first: `up --wait` treats a one-shot
 # container finishing mid-start as an early exit, so the bucket is created
 # before the app services are waited on.
-"${storage[@]}" up -d --wait --wait-timeout 120 rustfs
-"${storage[@]}" run --rm rustfs-init
+"${storage[@]}" up -d "${startup[@]}" --wait --wait-timeout 120 rustfs
+if [[ -n "${SMOKE_SERVER_CANDIDATE:-}" ]]; then
+  "${storage[@]}" run --pull never --rm rustfs-init
+else
+  "${storage[@]}" run --rm rustfs-init
+fi
 
 # Start Docker compose
-"${compose[@]}" up -d --build --wait --wait-timeout 180
+"${compose[@]}" up -d "${startup[@]}" --wait --wait-timeout 180
+if [[ -n "${SMOKE_SERVER_CANDIDATE:-}" ]]; then
+  node scripts/server-candidate.mjs running "$SMOKE_SERVER_CANDIDATE" --project "$project" --expected-commit "$(git rev-parse HEAD)"
+fi
 
 # Wait for services to be ready
 curl --fail --silent "${APP_URL}/health" >/dev/null
@@ -119,10 +142,14 @@ node scripts/check-runtime-images.mjs "$project" "$runtime_report"
 
 # Exercise Dokploy's baked routing template, independently of a Git checkout
 # mount, against the same API and built web bundle used above.
-docker build --target dokploy -f docker/gateway.Dockerfile \
-  --build-arg "VITE_UPLOAD_ORIGINS=$S3_PUBLIC_ENDPOINT" \
-  --tag "vardum-dokploy-gateway:$project" .
-dokploy_image="$(docker image inspect --format '{{.Id}}' "vardum-dokploy-gateway:$project")"
+if [[ -n "${SMOKE_SERVER_CANDIDATE:-}" ]]; then
+  dokploy_image="$(node scripts/server-candidate.mjs image "$SMOKE_SERVER_CANDIDATE" --role gateway-dokploy "${candidate_options[@]}")"
+else
+  docker build --target dokploy -f docker/gateway.Dockerfile \
+    --build-arg "VITE_UPLOAD_ORIGINS=$S3_PUBLIC_ENDPOINT" \
+    --tag "vardum-dokploy-gateway:$project" .
+  dokploy_image="$(docker image inspect --format '{{.Id}}' "vardum-dokploy-gateway:$project")"
+fi
 gateway_image="$("${compose[@]}" images -q gateway | head -n 1)"
 gateway_image="$(docker image inspect --format '{{.Id}}' "$gateway_image")"
 api_image="$("${compose[@]}" images -q api | head -n 1)"

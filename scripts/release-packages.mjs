@@ -18,6 +18,12 @@ import { promisify } from "node:util";
 export const run = promisify(execFile);
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const directories = ["packages/shared", "apps/cli", "apps/mcp"];
+// Reviewed public baseline. A source version bump never changes this selection.
+export const publicCompatibilityClients = Object.freeze({
+  "@vardum/shared": "0.2.0", "@vardum/cli": "0.6.0", "@vardum/mcp": "0.2.0",
+});
+export const publicCompatibilityRelease = () => ({ packages: Object.entries(publicCompatibilityClients)
+  .map(([name, version]) => ({ name, version, manifest: { name, version } })) });
 const json = async (path) => JSON.parse(await readFile(path, "utf8"));
 const integrity = (bytes) =>
   `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
@@ -138,11 +144,15 @@ export async function withInstalledRelease(
   action,
   { publicRegistry = false } = {},
 ) {
-  const release = await validateRelease(directory);
+  // Server candidates reuse already-published client versions. They do not
+  // repack npm artifacts (README-only changes can change archive integrity).
+  const release = publicRegistry && !directory
+    ? publicCompatibilityRelease()
+    : await validateRelease(directory);
   const root = await mkdtemp(join(tmpdir(), "vardum-consumer-"));
   const archives = new Map(
     await Promise.all(
-      release.packages.map(async (pkg) => [
+      (publicRegistry ? [] : release.packages).map(async (pkg) => [
         pkg.file,
         await readFile(join(directory, pkg.file)),
       ]),
@@ -175,12 +185,12 @@ export async function withInstalledRelease(
     );
   });
   try {
-    await new Promise((yes, no) => {
+    if (!publicRegistry) await new Promise((yes, no) => {
       registry.once("error", no);
       registry.listen(0, "127.0.0.1", yes);
     });
     const env = { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: root };
-    const installed = { root };
+    const installed = { root, publicRegistry };
     for (const kind of ["cli", "mcp"]) {
       const pkg = release.packages.find(
         (entry) => entry.name === `@vardum/${kind}`,
@@ -213,6 +223,10 @@ export async function withInstalledRelease(
         ],
         { cwd, env, timeout: 120_000 },
       );
+      const installedManifest = await json(join(cwd, "node_modules", pkg.name, "package.json"));
+      assert.equal(installedManifest.version, pkg.version);
+      const shared = release.packages.find((entry) => entry.name === "@vardum/shared");
+      assert.equal((await json(join(cwd, "node_modules/@vardum/shared/package.json"))).version, shared.version);
       const binary = join(
         cwd,
         "node_modules/.bin",
@@ -266,10 +280,14 @@ export async function withInstalledRelease(
     );
   } finally {
     registry.closeAllConnections();
-    await new Promise((yes) => registry.close(yes));
+    if (registry.listening) await new Promise((yes) => registry.close(yes));
     await rm(root, { recursive: true, force: true });
   }
 }
+
+export const smokeClientOptions = () => ({
+  publicRegistry: process.env.SMOKE_PUBLIC_CLIENTS === "1",
+});
 
 async function registryState(release) {
   const states = [];
