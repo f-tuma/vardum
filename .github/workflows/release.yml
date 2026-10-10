@@ -1,6 +1,6 @@
 name: Release
 
-# Source releases publish from a matching tag. Retained validation never publishes.
+# Source releases publish from a matching tag. Retained publication is prepared but disabled.
 on:
     push:
         tags: ["v*"]
@@ -144,7 +144,7 @@ jobs:
             - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
               with:
                   node-version: 22.23.3
-            - name: Require safe retained validation mode
+            - name: Require the reviewed retained selection and mode
               env:
                   RELEASE_VALIDATION_ONLY: ${{ inputs.validation_only }}
               run: node scripts/retained-release.mjs policy "$RETAINED_CANDIDATE"
@@ -240,3 +240,95 @@ jobs:
               run: node scripts/github-release.mjs artifacts/npm
               env:
                   GH_TOKEN: ${{ github.token }}
+
+    retained-publish:
+        needs: retained-validate
+        if: >-
+            github.event_name == 'workflow_dispatch' && inputs.release_mode == 'retained' &&
+            github.ref == 'refs/heads/main' && inputs.validation_only == false &&
+            needs.retained-validate.result == 'success'
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        environment: npm
+        permissions:
+            contents: write # Candidate source tag and GitHub release
+            actions: read # Independently verify/download the immutable original artifact
+            id-token: write # npm trusted publishing, only in the publication job
+        env:
+            RETAINED_CANDIDATE: ${{ inputs.retained_candidate }}
+            RELEASE_VALIDATION_ONLY: ${{ inputs.validation_only }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+              with:
+                  node-version: 22.23.3
+                  registry-url: https://registry.npmjs.org
+            - name: Independently require reviewed retained publication policy
+              id: retained_policy
+              run: node scripts/retained-release.mjs publication-policy "$RETAINED_CANDIDATE"
+            - name: Use the tested npm version with OIDC support
+              run: npm install --global npm@12.0.2
+            - name: Independently verify origin and download the original reviewed artifact
+              id: retained_download
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/retained-release.mjs download "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Check the exact downloaded retained archive contract
+              run: node scripts/retained-release.mjs check "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Preflight every npm version and actual registry archive before writes
+              id: npm_preflight
+              run: node scripts/retained-release.mjs preflight "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Preflight the source tag and every existing GitHub release asset
+              id: github_preflight
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/retained-release.mjs github-preflight "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Create or verify the candidate source tag with the built-in token
+              id: retained_tag
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/retained-release.mjs prepare-tag "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Publish original archives in shared, CLI, MCP order
+              id: retained_publish
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private == false }}
+              run: node scripts/retained-release.mjs publish "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Verify registry bytes and independent public npm installs
+              id: retained_registry
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/retained-release.mjs verify-registry "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Create or verify the release containing only the original four files
+              id: retained_release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/retained-release.mjs github-release "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Prepare field-allowlisted retained publication evidence
+              id: retained_publication_evidence
+              if: always()
+              continue-on-error: true # Evidence never changes publication acceptance.
+              env:
+                  POLICY_STATUS: ${{ steps.retained_policy.outcome }}
+                  DOWNLOAD_STATUS: ${{ steps.retained_download.outcome }}
+                  NPM_PREFLIGHT_STATUS: ${{ steps.npm_preflight.outcome }}
+                  GITHUB_PREFLIGHT_STATUS: ${{ steps.github_preflight.outcome }}
+                  TAG_STATUS: ${{ steps.retained_tag.outcome }}
+                  PUBLISH_STATUS: ${{ steps.retained_publish.outcome }}
+                  REGISTRY_STATUS: ${{ steps.retained_registry.outcome }}
+                  RELEASE_STATUS: ${{ steps.retained_release.outcome }}
+                  JOB_STATUS: ${{ job.status }}
+              run: node scripts/retained-release.mjs publication-evidence "$RETAINED_CANDIDATE" "${{ runner.temp }}/vardum-retained-publication-sanitized"
+            - name: Retain only named sanitized publication reports and checksums
+              if: always() && steps.retained_publication_evidence.outcome == 'success'
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: retained-publication-evidence
+                  retention-days: 7
+                  if-no-files-found: error
+                  path: |
+                      ${{ runner.temp }}/vardum-retained-publication-sanitized/retained-publication.json
+                      ${{ runner.temp }}/vardum-retained-publication-sanitized/retained-publication.txt
+                      ${{ runner.temp }}/vardum-retained-publication-sanitized/checksums.txt

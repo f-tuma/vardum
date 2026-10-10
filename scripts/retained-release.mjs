@@ -8,7 +8,7 @@ import { parseValidationOnly } from "./release-policy.mjs";
 import { githubClient } from "./github-release-api.mjs";
 import { expectedContract, retainedRelease, selectRetainedRelease } from "./retained-release-contract.mjs";
 import { publishRelease, run, validateRelease, waitForPublishedRelease, withInstalledRelease } from "./release-packages.mjs";
-import { ensureGitHubRelease, ensureTag } from "./github-release.mjs";
+import { ensureGitHubRelease, ensureTag, preflightGitHubRelease } from "./github-release.mjs";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const milliseconds = value => { assert.match(value ?? "", /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/); return Date.parse(value); };
@@ -19,10 +19,22 @@ export function retainedPolicy({ eventName, ref, repository, controllerCommit, v
   assert.match(controllerCommit ?? "", /^[a-f0-9]{40}$/);
   assert.equal(typeof validationOnly, "boolean");
   if (!validationOnly) {
-    assert.ok(candidate.publication.enabled, "Retained publication disabled: reviewed main controller policy exception and VARD-45 npm-owner gate required");
+    assert.equal(candidate.publication.enabled, true, "Retained publication disabled: reviewed main controller policy exception and VARD-45 npm-owner gate required");
     assert.equal(ref, candidate.publication.controllerRef, "Publication requires the reviewed main controller");
+    assert.notEqual(controllerCommit, candidate.commit, "Controller and artifact source must be distinct");
   }
   return { publicationAllowed: !validationOnly, artifactCommit: candidate.commit, controllerCommit };
+}
+
+// A manual publication must explicitly opt out of safe mode. Read this actual
+// value independently in every publication command, before file or API access.
+export function retainedPublicationPolicy(environment, candidate = retainedRelease) {
+  assert.equal(environment.RELEASE_VALIDATION_ONLY, "false", "Retained publication requires RELEASE_VALIDATION_ONLY=false");
+  const policy = retainedPolicy({ eventName: environment.GITHUB_EVENT_NAME, ref: environment.GITHUB_REF,
+    repository: environment.GITHUB_REPOSITORY, controllerCommit: environment.GITHUB_SHA,
+    validationOnly: parseValidationOnly(environment.RELEASE_VALIDATION_ONLY) }, candidate);
+  assert.equal(policy.publicationAllowed, true, "Validation-only dispatch cannot publish");
+  return policy;
 }
 
 export function validateOrigin({ repository, workflow, run: currentRun, attempt, jobs, artifact, artifacts, commit }, candidate = retainedRelease, now = Date.now()) {
@@ -200,16 +212,36 @@ export async function retainedIntegration(directory, candidate = retainedRelease
   }, { expectedContract: expectedContract(candidate) });
 }
 
+const evidenceStatus = value => { assert.ok(["success", "failure", "cancelled", "skipped"].includes(value)); return value; };
+const artifactSource = candidate => ({ repository: candidate.repository, commit: candidate.commit, tree: candidate.tree,
+  runId: candidate.runId, attempt: candidate.attempt, artifactId: candidate.artifactId,
+  archiveSha256: candidate.archiveSha256, manifestSha256: candidate.manifestSha256 });
+
+export const retainedPublicationEvidenceFiles = Object.freeze(["retained-publication.json", "retained-publication.txt", "checksums.txt"]);
+export async function writeRetainedPublicationEvidence(directory, { controllerCommit, validationOnly, checks }, candidate = retainedRelease) {
+  assert.match(controllerCommit ?? "", /^[a-f0-9]{40}$/);
+  assert.equal(typeof validationOnly, "boolean");
+  const outcomes = Object.fromEntries(["policy", "download", "npmPreflight", "githubPreflight", "tagPreparation",
+    "npmPublish", "registryVerification", "githubRelease", "job"].map(name => [name, evidenceStatus(checks[name])]));
+  const report = { schema: 1, selection: candidate.selection, mode: "retained-publication", controllerCommit,
+    artifactSource: artifactSource(candidate), validationOnly, publicationRequested: !validationOnly,
+    publicationEnabled: candidate.publication.enabled, checks: outcomes };
+  await mkdir(directory, { recursive: false });
+  const json = `${JSON.stringify(report, null, 2)}\n`;
+  const text = `Selection: ${candidate.selection}\nMode: ${report.mode}\nController: ${controllerCommit}\nArtifact source: ${candidate.commit}\nValidation only: ${validationOnly}\nPublication requested: ${report.publicationRequested}\nPublication enabled: ${report.publicationEnabled}\n` +
+    Object.entries(outcomes).map(([name, status]) => `${name}: ${status}\n`).join("");
+  await writeFile(join(directory, retainedPublicationEvidenceFiles[0]), json, { flag: "wx" });
+  await writeFile(join(directory, retainedPublicationEvidenceFiles[1]), text, { flag: "wx" });
+  await writeFile(join(directory, "checksums.txt"), `${sha256(json)}  retained-publication.json\n${sha256(text)}  retained-publication.txt\n`, { flag: "wx" });
+}
+
 export const retainedEvidenceFiles = Object.freeze(["retained-summary.json", "retained-summary.txt", "checksums.txt"]);
 export async function writeRetainedEvidence(directory, { controllerCommit, downloadStatus, installStatus, integrationStatus }, candidate = retainedRelease) {
   assert.match(controllerCommit ?? "", /^[a-f0-9]{40}$/);
-  const status = value => { assert.ok(["success", "failure", "cancelled", "skipped"].includes(value)); return value; };
   const report = { schema: 1, selection: candidate.selection, controllerCommit,
-    artifactSource: { repository: candidate.repository, commit: candidate.commit, tree: candidate.tree,
-      runId: candidate.runId, attempt: candidate.attempt, artifactId: candidate.artifactId,
-      archiveSha256: candidate.archiveSha256, manifestSha256: candidate.manifestSha256 },
-    checks: { download: status(downloadStatus), independentInstalls: status(installStatus), installedUploadImport: status(integrationStatus) },
-    publicationEnabled: false };
+    mode: "retained-validation", artifactSource: artifactSource(candidate),
+    checks: { download: evidenceStatus(downloadStatus), independentInstalls: evidenceStatus(installStatus), installedUploadImport: evidenceStatus(integrationStatus) },
+    publicationConfigured: candidate.publication.enabled, publicationEnabled: false };
   await mkdir(directory, { recursive: false });
   const json = `${JSON.stringify(report, null, 2)}\n`;
   const text = `Selection: ${candidate.selection}\nController: ${controllerCommit}\nArtifact source: ${candidate.commit}\nDownload: ${report.checks.download}\nIndependent installs: ${report.checks.independentInstalls}\nInstalled upload/import: ${report.checks.installedUploadImport}\nPublication: disabled\n`;
@@ -222,38 +254,62 @@ async function main() {
   const [command, selection, argument, ...extra] = process.argv.slice(2);
   assert.equal(extra.length, 0);
   const candidate = selectRetainedRelease(selection);
+  const publicationCommands = ["publication-policy", "github-preflight", "prepare-tag", "publish", "verify-registry", "github-release"];
+  if (publicationCommands.includes(command)) retainedPublicationPolicy(process.env, candidate);
+  if (command === "publication-policy") {
+    assert.equal(argument, undefined);
+    return console.log("Reviewed retained publication policy passed");
+  }
   if (command === "policy") {
     assert.equal(argument, undefined);
     return retainedPolicy({ eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF,
       repository: process.env.GITHUB_REPOSITORY, controllerCommit: process.env.GITHUB_SHA,
       validationOnly: parseValidationOnly(process.env.RELEASE_VALIDATION_ONLY) });
   }
-  assert.ok(argument, "Usage: retained-release.mjs policy|download|check|smoke|integration|evidence|preflight|prepare-tag|publish|verify-registry|github-release SELECTION DIRECTORY");
+  assert.ok(argument, "Usage: retained-release.mjs policy|publication-policy|download|check|smoke|integration|evidence|publication-evidence|preflight|github-preflight|prepare-tag|publish|verify-registry|github-release SELECTION DIRECTORY");
   const directory = resolve(argument), contract = expectedContract(candidate);
   if (command === "download") return downloadRetainedRelease(directory, githubClient(), candidate);
   if (command === "evidence") return writeRetainedEvidence(directory, {
     controllerCommit: process.env.GITHUB_SHA, downloadStatus: process.env.DOWNLOAD_STATUS,
     installStatus: process.env.INSTALL_STATUS, integrationStatus: process.env.INTEGRATION_STATUS,
   }, candidate);
+  if (command === "publication-evidence") {
+    assert.ok(["true", "false"].includes(process.env.RELEASE_VALIDATION_ONLY), "Publication evidence requires an explicit mode");
+    return writeRetainedPublicationEvidence(directory, { controllerCommit: process.env.GITHUB_SHA,
+      validationOnly: parseValidationOnly(process.env.RELEASE_VALIDATION_ONLY), checks: {
+        policy: process.env.POLICY_STATUS, download: process.env.DOWNLOAD_STATUS,
+        npmPreflight: process.env.NPM_PREFLIGHT_STATUS, githubPreflight: process.env.GITHUB_PREFLIGHT_STATUS,
+        tagPreparation: process.env.TAG_STATUS, npmPublish: process.env.PUBLISH_STATUS,
+        registryVerification: process.env.REGISTRY_STATUS, githubRelease: process.env.RELEASE_STATUS,
+        job: process.env.JOB_STATUS,
+      } }, candidate);
+  }
+  assert.ok(["check", "smoke", "integration", "preflight", ...publicationCommands].includes(command), "Unknown retained command");
   const release = await validateRelease(directory, contract);
   if (command === "check") return console.log("Reviewed retained archive bytes and manifests passed");
   if (command === "smoke") return withInstalledRelease(directory, async () => {}, { expectedContract: contract });
   if (command === "integration") return retainedIntegration(directory, candidate);
   if (command === "preflight") return publishRelease(directory, release, { validationOnly: true });
-  // Mutation helpers are implemented for review, but unreachable with the
-  // reviewed descriptor until both independent external gates are resolved.
-  assert.ok(["prepare-tag", "publish", "verify-registry", "github-release"].includes(command), "Unknown retained command");
-  retainedPolicy({ eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF,
-    repository: process.env.GITHUB_REPOSITORY, controllerCommit: process.env.GITHUB_SHA,
-    validationOnly: false }, candidate);
-  if (command === "publish") return publishRelease(directory, release);
+  // Recheck the pinned origin independently from retained validation. The
+  // descriptor keeps every publication helper unreachable until reviewed enablement.
+  const client = githubClient();
+  await readOrigin(client, candidate);
+  const tag = `v${candidate.packages.find(pkg => pkg.name === "@vardum/cli").version}`;
+  if (command === "github-preflight") return preflightGitHubRelease(client, candidate.repository, tag, candidate.commit, directory, release);
+  if (command === "prepare-tag") {
+    await publishRelease(directory, release, { validationOnly: true });
+    await preflightGitHubRelease(client, candidate.repository, tag, candidate.commit, directory, release);
+    return ensureTag(client, candidate.repository, tag, candidate.commit, { create: true });
+  }
+  if (command === "publish") {
+    await preflightGitHubRelease(client, candidate.repository, tag, candidate.commit, directory, release);
+    await ensureTag(client, candidate.repository, tag, candidate.commit);
+    return publishRelease(directory, release);
+  }
   if (command === "verify-registry") {
     await waitForPublishedRelease(release);
     return withInstalledRelease(directory, async () => {}, { expectedContract: contract, publicRegistry: true });
   }
-  const client = githubClient();
-  const tag = `v${candidate.packages.find(pkg => pkg.name === "@vardum/cli").version}`;
-  if (command === "prepare-tag") return ensureTag(client, candidate.repository, tag, candidate.commit, { create: true });
   return ensureGitHubRelease(client, candidate.repository, tag, candidate.commit, directory, release);
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => {

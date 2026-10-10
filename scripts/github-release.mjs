@@ -8,12 +8,13 @@ import { validateRelease } from "./release-packages.mjs";
 
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 
-export async function ensureTag(client, repository, tag, sourceCommit, { create = false } = {}) {
+export async function ensureTag(client, repository, tag, sourceCommit, { create = false, allowMissing = false } = {}) {
   assert.match(tag, /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
   assert.match(sourceCommit, /^[a-f0-9]{40}$/);
   const prefix = `/repos/${repository}`;
   let reference = await client.request(`${prefix}/git/ref/tags/${encodeURIComponent(tag)}`, { allow404: true });
   if (!reference) {
+    if (allowMissing && !create) return null;
     assert.ok(create, "Release tag is missing");
     // Use the workflow's built-in GITHUB_TOKEN. Its tag write does not trigger
     // the historical candidate's push workflow. Never use a PAT to create it.
@@ -52,25 +53,39 @@ export async function verifyReleaseAssets(client, repository, existing, files) {
   return found;
 }
 
-export async function ensureGitHubRelease(client, repository, tag, sourceCommit, directory, release) {
-  await ensureTag(client, repository, tag, sourceCommit);
+async function readReleaseFiles(directory, release) {
   const files = new Map();
   for (const name of ["release.json", ...release.packages.map(pkg => pkg.file)]) {
     assert.match(name, /^[A-Za-z0-9.-]+$/);
     assert.ok((await lstat(join(directory, name))).isFile());
     files.set(name, await readFile(join(directory, name)));
   }
-  const prefix = `/repos/${repository}`;
-  let existing = await client.request(`${prefix}/releases/tags/${encodeURIComponent(tag)}`, { allow404: true });
+  return files;
+}
+
+// Read every existing asset before any tag, npm or release write. Missing files
+// permit an interrupted retry; conflicting files never permit one.
+export async function preflightGitHubRelease(client, repository, tag, sourceCommit, directory, release) {
+  const reference = await ensureTag(client, repository, tag, sourceCommit, { allowMissing: true });
+  const files = await readReleaseFiles(directory, release);
+  const existing = await client.request(`/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`, { allow404: true });
   let found = new Set();
   if (existing) {
+    assert.ok(reference, "Existing release has no source tag");
     assert.equal(existing.tag_name, tag);
     assert.equal(existing.draft, false); assert.equal(existing.prerelease, false);
     // Preflight every existing asset before uploading any missing one. A retry
     // must never hide conflicts behind "release already exists".
     found = await verifyReleaseAssets(client, repository, existing, files);
-  } else {
-    existing = await client.request(`${prefix}/releases`, { method: "POST", body: {
+  }
+  return { existing, files, found };
+}
+
+export async function ensureGitHubRelease(client, repository, tag, sourceCommit, directory, release) {
+  await ensureTag(client, repository, tag, sourceCommit);
+  let { existing, files, found } = await preflightGitHubRelease(client, repository, tag, sourceCommit, directory, release);
+  if (!existing) {
+    existing = await client.request(`/repos/${repository}/releases`, { method: "POST", body: {
       tag_name: tag, target_commitish: sourceCommit, name: tag, draft: false,
       prerelease: false, generate_release_notes: true,
     } });

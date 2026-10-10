@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
 import { boundedBytes, downloadGitHubBytes } from "./github-release-api.mjs";
-import { ensureGitHubRelease, ensureTag } from "./github-release.mjs";
+import { ensureGitHubRelease, ensureTag, preflightGitHubRelease } from "./github-release.mjs";
 import { registryState, publishRelease, validateRelease } from "./release-packages.mjs";
 import { expectedContract, retainedRelease as candidate, selectRetainedRelease } from "./retained-release-contract.mjs";
-import { crc32, inspectRetainedZip, retainedPolicy, validateOrigin, writeRetainedEvidence } from "./retained-release.mjs";
+import { crc32, inspectRetainedZip, retainedPolicy, retainedPublicationPolicy, validateOrigin, writeRetainedEvidence, writeRetainedPublicationEvidence } from "./retained-release.mjs";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const integrity = bytes => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 const now = Date.parse("2026-10-10T18:00:00Z");
@@ -275,4 +277,167 @@ test("retained workflow uses readonly validation, installed contract and exact u
   assert.equal((job.match(/artifacts\/npm\/(?:release\.json|vardum-(?:shared-0\.3\.0|cli-0\.7\.0|mcp-0\.3\.0)\.tgz)/g) ?? []).length, 4);
   assert.match(job, /if: always\(\) && steps\.retained_evidence\.outcome == 'success'/);
   assert.doesNotMatch(job, /path:.*\*|runtime-images|\.log/);
+});
+
+
+const publicationEnvironment = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
+  GITHUB_REPOSITORY: candidate.repository, GITHUB_SHA: "a".repeat(40), RELEASE_VALIDATION_ONLY: "false" };
+const enabledCandidate = { ...candidate, publication: { ...candidate.publication, enabled: true } };
+test("enabled retained policy requires manual main, repository identity and a distinct controller", () => {
+  assert.equal(retainedPublicationPolicy(publicationEnvironment, enabledCandidate).publicationAllowed, true);
+  for (const changes of [{ GITHUB_EVENT_NAME: "push" }, { GITHUB_EVENT_NAME: "pull_request" },
+    { GITHUB_REF: "refs/tags/v0.7.0" }, { GITHUB_REF: "refs/heads/other" },
+    { GITHUB_REPOSITORY: "someone/vardum" }, { GITHUB_SHA: candidate.commit }, { GITHUB_SHA: "invalid" },
+    { RELEASE_VALIDATION_ONLY: "true" }, { RELEASE_VALIDATION_ONLY: "" }, { RELEASE_VALIDATION_ONLY: undefined }]) {
+    assert.throws(() => retainedPublicationPolicy({ ...publicationEnvironment, ...changes }, enabledCandidate));
+  }
+  for (const enabled of [false, "true", 1, undefined]) assert.throws(() => retainedPublicationPolicy(publicationEnvironment,
+    { ...candidate, publication: { ...candidate.publication, enabled } }), /disabled/);
+});
+
+test("every publication CLI guard denies safe or disabled requests before files, network and subprocesses", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vard75-mutation-guards-"));
+  const preload = join(root, "deny-touch.mjs"), directory = join(root, "missing");
+  try {
+    await writeFile(preload, `import fs from "node:fs/promises";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const readFile = fs.readFile;
+fs.readFile = async (path, ...options) => {
+  if (String(path).includes("missing/release.json")) throw new Error("UNEXPECTED FILE READ");
+  return readFile(path, ...options);
+};
+childProcess.execFile = () => { throw new Error("UNEXPECTED SUBPROCESS"); };
+syncBuiltinESMExports();
+globalThis.fetch = async () => { throw new Error("UNEXPECTED NETWORK"); };
+`);
+    for (const command of ["publication-policy", "github-preflight", "prepare-tag", "publish", "verify-registry", "github-release"]) {
+      for (const value of [undefined, "", "true", "TRUE", "0", "null", "false"]) {
+        const env = { ...process.env, ...publicationEnvironment };
+        if (value === undefined) delete env.RELEASE_VALIDATION_ONLY;
+        else env.RELEASE_VALIDATION_ONLY = value;
+        delete env.GH_TOKEN;
+        const result = spawnSync(process.execPath, ["--import", preload,
+          fileURLToPath(new URL("./retained-release.mjs", import.meta.url)), command, candidate.selection,
+          ...(command === "publication-policy" ? [] : [directory])], { encoding: "utf8", env });
+        assert.equal(result.status, 1, `${command}/${value}: ${result.stderr}`);
+        assert.match(result.stderr, value === "false" ? /Retained publication disabled/ : /requires RELEASE_VALIDATION_ONLY=false/);
+        assert.doesNotMatch(result.stderr, /ENOENT|UNEXPECTED|GH_TOKEN is required/);
+      }
+      for (const changes of [{ GITHUB_EVENT_NAME: "push" }, { GITHUB_EVENT_NAME: "pull_request" },
+        { GITHUB_REPOSITORY: "someone/vardum" }, { GITHUB_SHA: "invalid" },
+        { GITHUB_REF: "refs/heads/other" }, { GITHUB_REF: "refs/tags/v0.7.0" }]) {
+        const result = spawnSync(process.execPath, ["--import", preload,
+          fileURLToPath(new URL("./retained-release.mjs", import.meta.url)), command, candidate.selection,
+          ...(command === "publication-policy" ? [] : [directory])], {
+          encoding: "utf8", env: { ...process.env, ...publicationEnvironment, ...changes },
+        });
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /manual dispatch|Unexpected controller repository|did not match|Retained publication disabled/);
+        assert.doesNotMatch(result.stderr, /ENOENT|UNEXPECTED|GH_TOKEN is required/);
+      }
+    }
+    assert.deepEqual((await readdir(root)).sort(), ["deny-touch.mjs"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("publication stops on an interrupted CLI write before reaching MCP", async () => {
+  const writes = [];
+  await assert.rejects(publishRelease("/unused", { packages: candidate.packages }, {
+    readState: async release => release.packages.map(pkg => ({ ...pkg, published: pkg.name === "@vardum/shared" })),
+    publish: async pkg => { writes.push(pkg.name); throw new Error("Interrupted npm write"); },
+  }), /Interrupted npm write/);
+  assert.deepEqual(writes, ["@vardum/cli"]);
+});
+
+test("GitHub readonly preflight permits first attempt and partial retries, rejects conflicts without writes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vard75-github-preflight-")), bytes = Buffer.from("original");
+  const release = { packages: [{ file: "cli.tgz" }] };
+  const tag = { ref: "refs/tags/v0.7.0", object: { type: "commit", sha: candidate.commit } };
+  const existing = { id: 1, tag_name: "v0.7.0", draft: false, prerelease: false };
+  try {
+    await writeFile(join(root, "release.json"), bytes); await writeFile(join(root, "cli.tgz"), bytes);
+    let reference = null, currentRelease = null, assets = [], downloaded = bytes;
+    const client = { request: async (path, options) => {
+      assert.ok(!options?.method || options.method === "GET", "Preflight must not write");
+      if (path.includes("/git/ref/")) return reference;
+      if (path.includes("/releases/tags/")) return currentRelease;
+      return assets;
+    }, download: async () => downloaded, upload: async () => assert.fail("Preflight uploaded") };
+    let result = await preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release);
+    assert.equal(result.existing, null); assert.equal(result.found.size, 0);
+    reference = tag; currentRelease = existing;
+    assets = [{ id: 2, name: "cli.tgz", state: "uploaded", size: bytes.length }];
+    result = await preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release);
+    assert.deepEqual([...result.found], ["cli.tgz"]);
+    downloaded = Buffer.from("modified");
+    await assert.rejects(preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release), /bytes differ/);
+    downloaded = bytes;
+    for (const changed of [{ ...existing, draft: true }, { ...existing, prerelease: true }, { ...existing, tag_name: "v999.0.0" }]) {
+      currentRelease = changed;
+      await assert.rejects(preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release));
+    }
+    currentRelease = existing; reference = null;
+    await assert.rejects(preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release), /no source tag/);
+    reference = { ...tag, object: { type: "commit", sha: "b".repeat(40) } };
+    await assert.rejects(preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release), /different source/);
+    reference = tag;
+    for (const changed of [[...assets, ...assets], [{ ...assets[0], name: "unexpected.log" }]]) {
+      assets = changed;
+      await assert.rejects(preflightGitHubRelease(client, candidate.repository, "v0.7.0", candidate.commit, root, release), /Unexpected|duplicate/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("publication evidence records requested mode, configured gate and exact failed/skipped outcomes only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vard75-publication-evidence-"));
+  const checks = { policy: "failure", download: "skipped", npmPreflight: "skipped", githubPreflight: "skipped",
+    tagPreparation: "skipped", npmPublish: "skipped", registryVerification: "skipped", githubRelease: "skipped", job: "failure" };
+  try {
+    for (const validationOnly of [false, true]) {
+      const directory = join(root, String(validationOnly));
+      await writeRetainedPublicationEvidence(directory, { controllerCommit: "a".repeat(40), validationOnly,
+        checks: { ...checks, rawLog: "sensitive" }, token: "secret", environment: "credentials", url: "https://signed.invalid/" });
+      assert.deepEqual((await readdir(directory)).sort(), ["checksums.txt", "retained-publication.json", "retained-publication.txt"]);
+      const json = await readFile(join(directory, "retained-publication.json"), "utf8"), report = JSON.parse(json);
+      assert.doesNotMatch(json, /secret|sensitive|credentials|signed\.invalid/);
+      assert.equal(report.publicationEnabled, false); assert.equal(report.publicationRequested, !validationOnly);
+      assert.equal(report.validationOnly, validationOnly); assert.equal(report.mode, "retained-publication");
+      assert.equal(report.controllerCommit, "a".repeat(40)); assert.equal(report.artifactSource.commit, candidate.commit);
+      assert.deepEqual(report.checks, checks);
+      const text = await readFile(join(directory, "retained-publication.txt"), "utf8");
+      assert.equal(await readFile(join(directory, "checksums.txt"), "utf8"),
+        `${hash(json)}  retained-publication.json\n${hash(text)}  retained-publication.txt\n`);
+    }
+    await assert.rejects(writeRetainedPublicationEvidence(join(root, "invalid"), { controllerCommit: "a".repeat(40),
+      validationOnly: false, checks: { ...checks, npmPublish: "sensitive error text" } }));
+    await assert.rejects(readFile(join(root, "invalid", "retained-publication.json")), { code: "ENOENT" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("retained publication job is manual main explicit mode, scopes credentials and uses only original bytes", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const job = workflow.split("    retained-publish:\n")[1];
+  const condition = job.match(/ {8}if: >-\n([\s\S]*?)\n {8}runs-on:/)[1].trim().replace(/\s+/g, " ");
+  assert.equal(condition, "github.event_name == 'workflow_dispatch' && inputs.release_mode == 'retained' && github.ref == 'refs/heads/main' && inputs.validation_only == false && needs.retained-validate.result == 'success'");
+  assert.match(job, /needs: retained-validate/);
+  assert.match(job, /environment: npm/);
+  assert.match(job, /permissions:\n {12}contents: write.*\n {12}actions: read.*\n {12}id-token: write/);
+  assert.match(job, /RELEASE_VALIDATION_ONLY: \$\{\{ inputs\.validation_only \}\}/);
+  assert.match(job, /persist-credentials: false/);
+  assert.match(job, /node-version: 22\.23\.3/); assert.match(job, /npm install --global npm@12\.0\.2/);
+  assert.match(job, /registry-url: https:\/\/registry\.npmjs\.org/);
+  const commands = ["publication-policy", "download", "check", "preflight", "github-preflight", "prepare-tag", "publish", "verify-registry", "github-release"];
+  let previous = -1;
+  for (const command of commands) {
+    const position = job.indexOf(`run: node scripts/retained-release.mjs ${command} `);
+    assert.ok(position > previous, `Missing or misplaced ${command}`); previous = position;
+  }
+  assert.doesNotMatch(job.slice(0, previous), /always\(\)|continue-on-error:| pack |pnpm|release-packages\.mjs|git push|PAT|NPM_TOKEN/);
+  for (const line of job.split("\n").filter(line => line.includes("GH_TOKEN:"))) assert.match(line, /GH_TOKEN: \$\{\{ github\.token \}\}$/);
+  assert.match(job, /NPM_CONFIG_PROVENANCE: \$\{\{ github\.event\.repository\.private == false \}\}/);
+  assert.equal((job.match(/id-token: write/g) ?? []).length, 1);
+  assert.equal((job.match(/vardum-retained-publication-sanitized\/(?:retained-publication\.(?:json|txt)|checksums\.txt)/g) ?? []).length, 3);
+  assert.doesNotMatch(job, /path:.*\*|\.log|runtime-images/);
+  assert.equal(candidate.publication.enabled, false);
 });
