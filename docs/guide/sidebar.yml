@@ -1,0 +1,49 @@
+# Pages published at https://vardum.com/docs, in sidebar order.
+#
+# This folder holds short guides meant to be scanned: bullets, tables and
+# ASCII diagrams in ```text blocks, which read the same on GitHub and on the
+# site. Long runbooks and contracts stay where they are (docs/operations.md,
+# apps/cli/README.md, ...); link to them for the details.
+#
+# An item is a path relative to this folder, or { path, slug, label, title }:
+#   slug   URL below /docs. Defaults to the path without `.md`;
+#          files outside this folder must set one. index.md is the docs home.
+#   label  Sidebar text. Defaults to the title.
+#   title  Page title. Defaults to `title` in frontmatter, then the first
+#          `# heading`, which the site removes from the body.
+#
+# Links between listed files become links between pages; links to anything
+# else in the repository open it on GitHub.
+
+- label: Start here
+  items:
+    - path: index.md
+      label: Overview
+    - quick-start.md
+    - concepts.md
+
+- label: Guides
+  items:
+    - library.md
+    - path: pull.md
+      label: Use assets in a project
+    - path: push.md
+      label: Upload from a project
+    - delivery.md
+
+- label: Reference
+  items:
+    - path: cli.md
+      label: CLI
+    - path: mcp.md
+      label: MCP server
+    - path: api.md
+      label: HTTP API
+
+- label: Self-hosting
+  items:
+    - path: self-hosting.md
+      label: Run with Compose
+    - path: dokploy.md
+      label: Deploy with Dokploy
+    - operations.md
