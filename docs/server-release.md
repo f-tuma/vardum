@@ -173,12 +173,16 @@ ingest recovery, corrupt/occupied-destination backup rejection and clean-stack
 restore with signing/session/key/version-history preservation. Disposable projects
 use separate ports and are removed by the production-smoke cleanup trap.
 
-Before final VARD-6 acceptance, add a checksum-bound pending-upload restore case:
-create a pending upload with a non-null `expected_checksum`, back up and restore,
-verify that exact binding before worker startup, and resume the unchanged source
-without a new asset/version. Changed source bytes must fail the binding. The
-existing queued-ingest restore drill preserves jobs and version history but does
-not establish that this non-null checksum case survived and resumed.
+The restore drill also checks two unfinalized uploads with non-null
+`expected_checksum` bindings. Before restored application startup it compares
+their exact rows, reservations, audits and original object bytes. Same-ID replay
+must preserve the checksum and deadline without another asset/version or creation
+audit; changed-checksum replay must return 409 without changing that state.
+Unchanged bytes must become ready, while same-size altered bytes must fail the
+worker's checksum check without publishing and remain nonretryable. These API
+checks run with the public compatibility clients; they do not establish new CLI
+journal/resume behavior. Final VARD-6 acceptance still requires a new clean bundle
+from the reviewed source and full unchanged-artifact acceptance of this drill.
 
 Certification is bounded to the tested **linux/amd64, PostgreSQL 17, bundled
 RustFS** stack. It does not establish external storage-provider support, other
