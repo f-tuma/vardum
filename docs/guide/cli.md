@@ -30,7 +30,7 @@ Node.js 22 or newer. Pin the exact version in CI.
 | Flag | On | Effect |
 | --- | --- | --- |
 | `--dry-run` | most | Plan only, write nothing |
-| `--json` | all | One JSON result on stdout, errors on stderr |
+| `--json` | except help/version | One JSON result on stdout, errors on stderr |
 | `--force` | pull, push | Overwrite local edits / conflicts |
 | `--delete` | pull, push-folder | Remove files an earlier run created |
 | `--frozen` | pull, status | Use the lock, not the live Vard |

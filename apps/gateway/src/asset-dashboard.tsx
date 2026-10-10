@@ -544,9 +544,10 @@ function FolderLink({
       to="/workspaces/$workspaceId/assets"
       params={{ workspaceId: workspace.id }}
       search={{ prefix: folder.prefix }}
-      className="min-w-0 flex-1 truncate text-sm font-medium outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-3 focus-visible:after:ring-ring/50"
+      className="min-w-0 flex-1 truncate font-mono text-sm outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-3 focus-visible:after:ring-ring/50"
     >
       {folder.name}
+      <span className="text-muted-foreground">/</span>
     </Link>
   );
 }
@@ -658,7 +659,7 @@ function AssetTile({
   const badge = statusBadge(asset);
   return (
     <li className="group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-ring">
-      <div className="relative aspect-4/3 bg-muted">
+      <div className="relative aspect-4/3 bg-muted bg-cells">
         <AssetThumb url={assetPreviewUrl(workspace.slug, asset)} mimeType={asset.mimeType} />
         {badge && <div className="absolute top-2 left-2">{badge}</div>}
       </div>
