@@ -3,6 +3,7 @@ import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import { fromDrizzle } from "pg-boss";
 import { assetVersion, workspace } from "./db/app-schema.js";
 import { db } from "./db/index.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
 import { failVersion, type AssetIngestPayload } from "./asset-processor.js";
 import { assetIngestQueue, boss } from "./queue.js";
@@ -70,6 +71,7 @@ export async function reconcileAssetIngest() {
           // A short tenant-scoped transaction protects the scan from a concurrent
           // completion or retry. Queue reads share that connection and snapshot.
           const changed = await inWorkspace(workspaceId, async (tx) => {
+            await lockWorkspaceContent(tx, workspaceId);
             const [version] = await tx
               .select()
               .from(assetVersion)

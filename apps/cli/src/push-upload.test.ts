@@ -41,6 +41,16 @@ async function fixture(t: test.TestContext) {
     version: v1,
     bytes: original,
     capability: 1 as unknown,
+    importCapability: 1 as unknown,
+    importPlanStatus: 200,
+    importStatus: 200,
+    importResponseLost: false,
+    malformedImportPlan: "",
+    malformedImportApply: false,
+    importPlans: [] as Array<any>,
+    imports: [] as Array<any>,
+    beforeImportPlanResponse: null as (() => Promise<void>) | null,
+    mappings: new Map<string, { assetId: string; key: string; outputPath: string; mappingId: string }>(),
     createResponseLost: false,
     versionResponseLost: false,
     finalizeResponseLost: false,
@@ -80,7 +90,58 @@ async function fixture(t: test.TestContext) {
       return JSON.parse(Buffer.concat(chunks).toString());
     };
     if (url === "/api/capabilities") {
-      res.end(JSON.stringify({ folderUploadResume: state.capability }));
+      res.end(JSON.stringify({ folderUploadResume: state.capability, folderVardImport: state.importCapability }));
+    } else if (url.endsWith("/items/import-plan")) {
+      const body = await jsonBody();
+      state.importPlans.push(body);
+      if (state.importPlanStatus !== 200) {
+        res.statusCode = state.importPlanStatus;
+        res.end(JSON.stringify({ error: state.importPlanStatus === 403 ? "Folder import permission denied" : "Projected folder rule collision" }));
+        return;
+      }
+      const files = body.files.map((file: any) => {
+        const current = state.assets.find((asset) => asset.id === file.assetId);
+        const identity = state.assetRecords.get(file.assetId) ?? current ?? state.unready.find((asset) => asset.id === file.assetId);
+        const unfinished = [...state.versions.values()].some((version) => version.assetId === file.assetId &&
+          (["pending", "processing"].includes(version.status) || version.status === "failed" && version.retryable));
+        const mapping = state.mappings.get(file.outputPath);
+        return { ...file, versionId: current?.versionId ?? null,
+          libraryAction: !identity ? "new" : current?.checksum === file.checksum && current.mimeType === file.mimeType && current.size === file.size && !unfinished ? "skip" : "update",
+          mappingAction: mapping ? "keep" : "add", mappingId: mapping?.mappingId ?? null };
+      });
+      if (state.malformedImportPlan === "identity") files[0].assetId = randomUUID();
+      if (state.malformedImportPlan === "checksum") files[0].checksum = "0".repeat(64);
+      if (state.malformedImportPlan === "action") files[0].libraryAction = "other";
+      if (state.malformedImportPlan === "mapping") { files[0].mappingAction = "keep"; files[0].mappingId = null; }
+      if (state.malformedImportPlan === "version") { files[0].libraryAction = "skip"; files[0].versionId = null; }
+      if (state.malformedImportPlan === "count") files.pop();
+      if (state.beforeImportPlanResponse) await state.beforeImportPlanResponse();
+      res.end(JSON.stringify({ files }));
+    } else if (url.endsWith("/items/import")) {
+      const body = await jsonBody();
+      state.imports.push(body);
+      if (state.importStatus !== 200) { res.statusCode = state.importStatus; res.end(JSON.stringify({ error: "Mapping apply rejected" })); return; }
+      for (const file of body.files) {
+        const current = state.assets.find((asset) => asset.id === file.assetId);
+        const exact = state.versions.get(file.versionId);
+        if (!exact || exact.status !== "ready" || current?.versionId !== file.versionId ||
+            exact.checksum !== file.checksum || exact.mimeType !== file.mimeType || exact.size !== file.size) {
+          res.statusCode = 409; res.end(JSON.stringify({ error: "Exact current ready version changed" })); return;
+        }
+      }
+      const files = body.files.map((file: any) => {
+        let mapping = state.mappings.get(file.outputPath);
+        const kept = Boolean(mapping);
+        if (!mapping) {
+          mapping = { assetId: file.assetId, key: file.key, outputPath: file.outputPath, mappingId: randomUUID() };
+          state.mappings.set(file.outputPath, mapping);
+        }
+        return { ...mapping, mappingAction: kept ? "kept" : "added" };
+      });
+      if (state.importResponseLost) { state.importResponseLost = false; req.socket.destroy(); return; }
+      if (state.malformedImportApply) files[0].assetId = randomUUID();
+      res.end(JSON.stringify({ files, added: files.filter((file: any) => file.mappingAction === "added").length,
+        kept: files.filter((file: any) => file.mappingAction === "kept").length }));
     } else if (url === "/api/upload-limits") {
       res.statusCode = state.limitsStatus;
       res.end(JSON.stringify(state.limits));
@@ -217,12 +278,22 @@ import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 const originalOpen = fs.open;
+if (process.env.VARDUM_TEST_CRASH_IMPORT) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+    if (String(args[0]).endsWith("/items/import") && response.ok) process.exit(77);
+    return response;
+  };
+}
 if (process.env.VARDUM_TEST_FAST_TIMERS) {
   const originalTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (fn, ms, ...args) => originalTimeout(fn, ms === 500 ? 1 : ms, ...args);
 }
 let opened = 0;
 fs.open = async (path, flags, ...rest) => {
+  if (process.env.VARDUM_TEST_TRACKING_PATH && String(path).startsWith(process.env.VARDUM_TEST_TRACKING_PATH + ".") && flags & constants.O_WRONLY)
+    throw Object.assign(new Error("fixture tracking write failure"), { code: "EIO" });
   if (path !== process.env.VARDUM_TEST_PATH || flags !== (constants.O_RDONLY | constants.O_NONBLOCK)) return originalOpen(path, flags, ...rest);
   opened++;
   const edit = process.env.VARDUM_TEST_EDIT;
@@ -249,14 +320,17 @@ syncBuiltinESMExports();
   let editPath = output;
   let authenticated = true;
   let fastTimers = false;
+  let failTracking = false;
+  let crashImport = false;
   const run = (...args: string[]) => new Promise<{ code: number; data: any }>((resolve) => {
-    execFile(process.execPath, ["--import", tsx, ...(edit || fastTimers ? ["--import", preload] : []), cli, ...args, "--json"], {
+    execFile(process.execPath, ["--import", tsx, ...(edit || fastTimers || failTracking || crashImport ? ["--import", preload] : []), cli, ...args, "--json"], {
       cwd: project,
-      env: { PATH: process.env.PATH, VARDUM_CONFIG_HOME: configHome, VARDUM_API_KEY: authenticated ? "test-key" : "", VARDUM_TEST_EDIT: edit, VARDUM_TEST_PATH: editPath, VARDUM_TEST_FAST_TIMERS: fastTimers ? "1" : "" },
+      env: { PATH: process.env.PATH, VARDUM_CONFIG_HOME: configHome, VARDUM_API_KEY: authenticated ? "test-key" : "", VARDUM_TEST_EDIT: edit, VARDUM_TEST_PATH: editPath, VARDUM_TEST_FAST_TIMERS: fastTimers ? "1" : "", VARDUM_TEST_TRACKING_PATH: failTracking ? join(project, ".vardum.push.lock") : "", VARDUM_TEST_CRASH_IMPORT: crashImport ? "1" : "" },
       timeout: 10000,
     }, (error, stdout, stderr) => {
       const code = error ? Number(error.code) : 0;
-      resolve({ code, data: JSON.parse(code ? stderr : stdout) });
+      const output = code ? stderr : stdout;
+      resolve({ code, data: output.trim() ? JSON.parse(output) : {} });
     });
   });
   return {
@@ -264,7 +338,9 @@ syncBuiltinESMExports();
     setEdit(value: string, path = output) { edit = value; editPath = path; },
     unauthenticated() { authenticated = false; },
     fastTimers() { fastTimers = true; },
-    mutations: () => state.requests.filter(({ method }) => method !== "GET"),
+    failTracking(value = true) { failTracking = value; },
+    crashImport(value = true) { crashImport = value; },
+    mutations: () => state.requests.filter(({ method, url }) => method !== "GET" && !url.endsWith("/items/import-plan")),
     lock: async () => JSON.parse(await readFile(lockPath, "utf8")),
   };
 }
@@ -865,4 +941,357 @@ test("lost delete responses can be retried when the tracked asset is already abs
   assert.equal(second.code, 0, second.data.error);
   assert.deepEqual(second.data.actions, [{ action: "delete", path: "images/removed", applied: true }]);
   assert.equal(f.state.deleted.size, 1);
+});
+
+function readyFolderAsset(f: Awaited<ReturnType<typeof folderFixture>>, key = "images/logo", bytes = "same", filename = "logo.png") {
+  const assetId = randomUUID();
+  const versionId = randomUUID();
+  const hash = checksum(Buffer.from(bytes));
+  f.state.assets.push({ id: assetId, key, displayName: "Existing source", versionId,
+    checksum: hash, mimeType: "image/png", size: Buffer.byteLength(bytes) });
+  f.state.versions.set(versionId, { id: versionId, assetId, number: 1, status: "ready", filename,
+    mimeType: "image/png", size: Buffer.byteLength(bytes), expectedChecksum: hash,
+    checksum: hash, retryable: false, error: null, expiresAt: null });
+  return { assetId, versionId };
+}
+
+test("--output uploads sources and adds exact original output paths without pulling or changing the delivery lock", async (t) => {
+  const f = await folderFixture(t, "logo.jpg");
+  await mkdir(join(f.folder, "nested"));
+  await writeFile(join(f.folder, "nested/icon.svg"), "same");
+  const lockBefore = await readFile(f.lockPath, "utf8");
+  const result = await f.push("--output", "assets/images/");
+  assert.equal(result.code, 0, result.data.error);
+  assert.equal(f.state.versions.size, 2);
+  assert.equal(f.state.imports.length, 1);
+  assert.deepEqual(f.state.imports[0].files.map((file: any) => file.outputPath), ["assets/images/logo.jpg", "assets/images/nested/icon.svg"]);
+  assert.deepEqual(result.data.library.map((file: any) => [file.libraryAction, file.applied]), [["new", true], ["new", true]]);
+  assert.deepEqual(result.data.mappings.map((file: any) => [file.mappingAction, file.result, file.applied]), [["add", "added", true], ["add", "added", true]]);
+  assert.equal(await readFile(f.lockPath, "utf8"), lockBefore);
+  assert.equal(await readFile(join(f.folder, "logo.jpg"), "utf8"), "same");
+  await assert.rejects(readFile(join(f.project, "assets/images/logo.jpg")), /ENOENT/);
+  await assert.rejects(readFile(f.pendingPath), /ENOENT/);
+  const repeat = await f.push("--output", "assets/images");
+  assert.equal(repeat.code, 0, repeat.data.error);
+  assert.equal(repeat.data.changed, 0);
+  assert.equal(f.state.versions.size, 2);
+  assert.equal(f.state.uploads.length, 2);
+  assert.equal(f.state.mappings.size, 2);
+  assert.deepEqual(repeat.data.library.map((file: any) => file.libraryAction), ["skip", "skip"]);
+  assert.deepEqual(repeat.data.mappings.map((file: any) => file.result), ["kept", "kept"]);
+  assert.equal(f.state.imports[1].files.length, 2); // Even keep/skip sources are revalidated.
+});
+
+test("new-mode dry-run preflights and reports new/update/skip separately from add/keep without local writes", async (t) => {
+  const f = await folderFixture(t);
+  await writeFile(join(f.folder, "alpha.png"), "same");
+  await writeFile(join(f.folder, "update.png"), "same");
+  const existing = readyFolderAsset(f);
+  readyFolderAsset(f, "images/update", "old");
+  f.state.mappings.set("outputs/logo.png", { ...existing, key: "images/logo", outputPath: "outputs/logo.png", mappingId: "existing-mapping" });
+  const cachePath = join(f.project, "../config/vardum/version-check.json");
+  await rm(cachePath);
+  const lockBefore = await readFile(f.lockPath, "utf8");
+  const result = await f.push("--output", "outputs", "--dry-run");
+  assert.equal(result.code, 0, result.data.error);
+  assert.deepEqual(result.data.library.map((file: any) => file.libraryAction), ["new", "skip", "update"]);
+  assert.deepEqual(result.data.mappings.map((file: any) => file.mappingAction), ["add", "keep", "add"]);
+  assert.ok([...result.data.library, ...result.data.mappings].every((file) => file.applied === false));
+  assert.equal(result.data.changed, 4);
+  assert.equal(f.state.importPlans.length, 1);
+  assert.equal(f.state.imports.length, 0);
+  assert.deepEqual(f.mutations(), []);
+  for (const path of [f.pendingPath, join(f.project, ".vardum.push.mutex"), join(f.project, ".vardum.push.lock"), cachePath])
+    await assert.rejects(readFile(path), /ENOENT/);
+  assert.equal(await readFile(f.lockPath, "utf8"), lockBefore);
+});
+
+test("unchanged source adds a mapping after exact ready verification without creating a version, including a different original filename", async (t) => {
+  const f = await folderFixture(t);
+  const existing = readyFolderAsset(f, "images/logo", "same", "original-name.png");
+  const result = await f.push("--output", "");
+  assert.equal(result.code, 0, result.data.error);
+  assert.equal(f.state.created.length, 0);
+  assert.equal(f.state.uploads.length, 0);
+  assert.equal(f.state.versions.size, 1);
+  assert.equal(result.data.library[0].libraryAction, "skip");
+  assert.equal(result.data.mappings[0].outputPath, "logo.png");
+  assert.equal(f.state.imports[0].files[0].versionId, existing.versionId);
+  assert.ok(f.state.requests.some(({ method, url }) => method === "GET" && url.endsWith(`/versions/${existing.versionId}`)));
+});
+
+test("all source identities are journaled before the first upload; skip mapping and failed upload resume together", async (t) => {
+  const f = await folderFixture(t, "alpha.png");
+  await writeFile(join(f.folder, "skip.png"), "same");
+  const skip = readyFolderAsset(f, "images/skip");
+  f.state.storageFailures = 1;
+  const first = await f.push("--output", "outputs");
+  assert.equal(first.code, 1);
+  const journal = await f.pending();
+  assert.equal(journal.schema, 2);
+  assert.equal(journal.vard, "vard");
+  assert.equal(journal.outputPrefix, "outputs/");
+  assert.deepEqual(Object.keys(journal.files), ["images/alpha", "images/skip"]);
+  assert.equal(journal.files["images/skip"].versionId, skip.versionId);
+  assert.equal(journal.files["images/skip"].phase, "ready");
+  assert.equal(journal.files["images/skip"].mappingPhase, "planned");
+  assert.equal(f.state.imports.length, 0);
+  assert.equal(first.data.library.length, 2);
+  const second = await f.push("--output", "outputs/");
+  assert.equal(second.code, 0, second.data.error);
+  assert.equal(f.state.versions.size, 2);
+  assert.equal(f.state.imports[0].files.length, 2);
+  assert.equal(f.state.imports[0].files.find((file: any) => file.key === "images/skip").versionId, skip.versionId);
+});
+
+test("lost mapping apply responses retain ready intents and retry with identical IDs without a new version or duplicate mapping", async (t) => {
+  const f = await folderFixture(t);
+  f.state.importResponseLost = true;
+  const first = await f.push("--output", "outputs");
+  assert.equal(first.code, 1);
+  const intent = (await f.pending()).files["images/logo"];
+  assert.equal(intent.phase, "ready");
+  assert.equal(intent.mappingPhase, "apply-requested");
+  assert.equal(first.data.library[0].applied, true);
+  assert.equal(first.data.mappings[0].applied, false);
+  assert.match(first.data.appliedMeaning, /false does not rule out remote changes/);
+  assert.equal(f.state.mappings.size, 1);
+  const second = await f.push("--output", "outputs");
+  assert.equal(second.code, 0, second.data.error);
+  assert.deepEqual(f.state.imports[0].files, f.state.imports[1].files);
+  assert.equal(second.data.mappings[0].result, "kept");
+  assert.equal(f.state.versions.size, 1);
+  assert.equal(f.state.created.length, 1);
+  assert.equal(f.state.uploads.length, 1);
+  assert.equal(f.state.mappings.size, 1);
+});
+
+test("a crash after remote mapping apply resumes the durable request after removing only its abandoned mutex", async (t) => {
+  const f = await folderFixture(t);
+  f.crashImport();
+  const first = await f.push("--output", "outputs");
+  assert.equal(first.code, 77);
+  assert.equal(f.state.mappings.size, 1);
+  assert.equal((await f.pending()).files["images/logo"].mappingPhase, "apply-requested");
+  assert.match((await f.push("--output", "outputs")).data.error, /interrupted.*mutex/);
+  f.crashImport(false);
+  await rm(join(f.project, ".vardum.push.mutex"));
+  const second = await f.push("--output", "outputs");
+  assert.equal(second.code, 0, second.data.error);
+  assert.deepEqual(f.state.imports[0].files, f.state.imports[1].files);
+  assert.equal(f.state.versions.size, 1);
+  assert.equal(f.state.uploads.length, 1);
+  assert.equal(f.state.mappings.size, 1);
+});
+
+test("tracking failures report completed mappings and preserve their ready journal for a no-new-version retry", async (t) => {
+  const f = await folderFixture(t);
+  f.failTracking();
+  const first = await f.push("--output", "outputs");
+  assert.equal(first.code, 1);
+  assert.match(first.data.error, /tracking write failure/);
+  assert.equal(first.data.library[0].applied, true);
+  assert.equal(first.data.mappings[0].applied, true);
+  const journal = await f.pending();
+  assert.equal(journal.files["images/logo"].phase, "ready");
+  assert.equal(journal.files["images/logo"].mappingPhase, "applied");
+  assert.equal(journal.files["images/logo"].mappingId, first.data.mappings[0].mappingId);
+  f.state.importPlanStatus = 403;
+  const rejectedRetry = await f.push("--output", "outputs");
+  assert.match(rejectedRetry.data.error, /permission denied/);
+  assert.equal(rejectedRetry.data.library[0].applied, true);
+  assert.equal(rejectedRetry.data.mappings[0].applied, true);
+  f.state.importPlanStatus = 200;
+  f.failTracking(false);
+  const second = await f.push("--output", "outputs");
+  assert.equal(second.code, 0, second.data.error);
+  assert.equal(f.state.versions.size, 1);
+  assert.equal(f.state.uploads.length, 1);
+  assert.equal(f.state.mappings.size, 1);
+});
+
+test("--output requires both exact capabilities before journal or mutex creation, including dry-run", async (t) => {
+  for (const capability of [undefined, 0, "1", true, null]) {
+    const f = await folderFixture(t);
+    f.state.importCapability = capability;
+    for (const flags of [[], ["--dry-run"]]) {
+      const result = await f.push("--output", "outputs", ...flags);
+      assert.equal(result.code, 1);
+      assert.match(result.data.error, /folderVardImport/);
+      assert.deepEqual(f.mutations(), []);
+      assert.equal(f.state.importPlans.length, 0);
+      await assert.rejects(readFile(f.pendingPath), /ENOENT/);
+      await assert.rejects(readFile(join(f.project, ".vardum.push.mutex")), /ENOENT/);
+    }
+  }
+  const f = await folderFixture(t);
+  f.state.capability = 0;
+  assert.match((await f.push("--output", "outputs", "--dry-run")).data.error, /folderUploadResume/);
+  assert.deepEqual(f.mutations(), []);
+});
+
+test("permission and projected collision rejections are preflighted before uploads, journal, tracking, or mutex writes", async (t) => {
+  for (const status of [403, 409]) {
+    const f = await folderFixture(t);
+    f.state.importPlanStatus = status;
+    for (const flags of [[], ["--dry-run"]]) {
+      const result = await f.push("--output", "outputs", ...flags);
+      assert.equal(result.code, 1);
+      assert.match(result.data.error, status === 403 ? /permission denied/ : /rule collision/);
+      assert.deepEqual(f.mutations(), []);
+      for (const path of [f.pendingPath, join(f.project, ".vardum.push.mutex"), join(f.project, ".vardum.push.lock")])
+        await assert.rejects(readFile(path), /ENOENT/);
+    }
+  }
+});
+
+test("--output rejects invalid prefixes, files, complete paths, flag combinations and extra arguments before remote writes", async (t) => {
+  const f = await folderFixture(t);
+  for (const args of [
+    ["--output", "/absolute"], ["--output", "../escape"], ["--output", "a//b"],
+    ["--output", "a\\b"], ["--output", "con"], ["--output", "a."], ["--output", ".git"],
+    ["--output", "a".repeat(256)], ["--output", "outputs", "--delete"],
+    ["--output", "outputs", "--force"], ["--output", "outputs", "--output", "other"],
+    ["--output", "outputs", "extra"], ["--output", "outputs", "--vard", "other"],
+  ]) {
+    const result = await f.push(...args);
+    assert.equal(result.code, 1, args.join(" "));
+    assert.deepEqual(f.mutations(), []);
+  }
+  assert.equal((await f.run("push", "--output", "outputs")).code, 1);
+  await writeFile(join(f.folder, "aux.png"), "same");
+  assert.match((await f.push("--output", "outputs")).data.error, /Unsafe output path/);
+  await rm(join(f.folder, "aux.png"));
+  await mkdir(join(f.folder, "nested"));
+  await writeFile(join(f.folder, "nested", `${"a".repeat(240)}.png`), "same");
+  assert.match((await f.push("--output", `${"a".repeat(250)}/${"b".repeat(4)}`)).data.error, /at most 500/);
+  assert.deepEqual(f.mutations(), []);
+  assert.equal(f.state.importPlans.length, 0);
+});
+
+test("schema 1 library journals cannot retarget into Vards; schema 2 journals reject downgrade, Vard and output changes", async (t) => {
+  const library = await folderFixture(t);
+  library.state.storageFailures = 1;
+  assert.equal((await library.push()).code, 1);
+  const before = await readFile(library.pendingPath, "utf8");
+  const mutations = library.mutations().length;
+  assert.match((await library.push("--output", "outputs")).data.error, /different folder mode/);
+  assert.equal(await readFile(library.pendingPath, "utf8"), before);
+  assert.equal(library.mutations().length, mutations);
+  const f = await folderFixture(t);
+  f.state.importStatus = 503;
+  assert.equal((await f.push("--output", "outputs")).code, 1);
+  const original = await readFile(f.pendingPath, "utf8");
+  const initialMutations = f.mutations().length;
+  assert.match((await f.push()).data.error, /different folder mode/);
+  assert.match((await f.push("--output", "other")).data.error, /different Vard or output prefix/);
+  const configPath = join(f.project, "vardum.json");
+  await writeFile(configPath, JSON.stringify({ schema: 1, server: f.origin, workspace: "workspace", vard: "other" }));
+  assert.match((await f.push("--output", "outputs")).data.error, /different Vard or output prefix/);
+  assert.equal(await readFile(f.pendingPath, "utf8"), original);
+  assert.equal(f.mutations().length, initialMutations);
+});
+
+test("malformed import plans cannot authorize local state or uploads; malformed apply responses retain exact ready retry state", async (t) => {
+  for (const malformed of ["identity", "checksum", "action", "mapping", "version", "count"]) {
+    const f = await folderFixture(t);
+    f.state.malformedImportPlan = malformed;
+    assert.match((await f.push("--output", "outputs")).data.error, /invalid folder import plan/);
+    assert.deepEqual(f.mutations(), []);
+    await assert.rejects(readFile(f.pendingPath), /ENOENT/);
+  }
+  const f = await folderFixture(t);
+  f.state.malformedImportApply = true;
+  assert.match((await f.push("--output", "outputs")).data.error, /invalid folder import apply/);
+  assert.equal((await f.pending()).files["images/logo"].phase, "ready");
+  assert.equal((await f.pending()).files["images/logo"].mappingPhase, "apply-requested");
+  f.state.malformedImportApply = false;
+  assert.equal((await f.push("--output", "outputs")).code, 0);
+  assert.equal(f.state.versions.size, 1);
+  assert.equal(f.state.mappings.size, 1);
+});
+
+test("concurrent current-version updates cannot retarget a ready pending source to a historical version", async (t) => {
+  const f = await folderFixture(t);
+  f.state.importStatus = 503;
+  assert.equal((await f.push("--output", "outputs")).code, 1);
+  const original = await readFile(f.pendingPath, "utf8");
+  const originalId = f.state.assets[0]!.versionId;
+  f.state.assets[0]!.versionId = randomUUID();
+  f.state.importStatus = 200;
+  const mutations = f.mutations().length;
+  const result = await f.push("--output", "outputs");
+  assert.match(result.data.error, /exact ready version as current/);
+  assert.equal(result.data.library[0].applied, true);
+  assert.equal(result.data.mappings[0].applied, false);
+  assert.equal(f.mutations().length, mutations);
+  assert.equal(await readFile(f.pendingPath, "utf8"), original);
+  assert.notEqual(f.state.assets[0]!.versionId, originalId);
+  assert.equal(f.state.mappings.size, 0);
+});
+
+test("an import preserves unrelated tracking from another folder push completed during its preflight", async (t) => {
+  const f = await folderFixture(t);
+  const trackingPath = join(f.project, ".vardum.push.lock");
+  const oldEntry = { directory: "previous", prefix: "historic/", assets: { "historic/old": randomUUID() } };
+  await writeFile(trackingPath, JSON.stringify({ schema: 1, server: f.origin, workspace: "workspace",
+    entries: { "previous:historic/": oldEntry } }));
+  await mkdir(join(f.project, "other-folder"));
+  await writeFile(join(f.project, "other-folder/other.png"), "same");
+  let interleaved = false;
+  f.state.beforeImportPlanResponse = async () => {
+    // The import has already read tracking but has not acquired its mutex.
+    // Run an actual second command to completion while its plan is held open.
+    await assert.rejects(readFile(join(f.project, ".vardum.push.mutex")), /ENOENT/);
+    const other = await f.run("push-folder", "other-folder", "elsewhere");
+    assert.equal(other.code, 0, other.data.error);
+    await assert.rejects(readFile(f.pendingPath), /ENOENT/);
+    await assert.rejects(readFile(join(f.project, ".vardum.push.mutex")), /ENOENT/);
+    interleaved = true;
+  };
+  const result = await f.push("--output", "outputs");
+  assert.equal(result.code, 0, result.data.error);
+  assert.equal(interleaved, true);
+  const tracking = JSON.parse(await readFile(trackingPath, "utf8"));
+  assert.deepEqual(tracking.entries["previous:historic/"], oldEntry);
+  const otherAsset = f.state.assets.find((asset) => asset.key === "elsewhere/other")!;
+  assert.deepEqual(tracking.entries["other-folder:elsewhere/"], {
+    directory: "other-folder", prefix: "elsewhere/", assets: { "elsewhere/other": otherAsset.id },
+  });
+  assert.equal(tracking.entries["folder:images/"].assets["images/logo"], result.data.library[0].assetId);
+});
+
+test("an import reports the adopted active version consistently when its storage upload fails", async (t) => {
+  const f = await folderFixture(t);
+  const assetId = randomUUID();
+  const versionId = randomUUID();
+  f.state.assetRecords.set(assetId, { id: assetId, key: "images/logo", displayName: "Existing source" });
+  f.state.versions.set(versionId, {
+    id: versionId, assetId, number: 1, status: "pending", filename: "logo.png",
+    mimeType: "image/png", size: 4, expectedChecksum: checksum(Buffer.from("same")),
+    checksum: null, retryable: false, error: null, expiresAt: f.state.expiresAt,
+  });
+  f.state.storageFailures = 1;
+  const first = await f.push("--output", "outputs");
+  assert.equal(first.code, 1);
+  assert.match(first.data.error, /Storage upload failed/);
+  const intent = (await f.pending()).files["images/logo"];
+  assert.equal(intent.versionId, versionId);
+  assert.equal(intent.assetId, assetId);
+  assert.equal(intent.phase, "upload-requested");
+  assert.equal(intent.mappingPhase, "planned");
+  assert.deepEqual([first.data.library[0].assetId, first.data.library[0].versionId], [assetId, versionId]);
+  assert.deepEqual([first.data.mappings[0].assetId, first.data.mappings[0].versionId], [assetId, versionId]);
+  assert.equal(first.data.library[0].applied, false);
+  assert.equal(first.data.mappings[0].applied, false);
+  assert.equal(f.state.imports.length, 0);
+  assert.equal(f.state.mappings.size, 0);
+  assert.equal(f.state.created.length, 0);
+  assert.equal(f.state.versions.size, 1);
+  const retry = await f.push("--output", "outputs");
+  assert.equal(retry.code, 0, retry.data.error);
+  assert.equal(retry.data.library[0].versionId, versionId);
+  assert.equal(retry.data.mappings[0].versionId, versionId);
+  assert.equal(f.state.imports[0].files[0].versionId, versionId);
+  assert.equal(f.state.versions.size, 1);
 });

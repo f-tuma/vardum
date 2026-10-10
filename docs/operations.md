@@ -468,6 +468,9 @@ processing versions at startup and every minute: active/queued/retrying jobs sta
 processing, while exhausted, cancelled or missing jobs become failed and retryable.
 Existing jobs without the new identifier are adopted by singleton version ID.
 Each scan uses short workspace-scoped transactions and does not read object bytes.
+The startup scan runs directly before queue workers are registered, so an
+abandoned active recovery job cannot suppress it. The periodic recovery queue
+continues to run every minute.
 
 A crashed worker's active job must first expire or miss its queue heartbeat before
 queue maintenance retries/fails it. Recovery is eventual, not an exact one-minute

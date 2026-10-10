@@ -56,6 +56,26 @@ export type FolderVersionIntent = {
   expectedCurrentVersionId: string | null;
 };
 
+export type FolderImportFile = {
+  assetId: string;
+  key: string;
+  outputPath: string;
+  checksum: string;
+  mimeType: string;
+  size: number;
+};
+export type FolderImportPlanFile = FolderImportFile & {
+  versionId: string | null;
+  libraryAction: "new" | "update" | "skip";
+  mappingAction: "add" | "keep";
+  mappingId: string | null;
+};
+export type FolderImportReadyFile = FolderImportFile & { versionId: string };
+export type FolderImportResultFile = Pick<FolderImportFile, "assetId" | "key" | "outputPath"> & {
+  mappingId: string;
+  mappingAction: "added" | "kept";
+};
+
 export class VardumHttpError extends Error {
   constructor(message: string, readonly status: number) {
     super(`${message} (${status})`);
@@ -85,11 +105,31 @@ export class VardumClient {
     return this.limits;
   }
 
-  async requireFolderUploadResume() {
+  async requireFolderUploadResume(vardImport = false) {
     const capabilities = await this.request<unknown>("/api/capabilities");
     if (!capabilities || typeof capabilities !== "object" ||
         (capabilities as Record<string, unknown>).folderUploadResume !== 1)
       throw new Error("This server does not support resumable folder uploads (folderUploadResume: 1); upgrade the server before pushing this folder");
+    if (vardImport && (capabilities as Record<string, unknown>).folderVardImport !== 1)
+      throw new Error("This server does not support folder imports into Vards (folderVardImport: 1); upgrade the server before using --output");
+  }
+
+  async planFolderImport(config: VardConfig, files: FolderImportFile[]) {
+    const result = await this.request<unknown>(this.importPath(config) + "-plan", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ files }),
+    });
+    return validateFolderImportPlan(result, files);
+  }
+
+  async applyFolderImport(config: VardConfig, files: FolderImportReadyFile[]) {
+    const result = await this.request<unknown>(this.importPath(config), {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ files }),
+    });
+    return validateFolderImportResult(result, files);
+  }
+
+  private importPath(config: VardConfig) {
+    return `/api/workspaces/${encodeURIComponent(config.workspace)}/vards/${encodeURIComponent(config.vard)}/items/import`;
   }
 
   /** Revokes the key this client is holding. */
@@ -331,6 +371,48 @@ function validateFolderVersion(value: unknown): FolderVersion {
     safeHttpUrl(upload.url);
   }
   return value as FolderVersion;
+}
+
+const importRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+const importUuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
+const mappingId = (value: unknown): value is string => typeof value === "string" && Boolean(value.trim()) && !/[\x00-\x1f\x7f]/.test(value);
+
+function importResponseFiles(value: unknown, request: FolderImportFile[], kind: string) {
+  const invalid = () => new Error(`Vardum returned an invalid folder import ${kind} response`);
+  if (!importRecord(value) || !Array.isArray(value.files) || value.files.length !== request.length) throw invalid();
+  const wanted = new Map(request.map((file) => [file.key, file]));
+  const found = new Map<string, Record<string, unknown>>();
+  for (const file of value.files) {
+    if (!importRecord(file) || typeof file.key !== "string" || found.has(file.key)) throw invalid();
+    const original = wanted.get(file.key);
+    if (!original || !importUuid(file.assetId) || file.assetId !== original.assetId || file.outputPath !== original.outputPath) throw invalid();
+    found.set(file.key, file);
+  }
+  return { value, files: request.map((file) => found.get(file.key)!), invalid };
+}
+
+function validateFolderImportPlan(value: unknown, request: FolderImportFile[]): FolderImportPlanFile[] {
+  const { files, invalid } = importResponseFiles(value, request, "plan");
+  for (const [index, file] of files.entries()) {
+    const original = request[index]!;
+    if (file.checksum !== original.checksum || file.mimeType !== original.mimeType || file.size !== original.size ||
+        !(file.versionId === null || importUuid(file.versionId)) ||
+        !["new", "update", "skip"].includes(file.libraryAction as string) ||
+        !["add", "keep"].includes(file.mappingAction as string) ||
+        !(file.mappingAction === "add" ? file.mappingId === null : mappingId(file.mappingId)) ||
+        file.libraryAction === "new" && file.versionId !== null ||
+        file.libraryAction === "skip" && !importUuid(file.versionId)) throw invalid();
+  }
+  return files as FolderImportPlanFile[];
+}
+
+function validateFolderImportResult(value: unknown, request: FolderImportReadyFile[]) {
+  const { value: response, files, invalid } = importResponseFiles(value, request, "apply");
+  if (files.some((file) => !mappingId(file.mappingId) || !["added", "kept"].includes(file.mappingAction as string)) ||
+      !Number.isSafeInteger(response.added) || !Number.isSafeInteger(response.kept) ||
+      response.added !== files.filter((file) => file.mappingAction === "added").length ||
+      response.kept !== files.filter((file) => file.mappingAction === "kept").length) throw invalid();
+  return { files: files as FolderImportResultFile[], added: response.added as number, kept: response.kept as number };
 }
 
 /** Delivery is same-origin only; never send workspace keys to supplied hosts. */

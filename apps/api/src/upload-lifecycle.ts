@@ -2,6 +2,7 @@ import { and, asc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { config } from "./config.js";
 import { assetVersion, auditEvent, workspace } from "./db/app-schema.js";
 import { db } from "./db/index.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
 import { CapacityError } from "./resource-budget.js";
 import { deleteObjects } from "./storage.js";
@@ -118,6 +119,7 @@ export async function cleanupPendingUploads(now = new Date(), batch = 100) {
   for (const { id } of workspaces) {
     if (inspected >= batch) break;
     const versions = await inWorkspace(id, async (tx) => {
+      await lockWorkspaceContent(tx, id);
       await tx
         .update(workspace)
         .set({ uploadCleanupAt: now, updatedAt: workspace.updatedAt })

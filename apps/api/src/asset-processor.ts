@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 import { asset, assetVersion, auditEvent } from "./db/app-schema.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
 import { getObject, readBoundedObject } from "./storage.js";
 
@@ -25,6 +26,7 @@ export async function processAsset(
   const pending = await inWorkspace(
     payload.workspaceId,
     async (transaction) => {
+      await lockWorkspaceContent(transaction, payload.workspaceId);
       const [row] = await transaction
         .select()
         .from(assetVersion)
@@ -139,6 +141,7 @@ async function markReady(
   signal?: AbortSignal,
 ) {
   await inWorkspace(payload.workspaceId, async (transaction) => {
+    await lockWorkspaceContent(transaction, payload.workspaceId);
     const [version] = await transaction
       .select({ status: assetVersion.status, number: assetVersion.number })
       .from(assetVersion)
@@ -226,6 +229,7 @@ export async function failVersion(
   message: string,
   retryable: boolean,
 ) {
+  await lockWorkspaceContent(transaction, payload.workspaceId);
   const [failed] = await transaction
     .update(assetVersion)
     .set({

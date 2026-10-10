@@ -1,5 +1,4 @@
 import { and, asc, count, eq, gt, inArray, or, sql } from "drizzle-orm";
-import { mediaOutputPath, mimeForFilename } from "@vardum/shared";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -15,6 +14,8 @@ import {
 } from "./db/app-schema.js";
 import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
+import { registerVardImportRoutes } from "./vard-import.js";
 import {
   canonicalizeTransformation,
   transformationSchema,
@@ -24,6 +25,7 @@ import {
 export { vardOutputPath } from "./vard-folder-rules.js";
 import {
   folderItemId,
+  folderOutputPath,
   folderRulesSchema,
   MAX_VARD_OUTPUTS,
   validateResolvedOutputs,
@@ -71,6 +73,7 @@ const updateVardBody = vardFields
   );
 
 export function registerVardRoutes(app: FastifyInstance) {
+  registerVardImportRoutes(app);
   const api = app.withTypeProvider<ZodTypeProvider>();
 
   api.get(
@@ -125,6 +128,7 @@ export function registerVardRoutes(app: FastifyInstance) {
 
       try {
         const created = await inWorkspace(workspaceId, async (transaction) => {
+          await lockWorkspaceContent(transaction, workspaceId);
           const [record] = await transaction
             .insert(vard)
             .values({
@@ -201,6 +205,7 @@ export function registerVardRoutes(app: FastifyInstance) {
           .send({ error: authorization.error });
       try {
         const updated = await inWorkspace(workspaceId, async (transaction) => {
+          await lockWorkspaceContent(transaction, workspaceId);
           const [record] = await transaction
             .update(vard)
             .set({
@@ -264,6 +269,7 @@ export function registerVardRoutes(app: FastifyInstance) {
           .send({ error: `Duplicate output path: ${duplicatePath}` });
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
           .select({ id: vard.id })
           .from(vard)
@@ -375,6 +381,7 @@ export function registerVardRoutes(app: FastifyInstance) {
           .code(authorization.statusCode)
           .send({ error: authorization.error });
       const deleted = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [record] = await transaction
           .delete(vard)
           .where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)))
@@ -589,11 +596,7 @@ async function buildVardPayload(
       for (const member of members) {
         for (const rule of record.folderRules) {
           if (!member.key.startsWith(rule.sourcePrefix)) continue;
-          const relativePath =
-            rule.outputPrefix + member.key.slice(rule.sourcePrefix.length);
-          const outputPath = mimeForFilename(relativePath)
-            ? relativePath
-            : mediaOutputPath(relativePath, member.sourceMimeType);
+          const outputPath = folderOutputPath(member.key, member.sourceMimeType, rule);
           items.push({
             ...member,
             id: folderItemId(member.assetId, outputPath),

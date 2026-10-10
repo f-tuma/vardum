@@ -15,6 +15,7 @@ import {
 } from "./db/app-schema.js";
 import { apikey, member, user } from "./db/auth-schema.js";
 import { inWorkspace } from "./db/tenant.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
 import { assetDeleteQueue, boss } from "./queue.js";
 
 const workspaceParams = z.object({ workspaceId: z.string().min(1) });
@@ -499,6 +500,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       }
 
       const deleted = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [workspace] = await transaction
           .select({
             id: workspaceTable.id,
