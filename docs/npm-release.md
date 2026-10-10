@@ -68,7 +68,7 @@ The npm release workflow does not prepare or publish that server artifact.
 The API has no independent published npm version. This table identifies the
 historical tested client/server contract, not a currently certified deployment
 artifact or a guarantee for arbitrary server combinations. Merged operational
-source adds migrations through `0014_upload_cleanup_fairness.sql`; it is distinct
+source adds migrations through `0015_upload_request_checksum.sql`; it is distinct
 from the September release and from the unmerged schema 3 candidate. Follow the
 [operations upgrade instructions](operations.md) and complete the server/runtime
 release gates before deployment. Align server contracts and migrations before
@@ -224,8 +224,13 @@ archive verification.
 
 VARD-75 stays open until hosted retained validation succeeds and the npm owner and
 GitHub environment approvals are resolved. `prepare-tag`, `publish`,
-`verify-registry` and `github-release` helpers are gated by the descriptor's
-`publication.enabled=false`; none is wired to a retained publication job.
+`verify-registry` and `github-release` helpers independently require the actual
+`RELEASE_VALIDATION_ONLY=false` value before file or network access and are gated by the descriptor's
+`publication.enabled=false`. A separate `retained-publish` job is prepared in
+`Release`, dependent on successful retained validation, but stays unreachable
+while that descriptor is disabled. Its job condition requires manual retained
+dispatch from `refs/heads/main` with `validation_only=false`; safe validation
+skips the entire job, including its `npm` environment and OIDC permission.
 No tag, release, npm package, publisher connection or deployment policy is changed
 by this delivery.
 
@@ -240,7 +245,18 @@ The intended npm identity remains `f-tuma/vardum`, `release.yml`, environment
 `npm`; [npm's trust checks](https://docs.npmjs.com/trusted-publishers/) are independent
 of artifact validation and cannot be proven by a read-only run.
 
-After those gates, a newly reviewed publication change may prepare or verify
+The prepared job uses Node 22.23.3 and npm 12.0.2, independently downloads the
+original pinned artifact, checks its reviewed contract, and preflights all npm
+versions and existing GitHub release assets before the first tag or npm write.
+Its helpers recheck the immutable origin, tag target, and actual registry bytes;
+byte-identical versions and assets permit retries. Publication runs shared → CLI
+→ MCP without packing source. A separate allowlisted publication report records
+controller/artifact identities, the configured enable flag, explicit mode and
+each step outcome. Evidence collection cannot turn failed or skipped publication
+into success, and readonly validation reports continue to state that publication
+was disabled for that validation path.
+
+After those gates, a newly reviewed flag-enable change may prepare or verify
 `v0.7.0` at the immutable candidate commit using the built-in `GITHUB_TOKEN`.
 [GitHub documents that its token's tag push does not trigger another workflow](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow),
 so the old candidate's tag workflow must not be accidentally invoked using a PAT.
