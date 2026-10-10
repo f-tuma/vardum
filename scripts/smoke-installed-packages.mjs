@@ -357,11 +357,42 @@ export async function checkInstalledPackages({
       assert.equal(plannedImport.changed, 3);
       assert.deepEqual(plannedImport.library.map((item) => item.libraryAction).sort(), ["new", "skip"]);
       assert.ok(plannedImport.mappings.every((item) => item.mappingAction === "add"));
+      async function readPrivateManifest() {
+        const response = await fetch(`${base}/api/workspaces/${workspaceId}/vards/${vard.id}/manifest`, {
+          headers: { "x-api-key": readKey },
+        });
+        assert.equal(response.status, 200, "The read-only key must retain authenticated private Vard access");
+        return response.json();
+      }
+      async function importLocalSnapshot() {
+        return Promise.all([
+          "vardum.json", ".vardum.lock", ".vardum.push.lock",
+          ".vardum.push.pending.json", ".vardum.push.mutex",
+          "import-source/logo.svg", "import-source/extra.svg",
+        ].map(async (path) => {
+          try { return await readFile(join(project, path)); }
+          catch (error) { if (error.code === "ENOENT") return null; throw error; }
+        }));
+      }
+      const beforeDeniedManifest = await readPrivateManifest();
+      const beforeDeniedLocal = await importLocalSnapshot();
+      // Better Auth masks insufficient API-key grants as KEY_NOT_FOUND (401).
+      // Private reads before and after distinguish this from invalid credentials.
       await assert.rejects(run(process.execPath, [cli.binary, ...importArgs, "--dry-run", "--json"], {
         cwd: project, env: { ...env, VARDUM_API_KEY: readKey }, timeout: 30_000,
-      }), /permission|403/i);
+      }), (error) => {
+        assert.equal(error.code, 1);
+        assert.equal(error.stdout, "");
+        const denied = JSON.parse(error.stderr);
+        assert.equal(denied.error, "Unauthorized (401)");
+        for (const field of ["actions", "library", "mappings"])
+          assert.deepEqual(denied[field], []);
+        return true;
+      });
+      assert.deepEqual(await readPrivateManifest(), beforeDeniedManifest);
+      assert.deepEqual(await importLocalSnapshot(), beforeDeniedLocal);
       assert.deepEqual(await importAssetSnapshot(), beforeImportAssets);
-      assert.deepEqual((await tool("get_vard", { vardId: vard.id }, reader)).items, beforeImport.items);
+      assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), beforeImport);
       assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 3);
       const imported = await tool("get_vard", { vardId: vard.id }, reader);
       for (const previous of beforeImport.items)
