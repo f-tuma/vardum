@@ -601,7 +601,9 @@ restarts/reloads. These fixture results do not establish production capacity.
 The Debian API retains the same 31 OS finding rows as VARD-72: 23 MEDIUM and
 eight LOW. This includes unfixed CVE-2026-85091 on Debian
 `zlib1g 1:1.3.dfsg+really1.3.1-1+b1`; the Alpine gateway package fix does not
-clear that separate API record. Zero reported findings is bounded to these two
+clear that separate API record. The [API/worker zlib assessment](api-zlib-assessment.md)
+records the separate Debian, Node and Sharp implementations, checked callers and
+unresolved remediation. Zero reported findings is bounded to these two
 Alpine gateway targets and this database, not every bundled native component.
 The documentation checkpoint does not claim clean post-commit CI. Independent
 final review, current reviewed-source CI, disposition of material residuals and
