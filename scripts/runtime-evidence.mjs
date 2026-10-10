@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { ordinaryEvidenceDirectory, readEvidenceSnapshot } from "./evidence-snapshot.mjs";
 export { maximumReportBytes } from "./evidence-snapshot.mjs";
+import { projectRuntimeCharsetEvidence } from "./runtime-charset-evidence.mjs";
 import { projectGatewayReport, projectRuntimeReport, projectTlsReport } from "./server-candidate-evidence.mjs";
 
 export const runtimeEvidenceFiles = Object.freeze(["runtime-summary.json", "runtime-summary.txt", "checksums.txt"]);
@@ -64,6 +65,7 @@ function runtimeInventory(input) {
   object(input);
   const fonts = list(input.fontInventory, 10_000);
   const result = {
+    charset: projectRuntimeCharsetEvidence(input.charset),
     versions: optional(object(input.versions), runtimeNames, version), nativeVersions: optional(object(input.sharp), nativeNames, version),
     uid: bounded(input.uid), process: privileges(input.process), initProcess: privileges(input.initProcess),
     inheritedTools: optional(object(input.inheritedTools), tools, bool), productionStorePresent: bool(input.productionStorePresent),

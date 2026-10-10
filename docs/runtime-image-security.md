@@ -449,6 +449,9 @@ conversion APIs invalidate it. GLib E2BIG growth/retry and ordinary passing
 fixtures do not prove buffer safety. See the exact
 [Sharp build](https://raw.githubusercontent.com/lovell/sharp-libvips/v1.3.4/build/posix.sh)
 and [libxml2 option evaluation](https://raw.githubusercontent.com/GNOME/libxml2/v2.15.4/meson.build).
+The [10 October exact-image SVG/charset assessment](svg-encoding-assessment.md)
+records the bounded environment observations and their limits; both VARD-54
+findings remain open.
 
 Bundled libpng 1.6.58 remains affected by
 [GHSA-qvg3-h654-xq3j](https://github.com/pnggroup/libpng/security/advisories/GHSA-qvg3-h654-xq3j).

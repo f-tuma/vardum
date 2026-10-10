@@ -5,6 +5,7 @@ import { checkRustfsRecovery } from "./smoke-ingest-recovery.mjs";
 import { checkResourceBudgets } from "./smoke-resource-budgets.mjs";
 import { checkLargePresignedPost } from "./smoke-large-presigned-post.mjs";
 import { checkBackupRestore } from "./smoke-backup-restore.mjs";
+import { checkSvgCompatibilityLifecycle } from "./smoke-svg-compatibility.mjs";
 
 const base = process.env.SMOKE_URL;
 let cookie = "";
@@ -180,5 +181,6 @@ await checkInstalledPackages({ releaseDir: process.env.SMOKE_RELEASE_DIR, base, 
 await checkRustfsRecovery({ request, workspaceId: workspace.id, assetId: asset.id, currentVersionId: version.id, file: svg });
 await checkResourceBudgets({ base, cookie, workspaceId: workspace.id, assetId: asset.id });
 await checkLargePresignedPost({ request, workspaceId: workspace.id, workspaceSlug: workspace.slug });
+await checkSvgCompatibilityLifecycle({ base, cookie, workspaceId: workspace.id, workspaceSlug: workspace.slug });
 await checkBackupRestore({ base, cookie, workspaceId: workspace.id, otherWorkspaceId: secondary.id, assetId: asset.id, versionId: version.id });
 console.log("Production smoke test passed");

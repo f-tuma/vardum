@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { readEvidenceSnapshot } from "./evidence-snapshot.mjs";
+import { observeRuntimeCharsetEvidence } from "./runtime-charset-evidence.mjs";
 import { maximumReportBytes, runtimeEvidenceFiles, writeRuntimeEvidence } from "./runtime-evidence.mjs";
 
 const commit = "a".repeat(40), tree = "b".repeat(40);
@@ -301,3 +302,59 @@ for (const [name, nativeKey] of [["api-os.txt", "api"], ["gateway-os.txt", "gate
     await noSecrets(f);
   } finally { await f.close(); }
 });
+
+test("older runtime inventories retain source bindings and report unknown charset evidence", async () => {
+  const f = await fixture();
+  try {
+    await successfulReports(f); const summary = await f.project();
+    assert.equal(summary.schema, 1); assert.equal(summary.evidenceCompleteness, "complete");
+    for (const role of ["api", "worker"]) {
+      const data = summary.reports[`${role}-runtime.json`].data;
+      assert.equal(data.sourceCommit, commit); assert.equal(data.imageId, id("api"));
+      assert.equal(data.charset.pid1StartupEnvironment.status, "unknown");
+      assert.equal(data.charset.execProbeEnvironment.status, "unknown");
+      assert.equal(data.charset.nativeState.glibCharset, "not-observed");
+    }
+    await noSecrets(f);
+  } finally { await f.close(); }
+});
+test("three-file projection retains safe charset scopes without promoting them to native state or a gate", async () => {
+  const f = await fixture();
+  try {
+    await successfulReports(f);
+    const input = inventory();
+    input.charset = observeRuntimeCharsetEvidence({ environment: { LANG: "C.UTF-8", GCONV_PATH: secret, LIBCHARSET_ALIAS_DIR: secret },
+      io: { openSync() { throw new Error(secret); } } });
+    await f.save("api-runtime.json", input);
+    const summary = await f.project();
+    const data = summary.reports["api-runtime.json"].data;
+    assert.deepEqual(data.charset, input.charset); assert.equal(summary.evidenceCompleteness, "complete");
+    assert.equal(data.charset.pid1StartupEnvironment.status, "unknown");
+    assert.deepEqual(data.charset.execProbeEnvironment.variables.LANG, { status: "recognized", value: "C.UTF-8" });
+    assert.deepEqual(data.charset.execProbeEnvironment.variables.LIBCHARSET_ALIAS_DIR, { status: "other" });
+    await noSecrets(f);
+  } finally { await f.close(); }
+});
+for (const problem of ["extra-root", "arbitrary-value", "path-value", "extra-hash", "native-state", "wrong-bound"]) {
+  test(`three-file projection rejects unsafe charset section without losing older runtime evidence: ${problem}`, async () => {
+    const f = await fixture();
+    try {
+      await successfulReports(f); const input = inventory();
+      input.charset = observeRuntimeCharsetEvidence({ environment: {}, io: { openSync() { throw new Error(secret); } } });
+      if (problem === "extra-root") input.charset.rawEnvironment = secret;
+      if (problem === "arbitrary-value") input.charset.execProbeEnvironment.variables.LANG = { status: "recognized", value: secret };
+      if (problem === "path-value") input.charset.execProbeEnvironment.variables.GCONV_PATH = { status: "other", value: secret };
+      if (problem === "extra-hash") input.charset.execProbeEnvironment.variables.LOCPATH = { status: "other", sha256: hash(secret) };
+      if (problem === "native-state") input.charset.nativeState.glibCharset = secret;
+      if (problem === "wrong-bound") input.charset.pid1StartupEnvironment.readLimitBytes = 1_000_000_000;
+      await f.save("api-runtime.json", input); const summary = await f.project();
+      const report = summary.reports["api-runtime.json"];
+      assert.equal(report.status, "projected"); assert.equal(report.data.versions.node, "22.23.3");
+      assert.equal(report.data.charset.pid1StartupEnvironment.status, "unknown");
+      assert.equal(report.data.charset.execProbeEnvironment.status, "unknown");
+      assert.equal(summary.evidenceCompleteness, "complete");
+      assert.ok(!(await readFile(join(f.output, "runtime-summary.json"), "utf8")).includes(`"sha256": "${hash(secret)}"`));
+      await noSecrets(f);
+    } finally { await f.close(); }
+  });
+}
