@@ -13,10 +13,7 @@ export const auth = betterAuth({
   appName: "Vardum",
   baseURL: config.BETTER_AUTH_URL,
   secret: config.BETTER_AUTH_SECRET,
-  trustedOrigins: [
-    config.WEB_URL,
-    ...(config.NODE_ENV === "development" ? ["https://vite.f-tuma.dev"] : []),
-  ],
+  trustedOrigins: [config.WEB_URL],
   database: drizzleAdapter(db, { provider: "pg", schema }),
   emailVerification: smtpEnabled
     ? {

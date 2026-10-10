@@ -46,10 +46,7 @@ export async function buildApp() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(cors, {
-    origin: [
-      config.WEB_URL,
-      ...(config.NODE_ENV === "development" ? ["https://vite.f-tuma.dev"] : []),
-    ],
+    origin: [config.WEB_URL],
     credentials: true,
   });
   // Default sensitive routes to non-cacheable, including validation and storage errors.
