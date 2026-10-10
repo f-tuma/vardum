@@ -1,11 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { createElement } from "react";
 import { mediaStem } from "@vardum/shared";
 import { toast } from "sonner";
 import { errorMessage, toKey } from "@/lib/format";
 import { createAsset, uploadVersion, validateUploadFile } from "./asset-api";
 
-function percent(fraction: number) {
-  return `${Math.round(Math.min(Math.max(fraction, 0), 1) * 100)}%`;
+/** A terminal-style progress bar: ████████░░░░░░░░  52% */
+function progress(fraction: number) {
+  const share = Math.min(Math.max(fraction, 0), 1);
+  const filled = Math.round(share * 16);
+  const bar = `${"█".repeat(filled)}${"░".repeat(16 - filled)} ${String(Math.round(share * 100)).padStart(3)}%`;
+  return createElement("span", { className: "font-mono whitespace-pre" }, bar);
 }
 
 /**
@@ -30,7 +35,7 @@ export function useUploader(workspaceId: string) {
       await uploadVersion(workspaceId, assetId, file, (status, fraction) =>
         toast.loading(`Uploading ${file.name}`, {
           id,
-          description: fraction === undefined ? status : percent(fraction),
+          description: fraction === undefined ? status : progress(fraction),
         }),
       );
       toast.success(`${file.name} uploaded`, { id, description: "Processing…" });
