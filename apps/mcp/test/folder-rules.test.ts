@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -17,6 +18,7 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
   timeout: 15_000,
 }, async (t) => {
   const rules = [{ sourcePrefix: "brand/", outputPrefix: "assets/brand/" }];
+  const manualId = "11111111-1111-4111-8111-111111111111";
   let definition: VardDefinition = {
     schema: 1,
     id: "vard",
@@ -27,12 +29,13 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
     folderRules: rules,
     items: [
       {
-        id: "manual-id",
+        id: manualId,
         assetId: "asset",
         key: "logo.svg",
         outputPath: "logo.svg",
         writable: true,
         pinned: false,
+        pinnedVersionId: null,
         transformation: null,
         versionId: "version",
         sourceChecksum: "checksum",
@@ -43,6 +46,10 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
       },
     ],
   };
+  const revision = () => `v1:${createHash("sha256").update(JSON.stringify([
+    definition.name, definition.isPublic, definition.folderRules, definition.items,
+  ])).digest("hex")}`;
+  definition.revision = revision();
   let previewConflict = true;
   const calls: Array<{
     method: string;
@@ -60,6 +67,10 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
       : {};
     const key = request.headers["x-api-key"] as string | undefined;
     calls.push({ method: request.method!, path, body, key });
+    if (path === "/api/capabilities") {
+      response.end(JSON.stringify({ vardEditRevision: 1 }));
+      return;
+    }
     if (path.endsWith("/manifest")) {
       if (previewConflict) {
         response.statusCode = 409;
@@ -72,7 +83,7 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
           }),
         );
       } else {
-        const { folderRules: _rules, ...manifest } = definition;
+        const { folderRules: _rules, revision: _revision, ...manifest } = definition;
         response.end(
           JSON.stringify({
             ...manifest,
@@ -90,12 +101,16 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
           }),
         );
       }
-    } else if (request.method === "PATCH") {
+    } else if (request.method === "PATCH" && path.endsWith("/editor")) {
+      const { expectedRevision, ...fields } = body;
       if (key !== "fixture-editor") {
         response.statusCode = 403;
         response.end(JSON.stringify({ error: "Forbidden" }));
+      } else if (expectedRevision !== definition.revision) {
+        response.statusCode = 409;
+        response.end(JSON.stringify({ code: "vard_revision_conflict", error: "Vard changed; reload before saving.", currentRevision: definition.revision }));
       } else if (
-        !Object.keys(body).length ||
+        !Object.keys(fields).length ||
         body.folderRules?.[0]?.sourcePrefix === "../"
       ) {
         response.statusCode = 400;
@@ -107,7 +122,8 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
           }),
         );
       } else {
-        definition = { ...definition, ...body };
+        definition = { ...definition, ...fields };
+        definition.revision = revision();
         response.end(JSON.stringify(definition));
       }
     } else if (
@@ -117,7 +133,7 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
       response.statusCode = 201;
       response.end(JSON.stringify({ ...definition, ...body }));
     } else if (
-      path === "/api/workspaces/workspace/vards/vard" &&
+      path === "/api/workspaces/workspace/vards/vard/editor" &&
       request.method === "GET"
     ) {
       response.end(JSON.stringify(definition));
@@ -152,7 +168,9 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
   const [editor, reader] = clients as [Client, Client];
   const args = { workspaceId: "workspace", vardId: "vard" };
   const tool = (name: string, extra = {}) =>
-    editor.callTool({ name, arguments: { ...args, ...extra } });
+    editor.callTool({ name, arguments: {
+      ...args, ...(name === "update_vard" ? { expectedRevision: definition.revision } : {}), ...extra,
+    } });
   const listed = (await editor.listTools()).tools;
   assert.ok(
     listed.find(({ name }) => name === "update_vard")?.inputSchema.properties
@@ -175,7 +193,7 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
   const resolved = JSON.parse(text(await tool("get_vard", { resolved: true })));
   assert.deepEqual(
     resolved.items.map((item: { id: string }) => item.id),
-    ["manual-id", "folder:generated"],
+    [manualId, "folder:generated"],
   );
   assert.equal(resolved.items[1].writable, false);
   assert.equal(resolved.folderRules, undefined);
@@ -184,12 +202,13 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
   );
   assert.deepEqual(
     configAfterPreview.items.map((item: { id: string }) => item.id),
-    ["manual-id"],
+    [manualId],
   );
   assert.deepEqual(configAfterPreview.folderRules, rules);
-  const renamed = await tool("update_vard", { name: "Renamed" });
+  const beforeRename = definition.revision;
+  const renamed = await tool("update_vard", { expectedRevision: beforeRename, name: "Renamed" });
   assert.notEqual(renamed.isError, true);
-  assert.deepEqual(calls.at(-1)?.body, { name: "Renamed" });
+  assert.deepEqual(calls.at(-1)?.body, { expectedRevision: beforeRename, name: "Renamed" });
   assert.equal(definition.isPublic, true);
   assert.deepEqual(definition.folderRules, rules);
   for (const folderRules of [
@@ -198,17 +217,18 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
     [{ sourcePrefix: "not-yet/", outputPrefix: "assets/" }],
     rules,
   ]) {
+    const expectedRevision = definition.revision;
     const saved = await tool("update_vard", { folderRules });
     assert.notEqual(saved.isError, true);
-    assert.deepEqual(calls.at(-1)?.body, { folderRules });
+    assert.deepEqual(calls.at(-1)?.body, { expectedRevision, folderRules });
     const config = JSON.parse(text(saved)) as VardDefinition;
     assert.deepEqual(config.folderRules, folderRules);
-    assert.equal(config.items[0]?.id, "manual-id");
+    assert.equal(config.items[0]?.id, manualId);
     assert.equal(config.isPublic, true);
   }
   const denied = await reader.callTool({
     name: "update_vard",
-    arguments: { ...args, folderRules: [] },
+    arguments: { ...args, expectedRevision: definition.revision, folderRules: [] },
   });
   assert.equal(denied.isError, true);
   assert.match(text(denied), /Forbidden.*403/);
@@ -251,7 +271,7 @@ test("MCP stdio folder configuration, resolved preview, omission, validation and
   assert.ok(
     calls.every(
       ({ path, key }) =>
-        path.startsWith("/api/workspaces/workspace/vards") &&
+        (path === "/api/capabilities" || path.startsWith("/api/workspaces/workspace/vards")) &&
         key?.startsWith("fixture-"),
     ),
   );

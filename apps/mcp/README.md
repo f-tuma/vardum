@@ -14,6 +14,11 @@ Copy the workspace ID from Settings → General for tool calls.
 This README targets published MCP **0.2.0**; see [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
 The published 0.1.0 artifact has a broken workspace dependency.
 
+The revision-guarded editor behavior and inputs documented below are source for the
+**next client release**, which is required to use them. They are separate from the
+pending CLI 0.7.0 / shared 0.3.0 / MCP 0.3.0 candidate. Package versions and the
+published 0.2.0 setup examples remain unchanged here.
+
 Claude Code:
 
 ```sh
@@ -62,9 +67,29 @@ an asset key as an owner does not make it an administration credential.
 assets in pages of 100 by default (`limit`: 1–500); pass `nextCursor` as `cursor`
 until it is null. Pending/failed versions are not listed.
 
-`replace_vard_items` pins with `versionId: "<ready-version-uuid>"` and
-`writable: false`. Omit `versionId` or send null to follow latest. The old
-`pinned` boolean is rejected: it never identified a specific version for the API.
+`get_vard` returns a revision and manual mappings with stable IDs and literal
+`pinnedVersionId`. `update_vard`, `replace_vard_items`, and `delete_vard` require
+the caller's original `expectedRevision`. `replace_vard_items` also requires each
+item's `id` (existing manual UUID, or null for a new mapping) and an explicit
+`versionId` (UUID or null). Copy `pinnedVersionId` to `versionId` literally,
+including an unavailable saved pin. A resolved `versionId` describes delivery and
+must never be used to infer the pin. Null follows latest; pinned items must be
+read-only. The old `pinned` boolean is rejected.
+
+These editor tools check `vardEditRevision: 1` and use dedicated `/editor`
+endpoints. An unsupported server, missing revision or missing endpoint stops the
+operation; there is no fallback to a legacy mutation. `update_vard` and
+`replace_vard_items` require API read + update permissions because they return the
+full definition. `delete_vard` requires delete permission.
+
+The revision is an opaque `v1:<64 lowercase hex digits>` equality token for the
+saved definition, not a counter. Keep it unchanged. After a successful update or
+replacement, retain the full returned definition and revision for the next edit.
+A stale write returns a structured MCP tool error with `status: 409`,
+`code: "vard_revision_conflict"`, `error: "Vard changed; reload before saving."`,
+`currentRevision`, and a reload instruction. Reload with `get_vard`, review the
+current definition, and reapply the intended edit. The tool does not fetch a fresh
+token or retry a stale replacement list automatically.
 
 Images and video are accepted; video is stored and delivered as-is, and cannot
 be resized or transformed into variants.
@@ -83,12 +108,14 @@ copies. These tools require the matching visibility-capable API in the compatibi
 
 ## Folder rules
 
-Use MCP 0.2.0 with the matching folder-aware API.
-`get_vard` with `workspaceId` and `vardId` returns editable configuration:
-`items` contains **manual mappings only**, and `folderRules` contains saved rules.
+Use the next MCP client release with a server advertising `vardEditRevision: 1`.
+`get_vard` with `workspaceId` and `vardId` returns editable configuration and its
+revision: `items` contains **manual mappings only**, and `folderRules` contains
+saved rules. This uses the dedicated editor endpoint.
 For a separate current live preview use `get_vard` with `resolved: true`; this is
-not a committed frozen snapshot and can fail on collisions or limits without
-blocking configuration inspection or repair.
+not a committed frozen snapshot or an editable definition and does not supply an
+editor revision. It can fail on collisions or limits without blocking
+configuration inspection or repair.
 
 `create_vard` accepts `name`, optional `isPublic` (defaults private), and optional
 `folderRules` (defaults empty); it does not require a slug. `update_vard` changes
@@ -98,10 +125,12 @@ only supplied fields. For example, call it with:
 {
   "workspaceId": "your-workspace-id",
   "vardId": "your-vard-id",
+  "expectedRevision": "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "folderRules": [{ "sourcePrefix": "brand/", "outputPrefix": "assets/brand/" }]
 }
 ```
 
+Use the revision from the preceding `get_vard`; the token above is illustrative.
 This preserves the Vard's name, public flag and manual item IDs. Send
 `folderRules: []` to remove all rules. `replace_vard_items` replaces only manual
 mappings and does not change rules: **never copy resolved folder outputs into it**.

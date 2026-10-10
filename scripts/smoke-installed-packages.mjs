@@ -199,14 +199,19 @@ export async function checkInstalledPackages({
         folderRules: [{ sourcePrefix: "pkg/", outputPrefix: "assets/folder/" }],
       });
       assert.equal(vard.isPublic, false);
+      const initialDefinition = await tool("get_vard", { vardId: vard.id }, reader);
+      assert.match(initialDefinition.revision, /^v1:[a-f0-9]{64}$/);
       const items = [
         {
+          id: null,
+          versionId: null,
           assetId: asset.id,
           outputPath: "assets/editable.svg",
           writable: true,
           transformation: null,
         },
         {
+          id: null,
           assetId: asset.id,
           outputPath: "assets/pinned.svg",
           versionId: firstVersion,
@@ -214,13 +219,20 @@ export async function checkInstalledPackages({
           transformation: null,
         },
         {
+          id: null,
+          versionId: null,
           assetId: asset.id,
           outputPath: "assets/logo.png",
           writable: false,
           transformation: { w: 8, format: "png" },
         },
       ];
-      await tool("replace_vard_items", { vardId: vard.id, items });
+      const firstDefinition = await tool("replace_vard_items", {
+        vardId: vard.id, expectedRevision: initialDefinition.revision, items,
+      });
+      assert.match(firstDefinition.revision, /^v1:[a-f0-9]{64}$/);
+      assert.equal(firstDefinition.items.length, 3);
+      assert.deepEqual(firstDefinition.folderRules, initialDefinition.folderRules);
       // The old boolean could be silently discarded by the API. Reject it now.
       assert.equal(
         (
@@ -229,6 +241,7 @@ export async function checkInstalledPackages({
             arguments: {
               workspaceId,
               vardId: vard.id,
+              expectedRevision: firstDefinition.revision,
               items: [{ ...items[1], pinned: true }],
             },
           })
@@ -236,15 +249,51 @@ export async function checkInstalledPackages({
         true,
       );
       const definition = await tool("get_vard", { vardId: vard.id }, reader);
+      assert.deepEqual(definition, firstDefinition);
       const pinned = definition.items.find(
         (item) => item.outputPath === "assets/pinned.svg",
       );
       assert.equal(pinned.pinned, true);
       assert.equal(pinned.versionId, firstVersion);
-      await tool("update_vard", {
+      assert.equal(pinned.pinnedVersionId, firstVersion);
+      assert.equal(definition.items.find((item) => item.outputPath === "assets/editable.svg").pinnedVersionId, null);
+      const renamed = await tool("update_vard", {
         vardId: vard.id,
+        expectedRevision: definition.revision,
         name: "Renamed package contract",
       });
+      assert.notEqual(renamed.revision, definition.revision);
+      assert.deepEqual(renamed.items, definition.items);
+      // A whole-list round trip must keep manual identity and literal saved pins.
+      // Resolved versionId on the editable item must never accidentally pin it.
+      const savedItems = renamed.items.map((item) => ({
+        id: item.id, assetId: item.assetId, versionId: item.pinnedVersionId,
+        outputPath: item.outputPath, writable: item.writable, transformation: item.transformation,
+      }));
+      const unchanged = await tool("replace_vard_items", {
+        vardId: vard.id, expectedRevision: renamed.revision, items: savedItems,
+      });
+      assert.equal(unchanged.revision, renamed.revision);
+      assert.deepEqual(unchanged.items, renamed.items);
+      assert.deepEqual(unchanged.folderRules, renamed.folderRules);
+      for (const [name, staleFields] of [
+        ["update_vard", { name: "Stale package contract" }],
+        ["replace_vard_items", { items: savedItems }],
+        ["delete_vard", {}],
+      ]) {
+        const conflict = await writer.callTool({ name, arguments: {
+          workspaceId, vardId: vard.id, expectedRevision: definition.revision, ...staleFields,
+        } });
+        assert.equal(conflict.isError, true);
+        const detail = JSON.parse(conflict.content[0].text);
+        assert.deepEqual(conflict.structuredContent, detail);
+        assert.equal(detail.status, 409);
+        assert.equal(detail.code, "vard_revision_conflict");
+        assert.equal(detail.error, "Vard changed; reload before saving.");
+        assert.equal(detail.currentRevision, unchanged.revision);
+        assert.match(detail.instruction, /Reload with get_vard.*review/);
+      }
+      assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), unchanged);
       assert.equal(
         (await tool("get_vard", { vardId: vard.id, resolved: true })).items
           .length,
@@ -255,11 +304,17 @@ export async function checkInstalledPackages({
           (item) => item.id === vard.id,
         ),
       );
-      const deniedVard = await reader.callTool({
-        name: "update_vard",
-        arguments: { workspaceId, vardId: vard.id, name: "Forbidden" },
-      });
-      assert.equal(deniedVard.isError, true);
+      for (const [name, fields] of [
+        ["update_vard", { name: "Forbidden" }],
+        ["replace_vard_items", { items: savedItems }],
+        ["delete_vard", {}],
+      ]) {
+        const deniedVard = await reader.callTool({ name, arguments: {
+          workspaceId, vardId: vard.id, expectedRevision: unchanged.revision, ...fields,
+        } });
+        assert.equal(deniedVard.isError, true);
+      }
+      assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), unchanged);
 
       const project = join(root, "project");
       const configHome = join(root, "credentials");
@@ -413,7 +468,8 @@ export async function checkInstalledPackages({
       const extraAsset = importedAssets.find((item) => item.key === "pkg/extra");
       assert.ok(extraAsset);
       console.log("Installed CLI additive folder import: real storage/worker, dry-run/scope denial, preserved mappings, repeat0, separate pull passed");
-      await tool("delete_vard", { vardId: vard.id });
+      const beforeDelete = await tool("get_vard", { vardId: vard.id }, reader);
+      await tool("delete_vard", { vardId: vard.id, expectedRevision: beforeDelete.revision });
       await writeFile(lockPath, originalLock);
       await rm(join(project, "assets"), { recursive: true });
       const restored = await run(
@@ -450,7 +506,7 @@ export async function checkInstalledPackages({
       );
       assert.deepEqual([...exercised].sort(), expectedTools);
       console.log(
-        "Installed CLI: login callback, private pull/push, pin, old snapshot restore without Vard, logout passed; installed MCP: all 11 tools, pagination, resources and scope denials passed",
+        "Installed CLI: login callback, private pull/push, pin, old snapshot restore without Vard, logout passed; installed MCP: all 11 tools, guarded editor revisions, stable IDs/pins, stale conflicts, pagination, resources and scope denials passed",
       );
     } finally {
       await Promise.all(clients.map((client) => client.close()));

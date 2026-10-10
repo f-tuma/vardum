@@ -36,6 +36,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   let storageFailure = false;
   let deleteFailure: boolean | ((key: string) => boolean) = false;
   let beforeObjectRead: (key: string) => Promise<void> = async () => {};
+  let beforeObjectCopy: (key: string) => Promise<boolean> = async () => false;
   const objectServer = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://objects.invalid");
     const key = decodeURIComponent(url.pathname.replace(/^\/fixture\//, ""));
@@ -77,6 +78,11 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     if (req.method === "PUT") {
       const source = req.headers["x-amz-copy-source"];
       if (source) {
+        if (await beforeObjectCopy(key)) {
+          res.statusCode = 403;
+          res.setHeader("content-type", "application/xml");
+          return res.end("<Error><Code>AccessDenied</Code></Error>");
+        }
         objects.set(key, Buffer.from("copy"));
         res.setHeader("content-type", "application/xml");
         return res.end(
@@ -1805,6 +1811,12 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     const { checkVardImport } = await import("./vard-import.fixture.js");
     await checkVardImport(importTest, { admin: admin!, app, objects, keyHeaders, cookies,
       setReadHook: (hook) => { beforeObjectRead = hook; },
+    });
+  });
+  await t.test("VARD guarded editor under the production database role", async (editorTest) => {
+    const { checkVardEditor } = await import("./vard-editor.fixture.js");
+    await checkVardEditor(editorTest, { admin: admin!, app, objects, keyHeaders, cookies,
+      setCopyHook: (hook) => { beforeObjectCopy = hook; },
     });
   });
   await t.test("VARD import through the real CLI, uploads, worker and pull", async (importCliTest) => {
