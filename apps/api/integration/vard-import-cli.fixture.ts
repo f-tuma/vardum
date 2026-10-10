@@ -114,8 +114,17 @@ export async function checkVardImportCli(
     await new Promise<void>((resolve) => bridge.close(() => resolve()));
     await admin.query("DELETE FROM vard WHERE id=$1", [vardId]);
     const rows = (await admin.query(
-      "SELECT av.storage_key FROM asset_version av JOIN asset a ON a.id=av.asset_id WHERE starts_with(a.key,$1)", [prefix],
+      "SELECT av.storage_key,av.ingest_job_id FROM asset_version av JOIN asset a ON a.id=av.asset_id WHERE starts_with(a.key,$1)", [prefix],
     )).rows;
+    // The bridge invokes processing directly, so it must also retire its own
+    // durable jobs before deleting the corresponding fixture assets.
+    const { boss, assetIngestQueue } = await import("../src/queue.js");
+    for (const row of rows) {
+      if (!row.ingest_job_id) continue;
+      await boss.cancel(assetIngestQueue, row.ingest_job_id);
+      const job = await boss.getJobById(assetIngestQueue, row.ingest_job_id);
+      assert.ok(!job || !["created", "retry", "active"].includes(job.state));
+    }
     await admin.query("DELETE FROM asset WHERE starts_with(key,$1)", [prefix]);
     for (const row of rows) objects.delete(row.storage_key);
   });

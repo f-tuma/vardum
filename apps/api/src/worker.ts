@@ -33,6 +33,9 @@ process.once("SIGTERM", shutdown);
 try {
   if (config.NODE_ENV === "production") await assertRuntimeDatabaseRole(pool);
   const queue = await startQueue();
+  // A killed worker can leave the exclusive recovery queue occupied. Scan
+  // directly before local workers start, independently of that queue's lease.
+  await reconcileAssetIngest();
   await queue.schedule(uploadCleanupQueue, "* * * * *");
   await queue.work(uploadCleanupQueue, async () => {
     await cleanupPendingUploads();
@@ -42,8 +45,6 @@ try {
   await queue.work(assetIngestRecoveryQueue, async () => {
     await reconcileAssetIngest();
   });
-  // Also recover jobs left behind while every worker was stopped.
-  await queue.send(assetIngestRecoveryQueue, {});
   await queue.schedule(deliveryRetentionQueue, "0 3 * * *", null, {
     tz: "UTC",
   });
