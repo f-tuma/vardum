@@ -16,13 +16,15 @@ ENV VITE_UPLOAD_ORIGINS=$VITE_UPLOAD_ORIGINS
 RUN pnpm --filter "@vardum/gateway..." build
 
 FROM nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 AS gateway-base
-# Fixed Alpine packages verified in the official 3.24 index on 2026-10-03.
+# Fixed Alpine packages verified in the official 3.24 index on 2026-10-10.
 # Keep security upgrades exact and fail the build if that input is unavailable.
 RUN apk add --no-cache --upgrade \
   libexpat=2.8.5-r0 \
   libpng=1.6.59-r0 \
   nghttp2-libs=1.70.0-r0 \
-  pcre2=10.49-r0
+  pcre2=10.49-r0 \
+  tiff=4.7.2-r0 \
+  zlib=1.3.2-r1
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/apps/gateway/dist /usr/share/nginx/html
 EXPOSE 80

@@ -22,6 +22,17 @@ pnpm install
 pnpm dev
 ```
 
+The API uses `WEB_URL` as its explicit frontend origin for CORS and authentication.
+It defaults to `http://localhost:5173`. For a remote development frontend, set
+`WEB_URL` in `.env` to its exact origin, including scheme, host and port (for
+example, `https://dev.example.com:5173`), then restart the development processes.
+Development mode does not add another remote origin.
+
+`BETTER_AUTH_URL` is the API/auth base URL, configured separately from the frontend
+origin; it defaults to `http://localhost:3000`. Better Auth builds its own trusted
+origin set from this base URL and any `BETTER_AUTH_TRUSTED_ORIGINS` environment
+setting. These do not extend the API CORS allowlist.
+
 ## Outbound email
 
 Docker Compose starts Mailpit for local email capture. The default `.env.example`
@@ -104,6 +115,9 @@ Run the disposable fresh-install check with:
 ```sh
 bash scripts/smoke-production.sh
 ```
+
+The [server candidate procedure](docs/server-release.md) prepares and validates
+a portable bundle with the already-published clients, without publishing npm packages.
 
 Backup, restore and upgrade procedures are documented in
 [`docs/operations.md`](docs/operations.md).

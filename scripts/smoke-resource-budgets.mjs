@@ -1,3 +1,4 @@
+import { candidateComposeArgs } from "./server-candidate.mjs";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
@@ -21,8 +22,8 @@ export async function checkResourceBudgets({
         "-p",
         project,
         "-f",
-        "compose.production.yml",
-        ...args,
+        process.env.SMOKE_COMPOSE_FILE ?? "compose.production.yml",
+        ...candidateComposeArgs(args),
       ],
       { timeout: 60_000 },
     );

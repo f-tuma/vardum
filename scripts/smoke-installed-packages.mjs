@@ -4,7 +4,18 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { run, withInstalledRelease } from "./release-packages.mjs";
+import { run, smokeClientOptions, withInstalledRelease } from "./release-packages.mjs";
+
+// Public compatibility clients predate these source-only protocols. Gate by the
+// actual consumer selection, not the source version (unreleased source was 0.6).
+// Use the same guard when integrating revision-aware MCP editor assertions.
+export async function runInstalledConsumerCheck(feature, { publicRegistry }, action) {
+  assert.ok(["folderVardImport", "vardEditRevision"].includes(feature), "Unknown installed-client feature check");
+  assert.equal(typeof publicRegistry, "boolean", "Explicit installed consumer selection is required");
+  if (publicRegistry) return { status: "unsupported-by-public-compatibility" };
+  await action();
+  return { status: "passed" };
+}
 
 // All mutations belong to smoke-production's disposable Compose workspace.
 // Binaries and the MCP client SDK resolve only from independent npm installs.
@@ -15,7 +26,7 @@ export async function checkInstalledPackages({
   workspaceId,
   otherWorkspaceId,
 }) {
-  await withInstalledRelease(releaseDir, async ({ root, cli, mcp }) => {
+  await withInstalledRelease(releaseDir, async ({ root, cli, mcp, publicRegistry }) => {
     async function api(path, body, method = "POST") {
       const response = await fetch(`${base}${path}`, {
         method,
@@ -326,93 +337,98 @@ export async function checkInstalledPackages({
       await writeFile(join(project, "assets/editable.svg"), svg("green"));
       assert.equal(JSON.parse((await command("push")).stdout).changed, 1);
 
-      // Consume the packed CLI through the real API, RustFS and asynchronous
-      // worker. Import must preserve manual flags/IDs and existing folder rules.
-      const importSource = join(project, "import-source");
-      await mkdir(importSource);
-      await writeFile(join(importSource, "logo.svg"), svg("green"));
-      await writeFile(join(importSource, "extra.svg"), svg("purple"));
-      const beforeImport = await tool("get_vard", { vardId: vard.id }, reader);
-      const beforeImportLock = await readFile(lockPath, "utf8");
-      async function importAssetSnapshot() {
-        const assets = [];
-        let cursor = null;
-        do {
-          const query = new URLSearchParams({ prefix: "pkg/", pagination: "cursor", limit: "100" });
-          if (cursor) query.set("cursor", cursor);
-          const page = await api(`/api/workspaces/${workspaceId}/assets?${query}`, undefined, "GET");
-          assets.push(...page.assets);
-          cursor = page.nextCursor;
-        } while (cursor);
-        return Promise.all(assets.sort((a, b) => a.key.localeCompare(b.key)).map(async (item) => ({
-          id: item.id, key: item.key, isPublic: item.isPublic,
-          currentVersionId: item.currentVersionId, latestVersionId: item.latestVersionId,
-          status: item.status, hasUnfinishedUploads: item.hasUnfinishedUploads,
-          history: await api(`/api/workspaces/${workspaceId}/assets/${item.id}/versions?limit=100`, undefined, "GET"),
-        })));
-      }
-      const beforeImportAssets = await importAssetSnapshot();
-      const importArgs = ["push-folder", "import-source", "pkg/", "--output", "assets/import/"];
-      const plannedImport = JSON.parse((await command(...importArgs, "--dry-run")).stdout);
-      assert.equal(plannedImport.changed, 3);
-      assert.deepEqual(plannedImport.library.map((item) => item.libraryAction).sort(), ["new", "skip"]);
-      assert.ok(plannedImport.mappings.every((item) => item.mappingAction === "add"));
-      async function readPrivateManifest() {
-        const response = await fetch(`${base}/api/workspaces/${workspaceId}/vards/${vard.id}/manifest`, {
-          headers: { "x-api-key": readKey },
+      let extraAsset;
+      const importCheck = await runInstalledConsumerCheck("folderVardImport", { publicRegistry }, async () => {
+        // Consume the packed CLI through the real API, RustFS and asynchronous
+        // worker. Import must preserve manual flags/IDs and existing folder rules.
+        const importSource = join(project, "import-source");
+        await mkdir(importSource);
+        await writeFile(join(importSource, "logo.svg"), svg("green"));
+        await writeFile(join(importSource, "extra.svg"), svg("purple"));
+        const beforeImport = await tool("get_vard", { vardId: vard.id }, reader);
+        const beforeImportLock = await readFile(lockPath, "utf8");
+        async function importAssetSnapshot() {
+          const assets = [];
+          let cursor = null;
+          do {
+            const query = new URLSearchParams({ prefix: "pkg/", pagination: "cursor", limit: "100" });
+            if (cursor) query.set("cursor", cursor);
+            const page = await api(`/api/workspaces/${workspaceId}/assets?${query}`, undefined, "GET");
+            assets.push(...page.assets);
+            cursor = page.nextCursor;
+          } while (cursor);
+          return Promise.all(assets.sort((a, b) => a.key.localeCompare(b.key)).map(async (item) => ({
+            id: item.id, key: item.key, isPublic: item.isPublic,
+            currentVersionId: item.currentVersionId, latestVersionId: item.latestVersionId,
+            status: item.status, hasUnfinishedUploads: item.hasUnfinishedUploads,
+            history: await api(`/api/workspaces/${workspaceId}/assets/${item.id}/versions?limit=100`, undefined, "GET"),
+          })));
+        }
+        const beforeImportAssets = await importAssetSnapshot();
+        const importArgs = ["push-folder", "import-source", "pkg/", "--output", "assets/import/"];
+        const plannedImport = JSON.parse((await command(...importArgs, "--dry-run")).stdout);
+        assert.equal(plannedImport.changed, 3);
+        assert.deepEqual(plannedImport.library.map((item) => item.libraryAction).sort(), ["new", "skip"]);
+        assert.ok(plannedImport.mappings.every((item) => item.mappingAction === "add"));
+        async function readPrivateManifest() {
+          const response = await fetch(`${base}/api/workspaces/${workspaceId}/vards/${vard.id}/manifest`, {
+            headers: { "x-api-key": readKey },
+          });
+          assert.equal(response.status, 200, "The read-only key must retain authenticated private Vard access");
+          return response.json();
+        }
+        async function importLocalSnapshot() {
+          return Promise.all([
+            "vardum.json", ".vardum.lock", ".vardum.push.lock",
+            ".vardum.push.pending.json", ".vardum.push.mutex",
+            "import-source/logo.svg", "import-source/extra.svg",
+          ].map(async (path) => {
+            try { return await readFile(join(project, path)); }
+            catch (error) { if (error.code === "ENOENT") return null; throw error; }
+          }));
+        }
+        const beforeDeniedManifest = await readPrivateManifest();
+        const beforeDeniedLocal = await importLocalSnapshot();
+        // Better Auth masks insufficient API-key grants as KEY_NOT_FOUND (401).
+        // Private reads before and after distinguish this from invalid credentials.
+        await assert.rejects(run(process.execPath, [cli.binary, ...importArgs, "--dry-run", "--json"], {
+          cwd: project, env: { ...env, VARDUM_API_KEY: readKey }, timeout: 30_000,
+        }), (error) => {
+          assert.equal(error.code, 1);
+          assert.equal(error.stdout, "");
+          const denied = JSON.parse(error.stderr);
+          assert.equal(denied.error, "Unauthorized (401)");
+          for (const field of ["actions", "library", "mappings"])
+            assert.deepEqual(denied[field], []);
+          return true;
         });
-        assert.equal(response.status, 200, "The read-only key must retain authenticated private Vard access");
-        return response.json();
-      }
-      async function importLocalSnapshot() {
-        return Promise.all([
-          "vardum.json", ".vardum.lock", ".vardum.push.lock",
-          ".vardum.push.pending.json", ".vardum.push.mutex",
-          "import-source/logo.svg", "import-source/extra.svg",
-        ].map(async (path) => {
-          try { return await readFile(join(project, path)); }
-          catch (error) { if (error.code === "ENOENT") return null; throw error; }
-        }));
-      }
-      const beforeDeniedManifest = await readPrivateManifest();
-      const beforeDeniedLocal = await importLocalSnapshot();
-      // Better Auth masks insufficient API-key grants as KEY_NOT_FOUND (401).
-      // Private reads before and after distinguish this from invalid credentials.
-      await assert.rejects(run(process.execPath, [cli.binary, ...importArgs, "--dry-run", "--json"], {
-        cwd: project, env: { ...env, VARDUM_API_KEY: readKey }, timeout: 30_000,
-      }), (error) => {
-        assert.equal(error.code, 1);
-        assert.equal(error.stdout, "");
-        const denied = JSON.parse(error.stderr);
-        assert.equal(denied.error, "Unauthorized (401)");
-        for (const field of ["actions", "library", "mappings"])
-          assert.deepEqual(denied[field], []);
-        return true;
+        assert.deepEqual(await readPrivateManifest(), beforeDeniedManifest);
+        assert.deepEqual(await importLocalSnapshot(), beforeDeniedLocal);
+        assert.deepEqual(await importAssetSnapshot(), beforeImportAssets);
+        assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), beforeImport);
+        assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 3);
+        const imported = await tool("get_vard", { vardId: vard.id }, reader);
+        for (const previous of beforeImport.items)
+          assert.deepEqual(imported.items.find((item) => item.id === previous.id), previous);
+        assert.equal(imported.items.length, beforeImport.items.length + 2);
+        assert.equal(await readFile(lockPath, "utf8"), beforeImportLock);
+        assert.equal(await readFile(join(importSource, "logo.svg"), "utf8"), svg("green"));
+        assert.equal(await readFile(join(importSource, "extra.svg"), "utf8"), svg("purple"));
+        const importedAssets = await importAssetSnapshot();
+        assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 0);
+        assert.deepEqual((await tool("get_vard", { vardId: vard.id }, reader)).items, imported.items);
+        assert.deepEqual(await importAssetSnapshot(), importedAssets);
+        await command("pull");
+        assert.equal(Object.keys(JSON.parse(await readFile(lockPath, "utf8")).items).length, 7);
+        assert.equal(await readFile(join(project, "assets/import/logo.svg"), "utf8"), svg("green"));
+        assert.equal(await readFile(join(project, "assets/import/extra.svg"), "utf8"), svg("purple"));
+        assert.equal(await readFile(join(project, "assets/folder/extra.svg"), "utf8"), svg("purple"));
+        extraAsset = importedAssets.find((item) => item.key === "pkg/extra");
+        assert.ok(extraAsset);
+        console.log("Installed CLI additive folder import: real storage/worker, dry-run/scope denial, preserved mappings, repeat0, separate pull passed");
       });
-      assert.deepEqual(await readPrivateManifest(), beforeDeniedManifest);
-      assert.deepEqual(await importLocalSnapshot(), beforeDeniedLocal);
-      assert.deepEqual(await importAssetSnapshot(), beforeImportAssets);
-      assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), beforeImport);
-      assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 3);
-      const imported = await tool("get_vard", { vardId: vard.id }, reader);
-      for (const previous of beforeImport.items)
-        assert.deepEqual(imported.items.find((item) => item.id === previous.id), previous);
-      assert.equal(imported.items.length, beforeImport.items.length + 2);
-      assert.equal(await readFile(lockPath, "utf8"), beforeImportLock);
-      assert.equal(await readFile(join(importSource, "logo.svg"), "utf8"), svg("green"));
-      assert.equal(await readFile(join(importSource, "extra.svg"), "utf8"), svg("purple"));
-      const importedAssets = await importAssetSnapshot();
-      assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 0);
-      assert.deepEqual((await tool("get_vard", { vardId: vard.id }, reader)).items, imported.items);
-      assert.deepEqual(await importAssetSnapshot(), importedAssets);
-      await command("pull");
-      assert.equal(Object.keys(JSON.parse(await readFile(lockPath, "utf8")).items).length, 7);
-      assert.equal(await readFile(join(project, "assets/import/logo.svg"), "utf8"), svg("green"));
-      assert.equal(await readFile(join(project, "assets/import/extra.svg"), "utf8"), svg("purple"));
-      assert.equal(await readFile(join(project, "assets/folder/extra.svg"), "utf8"), svg("purple"));
-      const extraAsset = importedAssets.find((item) => item.key === "pkg/extra");
-      assert.ok(extraAsset);
-      console.log("Installed CLI additive folder import: real storage/worker, dry-run/scope denial, preserved mappings, repeat0, separate pull passed");
+      if (importCheck.status !== "passed")
+        console.log("Public compatibility CLI 0.6.0: new folder import protocol is outside this acceptance scope");
       await tool("delete_vard", { vardId: vard.id });
       await writeFile(lockPath, originalLock);
       await rm(join(project, "assets"), { recursive: true });
@@ -443,7 +459,7 @@ export async function checkInstalledPackages({
         401,
       );
       await tool("delete_asset", { assetId: asset.id });
-      await tool("delete_asset", { assetId: extraAsset.id });
+      if (extraAsset) await tool("delete_asset", { assetId: extraAsset.id });
       assert.deepEqual(
         (await tool("list_assets", { prefix: "pkg/" })).assets,
         [],
@@ -455,7 +471,7 @@ export async function checkInstalledPackages({
     } finally {
       await Promise.all(clients.map((client) => client.close()));
     }
-  });
+  }, smokeClientOptions());
 }
 
 export async function loginCli({ cli, project, env, base, workspaceId, api, access = "write" }) {

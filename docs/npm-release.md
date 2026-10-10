@@ -43,6 +43,10 @@ and conflicting integrity values fail immediately.
 Older CLI 0.5.0 / MCP 0.1.0 have unsupported `workspace:^` dependencies and remain
 immutable. Install the published compatible versions below.
 
+The separate [server candidate procedure](server-release.md) validates the new
+server with the explicit public compatibility versions through migrations 0011–0015.
+The npm release workflow does not prepare or publish that server artifact.
+
 ## Compatibility
 
 | Component | Published baseline | Compatibility notes |
