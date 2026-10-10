@@ -114,7 +114,7 @@ old database current; each fresh candidate requires a fresh online database.
 
 The disposable probes use the tested immutable images with their normal inherited
 entrypoint. Each of the standard, marketing and loopback fallback configurations
-must pass nginx validation and 29 HTTP assertions, including exact static bundle
+must pass nginx validation and 39 HTTP assertions, including exact static bundle
 bytes, every SPA route prefix, API/delivery/health routing, legacy assets,
 forwarded headers and method/body/query preservation.
 
@@ -495,3 +495,120 @@ Exact exports, complete raw scans, the scanner database and full independent
 ledgers remain local. CI retains approved JSON/text evidence only. These checks
 do not approve a production rollout, provider certificates/resolver settings,
 fonts, the clean portable candidate or publication.
+
+
+## VARD-73 gateway Alpine package fixes: 10 October 2026
+
+The pre-patch VARD-72 local runtime scan inventoried Alpine 3.24.2 and 71 OS
+packages in the actual standard gateway. It recorded two fixed-version findings:
+
+| Finding | Severity | Installed package | Alpine fixed package |
+| --- | --- | --- | --- |
+| CVE-2026-4775 | HIGH | `tiff 4.7.1-r0` | `tiff 4.7.2-r0` |
+| CVE-2026-85091 | MEDIUM | `zlib 1.3.2-r0` | `zlib 1.3.2-r1` |
+
+The downloaded VARD-71 CI and npm-release sanitized summaries also recorded the
+TIFF HIGH finding. Their successful production smoke status and the historical
+3 October zero-gateway-finding scan do not clear it. The local VARD-72 report
+recorded source HEAD `ce7841a4a912b3f3aa3f990687f7935ff92befeb` with dirty changes;
+it is implementation evidence, not final clean-artifact acceptance. Its gateway
+raw scan SHA-256 is
+`d55a80789265856ac119b1212fd7ea37ae5dcd95954361600db65976633aecd9`.
+The retained Trivy 0.75.0 database was updated at
+`2026-10-10T12:33:35.352381306Z`, with SHA-256
+`56e17f3bd7565b1e6d865fbd2b7d98b99e83315883c0afa50c24e6f676248ad5`.
+These are pre-patch findings and identities, not results for the new pins.
+
+Official public Alpine metadata was fetched with normal TLS verification at
+17:37 UTC on 10 October. The
+[Alpine 3.24 main x86_64 package catalog](https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/APKINDEX.tar.gz)
+contains both exact fixed versions and the four existing package pins. The
+[Alpine 3.24 main security database](https://secdb.alpinelinux.org/v3.24/main.json)
+assigns CVE-2026-4775 to `tiff 4.7.2-r0` and CVE-2026-85091 to
+`zlib 1.3.2-r1`. HTTP HEAD requests to both exact APK URLs returned 200 at
+17:38 UTC. This verifies catalog availability for linux/amd64; it does not prove
+an installation or package result in a rebuilt image.
+
+| Official metadata snapshot | SHA-256 |
+| --- | --- |
+| Alpine 3.24 main x86_64 APKINDEX archive | `24fc2ccb08f3125429a38b31bd6c76a7b394c6236df0975760dc8259e50dfbd5` |
+| Alpine 3.24 main security database | `715e2255b2022ce2ed976ede172cf7eb519ba5ce6dcd2dbddaf3049b2473431d` |
+
+The [Alpine TIFF recipe](https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.24-stable/main/tiff/APKBUILD)
+updates the library to 4.7.2 and names the TIFF CVE in its security fixes. The
+[upstream 4.7.2 release notes](https://gitlab.com/libtiff/libtiff/-/raw/v4.7.2/doc/releases/v4.7.2.rst)
+include pointer-arithmetic and integer-overflow fixes and record no API/ABI
+breaks. The
+[Alpine zlib recipe](https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.24-stable/main/zlib/APKBUILD)
+and [backport](https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.24-stable/main/zlib/CVE-2026-85091.patch)
+apply [upstream commit df84af25dc1942490e1d1c899a07619152a46148](https://github.com/madler/zlib/commit/df84af25dc1942490e1d1c899a07619152a46148)
+for the nonblocking `gzwrite` buffer overflow. A distro revision change is
+necessary even though zlib's upstream version remains 1.3.2.
+
+The pre-patch package inventory includes `nginx-module-image-filter 1.30.5-r1`,
+which depends on `libgd 2.3.3-r10`, which depends on TIFF and zlib. nginx also
+directly depends on zlib. The main nginx `-V` output lacks the built-in
+image-filter option; a separate dynamic image-filter module is installed. All
+saved standard, marketing and loopback-fallback effective configurations lack
+both `load_module` and `image_filter` directives. The
+[nginx module documentation](https://nginx.org/en/docs/http/ngx_http_image_filter_module.html)
+identifies image filtering as optional and dependent on libgd. Installed module
+presence does not establish use, and a currently unloaded module does not make
+the vulnerable package fixed or justify suppressing its HIGH finding. Other
+provider configurations require their own assessment.
+
+The shared `gateway-base` stage adds exact `tiff=4.7.2-r0` and `zlib=1.3.2-r1`
+upgrades for both `runtime` and `dokploy`. The pinned nginx base and existing
+libexpat, libpng, nghttp2-libs and pcre2 versions remain the inputs. An unavailable
+exact version must fail the build.
+
+Local rebuilt-image acceptance completed on 10 October. Full disposable
+production smoke and the separate actual-target vendor-fix check both exited 0.
+They used source HEAD `6638ac979da0e768d276603d0f8301b724fe4c01` with the two-file
+dirty implementation diff and gateway Dockerfile SHA-256
+`6508229913bf986aa256cb33acfb109434a2c2aed92a66eb1e48ed4e9ff3163a`.
+The check confirmed installed `tiff 4.7.2-r0` and `zlib 1.3.2-r1` in both Alpine
+gateway targets. Each complete 71-package inventory has zero reported findings
+with the pinned Trivy 0.75.0 scanner. The distinct Dokploy image was scanned
+separately; the standard gateway scan alone does not establish that result.
+
+| Alpine gateway target | Actual image ID | Export SHA-256 | Raw scan SHA-256 |
+| --- | --- | --- | --- |
+| `runtime` | `sha256:5d585c6139f310658a9d50f78d3465ee1da4192eca3e1f90000686183e7c7368` | `16871638ddec619d30e292837738ed17b81b2f11ca9a1a90fd3f4a0ab1076e2d` | `43507acbaff870411e4cc8adf9b32aedc5126f7714074502a9c1b43ee4d89781` |
+| `dokploy` | `sha256:dc47452530aff3fd9c153f30c019e4a9b4696a33f7598b8ded0a81e3188a7a5e` | `b49b7f36361f897e49dda47548b914d3eff741b5188d288938349294ac936171` | `61fdca5db0ef063be95db380135dccd3ef95ac0eaa639e46c78223ee5f0d844a` |
+
+Both target scans use the same freshly downloaded database, updated at
+`2026-10-10T12:33:35.352381306Z` and downloaded at
+`2026-10-10T17:49:01.908976517Z`. Its SHA-256 is
+`56e17f3bd7565b1e6d865fbd2b7d98b99e83315883c0afa50c24e6f676248ad5`;
+metadata SHA-256 is
+`13bf5afebe20f3788bfae070b13a2c4a28a68427b13c0dd6a01220b216c5cadb`.
+The separate `gateway-vendor-fix-evidence.json` SHA-256 is
+`9e5965c227a032fd36b81e1b8e6dfe45dea5dab8433d3f5003f023dbb09cb12d`.
+Full archives, raw reports and the scanner database remain local; they were not
+uploaded or published.
+
+The full smoke passed the public CLI 0.6.0/MCP 0.2.0 lifecycle and independent
+installed-client checks, storage outages/recovery, fixture resource budgets,
+a 3,512,199-byte upload, deployed SVG/AVIF and runtime database-role/RLS checks.
+The checksum-bound clean-stack restore preserved 30 objects / 11,355,854 object
+bytes and 118,265 database bytes; backup took 2,025 ms and restore plus acceptance
+took 41,140 ms. The application TLS matrix passed all 42 cases. Both gateway
+probe suites passed all three modes with 39 HTTP assertions each, changed-IP
+API/marketing DNS recovery and absent-upstream cold start without nginx
+restarts/reloads. These fixture results do not establish production capacity.
+
+The Debian API retains the same 31 OS finding rows as VARD-72: 23 MEDIUM and
+eight LOW. This includes unfixed CVE-2026-85091 on Debian
+`zlib1g 1:1.3.dfsg+really1.3.1-1+b1`; the Alpine gateway package fix does not
+clear that separate API record. Zero reported findings is bounded to these two
+Alpine gateway targets and this database, not every bundled native component.
+The documentation checkpoint does not claim clean post-commit CI. Independent
+final review, current reviewed-source CI, disposition of material residuals and
+clean VARD-6 artifact/provider acceptance remain separate release requirements.
+
+All severities and material residual findings remain visible; no ignore filter,
+severity downgrade or blanket acceptance is introduced. Deployment-specific
+consent for the existing LOW OpenSSL finding does not accept these gateway
+findings or establish public-release safety. Passing routing, TLS or production
+checks does not replace current vendor and finding assessment.
