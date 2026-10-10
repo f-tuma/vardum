@@ -1,15 +1,25 @@
 name: Release
 
-# Only a matching version tag can publish. Manual dispatch can also validate safely.
+# Source releases publish from a matching tag. Retained validation never publishes.
 on:
     push:
         tags: ["v*"]
     workflow_dispatch:
         inputs:
+            release_mode:
+                description: Validate fresh source archives or a reviewed retained release
+                type: choice
+                options: [source, retained]
+                default: source
+            retained_candidate:
+                description: Reviewed retained-release descriptor (IDs and hashes are not inputs)
+                type: choice
+                options: [vard68-upload-import-v1]
+                default: vard68-upload-import-v1
             validation_only:
                 description: Test release archives and their download without publishing
                 type: boolean
-                default: false
+                default: true
 
 permissions:
     contents: read
@@ -20,6 +30,7 @@ concurrency:
 
 jobs:
     validate:
+        if: github.event_name == 'push' || inputs.release_mode == 'source'
         runs-on: ubuntu-24.04
         timeout-minutes: 30
         outputs:
@@ -85,13 +96,17 @@ jobs:
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: npm-${{ github.sha }}
-                  path: artifacts/npm/
+                  path: |
+                      artifacts/npm/release.json
+                      artifacts/npm/vardum-shared-*.tgz
+                      artifacts/npm/vardum-cli-*.tgz
+                      artifacts/npm/vardum-mcp-*.tgz
                   if-no-files-found: error
                   retention-days: 30
 
     validate-download:
         needs: validate
-        if: github.event_name == 'workflow_dispatch' && inputs.validation_only == true
+        if: github.event_name == 'workflow_dispatch' && inputs.release_mode == 'source' && inputs.validation_only == true
         runs-on: ubuntu-24.04
         timeout-minutes: 10
         permissions:
@@ -113,9 +128,79 @@ jobs:
             - name: Check independent installs from the downloaded archives
               run: bash scripts/smoke-publish.sh artifacts/npm
 
+    retained-validate:
+        if: github.event_name == 'workflow_dispatch' && inputs.release_mode == 'retained'
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        permissions:
+            contents: read
+            actions: read # Origin attempt metadata and retained artifact download
+        env:
+            RETAINED_CANDIDATE: ${{ inputs.retained_candidate }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+              with:
+                  node-version: 22.23.3
+            - name: Require safe retained validation mode
+              env:
+                  RELEASE_VALIDATION_ONLY: ${{ inputs.validation_only }}
+              run: node scripts/retained-release.mjs policy "$RETAINED_CANDIDATE"
+            - name: Verify origin and download exact reviewed archives
+              id: retained_download
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/retained-release.mjs download "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Independently install CLI and MCP with transitive shared resolution
+              id: retained_installs
+              run: node scripts/retained-release.mjs smoke "$RETAINED_CANDIDATE" artifacts/npm
+            - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+            - run: pnpm install --frozen-lockfile
+            - name: Build controller API test dependency (does not build candidate archives)
+              run: pnpm --filter @vardum/shared build
+            - name: Exercise installed candidate upload and import against the controller API
+              id: retained_integration
+              run: |
+                  sudo apt-get update -qq && sudo apt-get install -y postgresql
+                  PG_BINDIR="$(pg_config --bindir)" node scripts/retained-release.mjs integration "$RETAINED_CANDIDATE" artifacts/npm
+            - name: Prepare field-allowlisted retained evidence
+              id: retained_evidence
+              if: always()
+              continue-on-error: true
+              env:
+                  DOWNLOAD_STATUS: ${{ steps.retained_download.outcome }}
+                  INSTALL_STATUS: ${{ steps.retained_installs.outcome }}
+                  INTEGRATION_STATUS: ${{ steps.retained_integration.outcome }}
+              run: node scripts/retained-release.mjs evidence "$RETAINED_CANDIDATE" "${{ runner.temp }}/vardum-retained-sanitized"
+            - name: Retain only named sanitized reports and checksums
+              if: always() && steps.retained_evidence.outcome == 'success'
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: retained-validation-evidence
+                  retention-days: 7
+                  if-no-files-found: error
+                  path: |
+                      ${{ runner.temp }}/vardum-retained-sanitized/retained-summary.json
+                      ${{ runner.temp }}/vardum-retained-sanitized/retained-summary.txt
+                      ${{ runner.temp }}/vardum-retained-sanitized/checksums.txt
+            - name: Preserve only the four original npm files
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: retained-npm-${{ inputs.retained_candidate }}
+                  retention-days: 30
+                  if-no-files-found: error
+                  path: |
+                      artifacts/npm/release.json
+                      artifacts/npm/vardum-shared-0.3.0.tgz
+                      artifacts/npm/vardum-cli-0.7.0.tgz
+                      artifacts/npm/vardum-mcp-0.3.0.tgz
+
     publish:
         needs: validate
         if: >-
+            (github.event_name == 'push' || inputs.release_mode == 'source') &&
             needs.validate.outputs.expected_ref == github.ref &&
             (github.event_name == 'push' ||
             (github.event_name == 'workflow_dispatch' && inputs.validation_only == false))
@@ -151,10 +236,7 @@ jobs:
                   NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private == false }}
             - name: Verify registry integrity and independent npm installs
               run: node scripts/release-packages.mjs verify-registry artifacts/npm
-            - name: Create the GitHub release with the published archives
-              run: |
-                  if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-                    gh release create "$GITHUB_REF_NAME" artifacts/npm/* --generate-notes --verify-tag
-                  fi
+            - name: Create or verify the GitHub release with the published archives
+              run: node scripts/github-release.mjs artifacts/npm
               env:
                   GH_TOKEN: ${{ github.token }}

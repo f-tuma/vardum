@@ -106,7 +106,7 @@ test("workflow publication gate independently enforces event, exact CLI tag and 
   const condition = publish.match(/\n {8}if: >-\n([\s\S]*?)\n {8}runs-on:/)?.[1]
     .trim().replace(/\s+/g, " ");
   assert.equal(condition,
-    "needs.validate.outputs.expected_ref == github.ref && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.validation_only == false))");
+    "(github.event_name == 'push' || inputs.release_mode == 'source') && needs.validate.outputs.expected_ref == github.ref && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.validation_only == false))");
   assert.match(publish, /needs: validate/);
   assert.match(validate, /expected_ref: \$\{\{ steps\.policy\.outputs\.expected_ref \}\}/);
   assert.match(validate, /id: policy\n {14}run: node scripts\/release-policy\.mjs validate/);
@@ -123,15 +123,15 @@ test("workflow publication gate independently enforces event, exact CLI tag and 
 test("manual validation downloads the tested artifact with read-only permissions", () => {
   const validate = workflowJob("validate");
   const download = workflowJob("validate-download");
-  assert.match(workflow, /validation_only:\n {16}description:.*\n {16}type: boolean\n {16}default: false/);
+  assert.match(workflow, /validation_only:\n {16}description:.*\n {16}type: boolean\n {16}default: true/);
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.match(download, /needs: validate/);
-  assert.match(download, /if: github\.event_name == 'workflow_dispatch' && inputs\.validation_only == true/);
+  assert.match(download, /if: github\.event_name == 'workflow_dispatch' && inputs\.release_mode == 'source' && inputs\.validation_only == true/);
   assert.match(download, /permissions:\n {12}contents: read/);
   assert.match(validate, /uses: actions\/upload-artifact@[a-f0-9]{40}/);
   for (const job of [validate, download]) {
     assert.match(job, /name: npm-\$\{\{ github\.sha \}\}/);
-    assert.match(job, /path: artifacts\/npm\//);
+    assert.match(job, /artifacts\/npm\//);
     assert.doesNotMatch(job, /environment:|id-token:|contents: write|release-packages\.mjs (?:publish|verify-registry)|npm publish|gh release/);
   }
   assert.match(download, /uses: actions\/download-artifact@[a-f0-9]{40}/);
