@@ -2,19 +2,28 @@
 
 ## Current status
 
-Reviewed **2026-10-03** (planner project **frgtn.VARD**, VARD-20).
-The available public versions are [CLI **0.6.0**](https://registry.npmjs.org/@vardum%2Fcli/0.6.0),
+Public baseline last verified **2026-10-03** (planner project **frgtn.VARD**, VARD-20).
+Those verified public versions are [CLI **0.6.0**](https://registry.npmjs.org/@vardum%2Fcli/0.6.0),
 [MCP **0.2.0**](https://registry.npmjs.org/@vardum%2Fmcp/0.2.0) and
 [shared **0.2.0**](https://registry.npmjs.org/@vardum%2Fshared/0.2.0).
 Their immutable archives were rechecked against registry SHA-512 values.
 Independent installs and the disposable Linux first-project flow are verified;
 CLI 0.6.0 uses schema **2** frozen snapshots.
 
-CLI **0.7.0**, shared **0.3.0**, MCP **0.3.0** and schema **3** belong to VARD-14's
+Prepared **2026-10-10** for **VARD-68**: CLI **0.7.0**, shared **0.3.0** and
+MCP **0.3.0** form the [bounded client release candidate](client-release-0.7.md)
+for resumable folder uploads and opt-in Vard imports. It retains schema **2**
+frozen snapshots. All three candidate versions returned HTTP 404 from the public
+npm registry on that date; they are not published. A final archive preflight is
+still required because these lookups do not reserve the versions.
+
+Schema **3** remains separate in VARD-14's
 [unmerged, unpublished draft PR #13](https://github.com/f-tuma/vardum/pull/13).
+That draft's provisional client version numbers do not reserve npm versions and
+must be reconsidered when preparing its future release.
 VARD-6's `server-v0.7` is provisional, with clean artifact acceptance and VARD-53's
 residual OS/native assessment still open. See [current readiness status](production-readiness-2026-09-20.md#current-status).
-Passing source tests does not make those candidates publicly available or ready
+Passing source tests does not make candidates publicly available or ready
 for production.
 
 The current private source repository is `f-tuma/vardum`. npm-owner confirmation
@@ -55,9 +64,10 @@ immutable. Install the published compatible versions below.
 
 The API has no independent published npm version. This table identifies the
 historical tested client/server contract, not a currently certified deployment
-artifact or a guarantee for arbitrary server combinations. Merged operational
-source adds migrations through `0014_upload_cleanup_fairness.sql`; it is distinct
-from the September release and from the unmerged schema 3 candidate. Follow the
+artifact or a guarantee for arbitrary server combinations. The client 0.7
+candidate requires the matching backend with migrations through
+`0015_upload_request_checksum.sql`; it is distinct from the September release
+and from the unmerged schema 3 candidate. Follow the
 [operations upgrade instructions](operations.md) and complete the server/runtime
 release gates before deployment. Align server contracts and migrations before
 rolling out clients.
@@ -68,6 +78,21 @@ MCP 0.2.0 changes: browser-only administration tools are removed; use the web ap
 `list_assets` returns a page object with `assets` and `nextCursor`.
 `replace_vard_items` uses nullable `versionId` to pin and rejects `pinned`.
 Asset/Vard keys do not receive administrative permissions.
+
+### Client 0.7 candidate
+
+| Component | Candidate version | Compatibility notes |
+| --- | --- | --- |
+| `@vardum/cli` | 0.7.0, Node ≥22 | Schema 2 frozen snapshots; resumable folder uploads require `folderUploadResume: 1`; `--output` Vard imports also require `folderVardImport: 1` |
+| `@vardum/mcp` | 0.3.0, Node ≥22 | Existing 11 asset/Vard tools; shared dependency and repository metadata updated |
+| `@vardum/shared` | 0.3.0 | New media naming exports; CLI/MCP archives require `^0.3.0` |
+| Matching backend | Migrations through `0015_upload_request_checksum.sql` | API, worker and gateway support from the folder upload/import changes; deploy and verify capabilities before client upgrades |
+
+Source CLI/MCP manifests keep `workspace:^`; pinned pnpm rewrites those dependencies
+to `^0.3.0` in the archives. Candidate numbers are not proof of npm availability.
+See [the candidate notes](client-release-0.7.md) for behavior, recovery and rollout.
+The minimum compatible CLI for the existing schema 2 consumption flow remains
+**0.6.0**; this candidate does not migrate frozen snapshots to schema 3.
 
 ## Prepare and test
 
@@ -114,7 +139,7 @@ UI check. The auth/RLS/private-delivery database integrations run in CI/release 
 
 Publication is a separate, deliberate action. The GitHub `Release` workflow runs
 for version tag pushes and manual dispatch. Publication requires the matching CLI
-version tag (`v0.6.0` for the September batch), including manual retries from that
+version tag (`v0.7.0` for this candidate; `v0.6.0` for the September batch), including manual retries from that
 tag with the original tested archives. Its validation job runs the checks above
 plus database integrations, then uploads the
 exact tested archives. A separate publish job
@@ -170,9 +195,19 @@ Repository documentation links require access to the private source repository.
 The existing public archives retain `frgtn-dot-dev/vardum` metadata and README
 links. Editing current source documentation to use `f-tuma/vardum` neither changes
 those immutable archives nor makes the source public; package documentation and
-metadata changes need a future versioned release.
+metadata changes are included in this candidate and take effect only when its
+new archives are published.
 
 ### Trigger and verify
+
+Deploy the matching folder-upload/import backend and apply migration `0015`
+before upgrading project clients. Keep that initial deployment's CLI manifest
+at **0.6.0**: the gateway derives its Copy setup install version from
+`apps/cli/package.json`. Deploying the version bump before npm 0.7.0 is verified
+would advertise an unavailable install. If merging this release commit can
+automatically deploy the gateway, publish from the tested release tag first and
+merge/deploy the version bump only after public-registry verification. See
+[the full rollout order](client-release-0.7.md#rollout-order).
 
 After the release commit has passed CI and the three npm publishers are configured,
 push the matching version tag. A successful run publishes shared → CLI → MCP,

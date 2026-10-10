@@ -7,10 +7,11 @@ core workflow, first milestone, and planned templates and usage monitoring.
 That document describes intended behavior, not a list of shipped features.
 
 See [current readiness status](docs/production-readiness-2026-09-20.md#current-status)
-(reviewed 2026-10-03) for published clients and open server/runtime acceptance.
+(client status updated 2026-10-10) for published clients and open server/runtime acceptance.
 The same document preserves the initial September 20 audit and dated remediation
-evidence. Published CLI 0.6.0 uses schema 2; schema 3 and the next client/server
-candidates remain unreleased.
+evidence. Published CLI 0.6.0 and the [CLI 0.7.0 candidate](docs/client-release-0.7.md)
+use schema 2. Candidate CLI 0.7.0 / shared 0.3.0 / MCP 0.3.0 publication is not
+yet verified; the separate schema 3 draft remains unmerged and unpublished.
 
 ## Development
 

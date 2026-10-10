@@ -1,6 +1,6 @@
 {
   "name": "@vardum/shared",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared Vardum wire types and accepted-format tables",
   "license": "MIT",
   "type": "module",
@@ -28,11 +28,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frgtn-dot-dev/vardum.git",
+    "url": "git+https://github.com/f-tuma/vardum.git",
     "directory": "packages/shared"
   },
-  "homepage": "https://github.com/frgtn-dot-dev/vardum/tree/main/packages/shared#readme",
+  "homepage": "https://github.com/f-tuma/vardum/tree/main/packages/shared#readme",
   "bugs": {
-    "url": "https://github.com/frgtn-dot-dev/vardum/issues"
+    "url": "https://github.com/f-tuma/vardum/issues"
   }
 }

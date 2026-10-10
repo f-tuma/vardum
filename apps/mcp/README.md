@@ -11,13 +11,20 @@ run by hand. Create a workspace API key in **Settings // API keys** first; the
 key is restricted to that workspace and its selected read/write permissions.
 Copy the workspace ID from Settings → General for tool calls.
 
-This README targets published MCP **0.2.0**; see [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
+This README describes **MCP 0.3.0**. The 11-tool surface is unchanged. Check the
+[release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.7.md)
+and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
 The published 0.1.0 artifact has a broken workspace dependency.
+
+The configurations below pin **0.3.0**. Verify its availability in your registry
+before installing, or build from source with
+`pnpm --filter "@vardum/mcp..." build` and configure the client to run
+`node /absolute/path/to/vardum/apps/mcp/dist/index.js`.
 
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.2.0
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.3.0
 ```
 
 Any client that reads a JSON config (Claude Desktop, Cursor, …):
@@ -27,7 +34,7 @@ Any client that reads a JSON config (Claude Desktop, Cursor, …):
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.2.0"],
+      "args": ["-y", "@vardum/mcp@0.3.0"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
@@ -83,7 +90,8 @@ copies. These tools require the matching visibility-capable API in the compatibi
 
 ## Folder rules
 
-Use MCP 0.2.0 with the matching folder-aware API.
+MCP 0.3.0 retains the folder-rule behavior introduced in 0.2.0 and requires the
+matching folder-aware API.
 `get_vard` with `workspaceId` and `vardId` returns editable configuration:
 `items` contains **manual mappings only**, and `folderRules` contains saved rules.
 For a separate current live preview use `get_vard` with `resolved: true`; this is
