@@ -28,8 +28,10 @@ async function fixture(t: test.TestContext) {
     limits: { image: 8, video: 16, file: 4 } as unknown,
     limitsStatus: 200,
     assets: [] as SyncAsset[],
+    unready: [] as Array<{ id: string; key: string; displayName: string }>,
     requests: [] as Array<{ method: string; url: string }>,
     created: [] as string[],
+    createdNames: [] as string[],
     uploads: [] as Buffer[],
     uploadFilename: "",
     uploadMimeType: "",
@@ -60,9 +62,15 @@ async function fixture(t: test.TestContext) {
       res.end(JSON.stringify({ schema: 1, id: "vard", workspaceId: "workspace", items: [item()] }));
     } else if (url.startsWith("/api/workspaces/workspace/sync/assets?")) {
       res.end(JSON.stringify({ workspaceSlug: "demo", assets: state.assets, nextCursor: null }));
+    } else if (url.startsWith("/api/workspaces/workspace/assets?")) {
+      res.end(JSON.stringify({ assets: [...state.assets, ...state.unready], nextCursor: null }));
+    } else if (url.startsWith("/api/workspaces/workspace/assets/") && req.method === "DELETE") {
+      res.statusCode = 204;
+      res.end();
     } else if (url === "/api/workspaces/workspace/assets" && req.method === "POST") {
       const body = await jsonBody();
       state.created.push(body.key);
+      state.createdNames.push(body.displayName);
       state.assetId = `new-${state.created.length}`;
       res.end(JSON.stringify({ id: state.assetId, ...body }));
     } else if (url.endsWith("/versions")) {
@@ -251,11 +259,13 @@ test("folder push sends bounded multipart bytes and persists asset tracking afte
   await assert.rejects(readFile(join(f.project, ".vardum.push.lock")), /ENOENT/);
   const result = await f.run("push-folder", "folder", "media");
   assert.equal(result.code, 0, result.data.error);
-  assert.deepEqual(f.state.created, ["media/clip.mp4"]);
+  assert.deepEqual(f.state.created, ["media/clip"]);
+  assert.deepEqual(f.state.createdNames, ["clip"]);
+  assert.equal(f.state.uploadFilename, "clip.mp4");
   assert.deepEqual(f.state.uploads, [bytes]);
   const lockPath = join(f.project, ".vardum.push.lock");
   const before = await readFile(lockPath, "utf8");
-  assert.deepEqual(JSON.parse(before).entries["folder:media"].assets, { "media/clip.mp4": "new-1" });
+  assert.deepEqual(JSON.parse(before).entries["folder:media/"].assets, { "media/clip": "new-1" });
   assert.equal((await f.run("push-folder", "folder", "media")).data.changed, 0);
   f.state.limits = { image: 8, video: 8, file: 4 };
   const mutations = f.mutations().length;
@@ -263,6 +273,83 @@ test("folder push sends bounded multipart bytes and persists asset tracking afte
     assert.match((await f.run("push-folder", "folder", "media", ...args)).data.error, /limit/);
   assert.equal(f.mutations().length, mutations);
   assert.equal(await readFile(lockPath, "utf8"), before);
+});
+
+test("root folder tracking retains constructor keys across repeated pushes", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/constructor.png"), "same");
+  const first = await f.run("push-folder", "folder", "");
+  assert.equal(first.code, 0, first.data.error);
+  assert.deepEqual(f.state.created, ["constructor"]);
+  const second = await f.run("push-folder", "folder", "");
+  assert.equal(second.code, 0, second.data.error);
+  assert.equal(second.data.changed, 0);
+  const lock = JSON.parse(await readFile(join(f.project, ".vardum.push.lock"), "utf8"));
+  assert.deepEqual(lock.entries["folder:"].assets, { constructor: "new-1" });
+});
+
+test("folder naming collisions fail before any asset or upload mutation", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/logo.png"), "png");
+  await writeFile(join(f.project, "folder/logo.webp"), "webp");
+  for (const args of [[], ["--dry-run"]]) {
+    const result = await f.run("push-folder", "folder", "images", ...args);
+    assert.match(result.data.error, /same asset key/);
+    assert.deepEqual(f.mutations(), []);
+  }
+  await assert.rejects(readFile(join(f.project, ".vardum.push.lock")), /ENOENT/);
+});
+
+test("folder push preserves a published filename key, original name and versions on repeat", async (t) => {
+  const f = await fixture(t);
+  const bytes = Buffer.from("same");
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/logo.png"), bytes);
+  f.state.assets = [{ id: "legacy", key: "images/logo.png", displayName: "logo", versionId: v1,
+    checksum: checksum(bytes), mimeType: "image/png", size: bytes.length }];
+  const result = await f.run("push-folder", "folder", "images");
+  assert.equal(result.code, 0, result.data.error);
+  assert.equal(result.data.changed, 0);
+  assert.deepEqual(f.mutations(), []);
+  assert.equal(JSON.parse(await readFile(join(f.project, ".vardum.push.lock"), "utf8"))
+    .entries["folder:images/"].assets["images/logo.png"], "legacy");
+});
+
+test("legacy aliases cannot collapse two files onto one target or hide unready assets", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/logo.png"), "png");
+  await writeFile(join(f.project, "folder/logo.png.webp"), "webp");
+  f.state.assets = [{ id: "legacy", key: "images/logo.png", displayName: "logo", versionId: v1,
+    checksum: checksum(Buffer.from("png")), mimeType: "image/png", size: 3 }];
+  assert.match((await f.run("push-folder", "folder", "images")).data.error, /same asset key/);
+  assert.deepEqual(f.mutations(), []);
+  await rm(join(f.project, "folder/logo.png.webp"));
+  f.state.unready = [{ id: "pending", key: "images/logo.png", displayName: "logo.png" }];
+  f.state.assets = [];
+  assert.match((await f.run("push-folder", "folder", "images")).data.error, /without a ready current version/);
+  assert.deepEqual(f.mutations(), []);
+});
+
+test("folder tracking aliases merge before delete even when the next prefix ends with a slash", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/logo.png"), "same");
+  f.state.assets = [{ id: "current", key: "images/logo", displayName: "logo", versionId: v1,
+    checksum: checksum(Buffer.from("same")), mimeType: "image/png", size: 4 }];
+  const pushLockPath = join(f.project, ".vardum.push.lock");
+  await writeFile(pushLockPath, JSON.stringify({ schema: 1, workspace: "workspace", entries: {
+    "folder:images": { directory: "folder", prefix: "images", assets: { "images/removed.png": "removed" } },
+    "folder:images/": { directory: "folder", prefix: "images/", assets: { "images/logo": "current" } },
+  } }));
+  const result = await f.run("push-folder", "folder", "images/", "--delete");
+  assert.equal(result.code, 0, result.data.error);
+  assert.deepEqual(result.data.actions, [{ action: "delete", path: "images/removed.png", applied: true }]);
+  const updated = JSON.parse(await readFile(pushLockPath, "utf8"));
+  assert.deepEqual(Object.keys(updated.entries), ["folder:images/"]);
+  assert.deepEqual(updated.entries["folder:images/"].assets, { "images/logo": "current" });
 });
 
 test("folder read failures or changed planned bytes cannot create an empty remote asset or advance its lock", async (t) => {

@@ -56,7 +56,9 @@ export const extensionMimeTypes: Record<string, SupportedMimeType> = {
 
 export function mimeForFilename(filename: string): SupportedMimeType | null {
   const extension = filename.toLowerCase().match(/\.([^.]+)$/)?.[1];
-  return (extension && extensionMimeTypes[extension]) || null;
+  return extension && Object.hasOwn(extensionMimeTypes, extension)
+    ? extensionMimeTypes[extension]!
+    : null;
 }
 
 /** Value for a file input's accept attribute, e.g. ".avif,.gif,…". */

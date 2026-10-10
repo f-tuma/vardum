@@ -1,4 +1,5 @@
 import type { VardDefinition, VardFolderRule } from "@vardum/shared";
+import { mediaOutputPath } from "@vardum/shared";
 import { useInfiniteQuery, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -466,7 +467,7 @@ export function VardEditor({
   }
 
   function addItem(picked: { id: string; key: string; mimeType: string }) {
-    const filename = `${picked.key.split("/").pop()}.${extensionFor(picked.mimeType)}`;
+    const filename = mediaOutputPath(picked.key.split("/").pop()!, picked.mimeType);
     setPickerOpen(false);
     setNewItem({
       id: crypto.randomUUID(),
@@ -1257,7 +1258,6 @@ function VardItemDialog({
                 mimeType={preview.mimeType}
                 label={`Source preview of ${item.key}`}
                 controls
-                fit="contain"
               />
             </div>
 
@@ -1281,7 +1281,9 @@ function VardItemDialog({
                 disabled={!canEdit}
                 onChange={(event) => {
                   const format = event.target.value;
+                  const mimeType = format === "original" ? preview.mimeType : `image/${format}`;
                   change({
+                    ...(mimeType ? { outputPath: mediaOutputPath(draft.outputPath, mimeType) } : {}),
                     writable: false,
                     transformation:
                       format === "original"
@@ -1599,18 +1601,6 @@ function availableOutputPath(candidate: string, items: DraftItem[]) {
     const next = `${base}-${suffix}${extension ?? ""}`;
     if (!taken.has(next)) return next;
   }
-}
-
-function extensionFor(mimeType: string) {
-  return (
-    {
-      "image/avif": "avif",
-      "image/jpeg": "jpg",
-      "image/png": "png",
-      "image/svg+xml": "svg",
-      "image/webp": "webp",
-    }[mimeType] ?? "bin"
-  );
 }
 
 function numberOrUndefined(value: string) {

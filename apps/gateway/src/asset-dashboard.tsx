@@ -1,4 +1,4 @@
-import { uploadAccept } from "@vardum/shared";
+import { mediaStem, uploadAccept } from "@vardum/shared";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -907,7 +907,7 @@ function UploadForm({
     setError("");
     const first = chosen[0];
     if (chosen.length === 1 && first) {
-      const name = displayName || first.name.replace(/\.[^.]+$/, "");
+      const name = displayName || mediaStem(first.name);
       setDisplayName(name);
       if (!keyEdited) setKey(toKey(name));
     }
@@ -921,7 +921,7 @@ function UploadForm({
     try {
       const first = files[0];
       if (single && first) await uploader.uploadNew(first, { prefix, key, displayName });
-      else void uploader.uploadMany(files, prefix);
+      else await uploader.uploadMany(files, prefix);
       onDone();
     } catch (cause) {
       setError(errorMessage(cause, "Upload failed"));

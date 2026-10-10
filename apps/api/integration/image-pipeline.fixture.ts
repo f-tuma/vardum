@@ -14,6 +14,7 @@ export async function checkImagePipeline(
 ) {
   const { processAsset } = await import("../src/asset-processor.js");
   const { getImageVariant } = await import("../src/image-variant.js");
+  const { thumbnailTransformation } = await import("../src/asset-thumbnail.js");
   const svg = Buffer.from(
     '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="red"/></svg>',
   );
@@ -119,6 +120,25 @@ export async function checkImagePipeline(
       },
     );
   }
+  await t.test("automatic thumbnails shrink without enlargement; explicit transforms still enlarge", async () => {
+    for (const [width, height, expectedWidth, expectedHeight] of [
+      [48, 48, 48, 48], [3200, 2000, 640, 400], [100, 1000, 40, 400], [1000, 100, 640, 64],
+    ]) {
+      const bytes = await sharp({ create: { width: width!, height: height!, channels: 4, background: "red" } }).png().toBuffer();
+      const { source } = await ingest(bytes, "image/png");
+      const result = await getImageVariant(source, thumbnailTransformation({ width: width!, height: height! }));
+      const decoded = await sharp(Buffer.from(await result.object.Body!.transformToByteArray())).metadata();
+      assert.equal(decoded.width, expectedWidth);
+      assert.equal(decoded.height, expectedHeight);
+      if (width === 48) {
+        const enlarged = await getImageVariant(source, { w: 96, h: 96, format: "png" });
+        const metadata = await sharp(Buffer.from(await enlarged.object.Body!.transformToByteArray())).metadata();
+        assert.equal(metadata.width, 96);
+      }
+    }
+    assert.deepEqual(thumbnailTransformation({ width: null, height: null }), { format: "webp", q: 72 });
+  });
+
   for (const [name, bytes, mimeType] of [
     ["invalid image", Buffer.from("not an image"), "image/png"],
     ["declared type mismatch", svg, "image/jpeg"],

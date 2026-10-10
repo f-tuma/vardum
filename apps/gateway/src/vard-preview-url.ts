@@ -11,7 +11,7 @@ export function sourcePreview(
   const mimeType =
     item.versionId &&
     saved?.versionId === item.versionId
-      ? saved.mimeType
+      ? saved.sourceMimeType ?? (saved.transformation ? undefined : saved.mimeType)
       : source?.mimeType;
   return {
     url:

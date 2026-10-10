@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assetKey, pullDecision, pushDecision, type LockItem } from "./sync.js";
+import { assetKey, folderAssetKey, pullDecision, pushDecision, type LockItem } from "./sync.js";
 
 const lock: LockItem = {
   path: "assets/icon.png",
@@ -19,7 +19,7 @@ test("sync detects local and remote conflicts before overwriting", () => {
 });
 
 test("bulk push preserves relative paths as safe asset keys", () => {
-  assert.equal(assetKey("mobile", "icons/app.png"), "mobile/icons/app.png");
+  assert.equal(assetKey("mobile", "icons/app.png"), "mobile/icons/app");
   assert.throws(
     () => assetKey("mobile", "Icons/App.png"),
     /valid asset key|Invalid workspace prefix/,
@@ -28,4 +28,10 @@ test("bulk push preserves relative paths as safe asset keys", () => {
     () => assetKey("../mobile", "app.png"),
     /valid asset key|Invalid workspace prefix/,
   );
+});
+
+test("folder push reuses exact legacy filename keys and rejects ambiguous identities", () => {
+  assert.equal(folderAssetKey("mobile", "app.png", new Set()), "mobile/app");
+  assert.equal(folderAssetKey("mobile/", "app.png", new Set(["mobile/app.png"])), "mobile/app.png");
+  assert.throws(() => folderAssetKey("mobile", "app.png", new Set(["mobile/app", "mobile/app.png"])), /Both/);
 });

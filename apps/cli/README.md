@@ -110,6 +110,16 @@ opens a picker with the workspace's folders, shows the file-by-file plan, and
 waits for confirmation; uploads then run with a `(3/50)` counter and processing
 is awaited once at the end rather than per file.
 
+In a source checkout, automatic folder keys and display names strip the final
+supported media suffix: `icons/logo.v2.png` becomes key `icons/logo.v2` and name
+`logo.v2`. The uploaded version retains `logo.v2.png`. Prefixes with or without
+a trailing slash are equivalent. Files such as `logo.png` and `logo.webp` that
+would share a key fail before upload. An existing exact filename key from an
+older CLI is reused without renaming it; if both that key and its extensionless
+counterpart exist, resolve the ambiguity before pushing. Folder rules preserve
+existing media suffixes and append the original format's extension to keys
+without a media suffix; output collisions are rejected.
+
 In a source checkout, `push` and `push-folder` fetch `/api/upload-limits` before
 reading file contents, including during `--dry-run` and for unchanged files.
 The command fails if that endpoint is unavailable or returns invalid ceilings,

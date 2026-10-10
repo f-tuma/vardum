@@ -6,6 +6,7 @@ import {
   ExternalLinkIcon,
   GlobeIcon,
   LockIcon,
+  PencilIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UploadIcon,
@@ -78,6 +79,7 @@ import {
   getAssetDelivery,
   restoreAssetVersion,
   retryAssetVersion,
+  renameAsset,
   setAssetVisibility,
   type AssetSummary,
   type TransformationInput,
@@ -150,7 +152,7 @@ function AssetDetailPage({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [dialog, setDialog] = useState<"delete" | "visibility" | "version" | null>(null);
+  const [dialog, setDialog] = useState<"delete" | "visibility" | "version" | "rename" | null>(null);
   const [preview, setPreview] = useState<{ versionId: string | null; url: string } | null>(null);
   const path = assetDeliveryPath(workspace.slug, asset);
   const originalPreviewUrl = assetPreviewUrl(workspace.slug, asset, path);
@@ -228,6 +230,10 @@ function AssetDetailPage({
                     <EllipsisIcon />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setDialog("rename")}>
+                      <PencilIcon />
+                      Rename
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setDialog("version")}>
                       <UploadIcon />
                       Upload new version
@@ -264,7 +270,6 @@ function AssetDetailPage({
                 mimeType={asset.mimeType}
                 label={`Preview of ${asset.displayName}`}
                 controls
-                fit="contain"
               />
             </div>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
@@ -325,6 +330,9 @@ function AssetDetailPage({
         </div>
       </Page>
 
+      {dialog === "rename" && (
+        <RenameAssetDialog asset={asset} workspaceId={workspace.id} onClose={() => setDialog(null)} />
+      )}
       <NewVersionDialog
         open={dialog === "version"}
         workspaceId={workspace.id}
@@ -353,6 +361,66 @@ function AssetDetailPage({
         onConfirm={removeAsset}
       />
     </>
+  );
+}
+
+function RenameAssetDialog({ asset, workspaceId, onClose }: {
+  asset: AssetSummary;
+  workspaceId: string;
+  onClose: () => void;
+}) {
+  const id = useId();
+  const queryClient = useQueryClient();
+  const [name, setName] = useState(asset.displayName);
+  const [expectedName] = useState(asset.displayName);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function submit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending || !name.trim()) return;
+    setPending(true);
+    setError("");
+    try {
+      await renameAsset(workspaceId, asset.id, name.trim(), expectedName);
+      await Promise.all(["asset", "assets", "vard", "vard-preview", "audit", "workspace-overview"].map((key) =>
+        queryClient.invalidateQueries({ queryKey: [key, workspaceId] }),
+      ));
+      toast.success("Asset renamed");
+      onClose();
+    } catch (cause) {
+      setError(errorMessage(cause, "Rename failed"));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && !pending && onClose()}>
+      <DialogContent>
+        <form onSubmit={submit}>
+          <FieldGroup>
+            <DialogHeader>
+              <DialogTitle>Rename asset</DialogTitle>
+              <DialogDescription>The URL and all versions stay the same.</DialogDescription>
+            </DialogHeader>
+            <Field data-invalid={Boolean(error)}>
+              <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
+              <Input id={`${id}-name`} value={name} required maxLength={255} aria-invalid={Boolean(error)}
+                disabled={pending} onChange={(event) => setName(event.target.value)} />
+              {error && <FieldError>{error}</FieldError>}
+            </Field>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
+              <Button type="submit" disabled={pending || !name.trim() || name.trim() === expectedName}>
+                {pending && <Spinner data-icon="inline-start" />}
+                Save name
+              </Button>
+            </DialogFooter>
+          </FieldGroup>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

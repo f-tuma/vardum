@@ -73,8 +73,9 @@ export function transformedVersionUrl(
   key: string,
   versionId: string,
   input: Transformation,
+  customDomain?: string | null,
 ) {
-  return transformedUrl(workspaceSlug, key, input, null, versionId);
+  return transformedUrl(workspaceSlug, key, input, customDomain, versionId);
 }
 
 function transformedUrl(
