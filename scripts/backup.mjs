@@ -58,7 +58,7 @@ if (values.help) {
     resolve(values["compose-file"]),
   ];
   const compose = (...args) =>
-    run("docker", [...composeArgs, ...args], {
+    run("docker", [...composeArgs, ...(args[0] === "run" ? ["run", "--pull", "never", ...args.slice(1)] : args)], {
       cwd: repo,
       timeout: 30 * 60_000,
       maxBuffer: 4 * 1024 * 1024,

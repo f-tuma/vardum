@@ -526,7 +526,7 @@ export async function checkUploadResume(
     assert.match(replay.json().error, /checksum|new file/i);
     assert.equal(await versionCount(assetId), 2);
     const events = await audit(intent.id);
-    assert.equal(events.filter(event => event.action === "asset.version_ready").length, 0);
+    assert.equal(events.filter(event => event.action === "asset.version_processed").length, 0);
     assert.equal(events.filter(event => event.action === "asset.version_failed").length, 1);
   });
 }
