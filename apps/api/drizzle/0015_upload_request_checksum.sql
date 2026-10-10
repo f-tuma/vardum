@@ -1,0 +1,2 @@
+ALTER TABLE "asset_version" ADD COLUMN "expected_checksum" text;--> statement-breakpoint
+ALTER TABLE "asset_version" ADD CONSTRAINT "asset_version_expected_checksum_check" CHECK ("asset_version"."expected_checksum" IS NULL OR "asset_version"."expected_checksum" ~ '^[a-f0-9]{64}$');

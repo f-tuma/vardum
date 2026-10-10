@@ -1,4 +1,8 @@
 node_modules/
+.vardum.push.pending.json
+.vardum.push.mutex
+.vardum.push.lock.*.tmp
+.vardum.push.pending.json.*.tmp
 dist/
 .env
 *.local

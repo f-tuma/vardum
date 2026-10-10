@@ -66,10 +66,15 @@ export async function processAsset(
   // Upload limits bound this buffer; stream to disk if those limits grow.
   const bytes = await readBoundedObject(object, pending.size, options.signal);
   options.signal?.throwIfAborted();
+  const sourceChecksum = createHash("sha256").update(bytes).digest("hex");
+  if (pending.expectedChecksum && pending.expectedChecksum !== sourceChecksum) {
+    await fail("The uploaded bytes do not match the planned checksum. Upload a new file.");
+    return;
+  }
 
   // Video: no sharp processing, just checksum + mark ready.
   if (videoMimeSet.has(pending.mimeType)) {
-    const checksum = createHash("sha256").update(bytes).digest("hex");
+    const checksum = sourceChecksum;
     await markReady(
       payload,
       attemptId,
@@ -112,7 +117,7 @@ export async function processAsset(
     return;
   }
 
-  const checksum = createHash("sha256").update(bytes).digest("hex");
+  const checksum = sourceChecksum;
   await markReady(
     payload,
     attemptId,

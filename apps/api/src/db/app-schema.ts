@@ -225,6 +225,7 @@ export const assetVersion = pgTable(
     mimeType: text("mime_type").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
     checksum: text("checksum"),
+    expectedChecksum: text("expected_checksum"),
     width: integer("width"),
     height: integer("height"),
     error: text("error"),
@@ -278,6 +279,7 @@ export const assetVersion = pgTable(
       ),
     check("asset_version_number_check", sql`${table.number} > 0`),
     check("asset_version_size_check", sql`${table.size} > 0`),
+    check("asset_version_expected_checksum_check", sql`${table.expectedChecksum} IS NULL OR ${table.expectedChecksum} ~ '^[a-f0-9]{64}$'`),
     tenantPolicy(table.workspaceId),
   ],
 ).enableRLS();

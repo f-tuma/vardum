@@ -40,6 +40,7 @@ export function createUpload(
   storageKey: string,
   mimeType: string,
   maxSize: number,
+  expires = 15 * 60,
 ) {
   return createPresignedPost(uploadStorage, {
     Bucket: config.S3_BUCKET,
@@ -49,7 +50,7 @@ export function createUpload(
       ["eq", "$Content-Type", mimeType],
       ["content-length-range", 1, maxSize],
     ],
-    Expires: 15 * 60,
+    Expires: expires,
   });
 }
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
+import { randomUUID } from "node:crypto";
 import { mediaStem, mimeForFilename } from "@vardum/shared";
 import { stdin, stdout } from "node:process";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
-import { VardumClient, type Manifest, type VardConfig } from "./client.js";
+import { readFile, realpath, writeFile } from "node:fs/promises";
+import { VardumClient, VardumHttpError, type Manifest, type VardConfig } from "./client.js";
 import {
   credentialsPath,
   machineLabel,
@@ -16,6 +17,18 @@ import { planPushFolder } from "./interactive.js";
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
 import { maybeWarnOutdated, updateVardum, VERSION } from "./update.js";
 import { readUploadFile } from "./upload-file.js";
+import {
+  acquireFolderMutex,
+  clearFolderJournal,
+  pendingFilename,
+  readFolderJournal,
+  readFolderState,
+  resumeFolderUpload,
+  waitForFolderUploads,
+  writeFolderState,
+  type FolderIntent,
+  type UploadPhase,
+} from "./folder-upload.js";
 import {
   assetKey,
   assetPrefix,
@@ -53,6 +66,9 @@ type Action = {
   path: string;
   applied: boolean;
   conflict?: boolean;
+  phase?: UploadPhase;
+  assetId?: string;
+  versionId?: string;
 };
 
 // Every command reports through here, so --json is one branch rather than a
@@ -60,6 +76,7 @@ type Action = {
 const actions: Action[] = [];
 type PushLock = {
   schema: 1;
+  server?: string;
   workspace: string;
   entries: Record<
     string,
@@ -74,7 +91,8 @@ const versionCommands = ["version", "--version", "-v"];
 // again — a second parse of a bad flag used to throw inside the catch.
 const json = rawArgs.includes("--json");
 
-if (![...helpCommands, ...versionCommands, "update"].includes(command))
+if (![...helpCommands, ...versionCommands, "update"].includes(command) &&
+    !(command === "push-folder" && rawArgs.includes("--dry-run")))
   maybeWarnOutdated();
 
 try {
@@ -595,171 +613,156 @@ async function pushFolder(options: Options) {
     throw new Error("Usage: vardum push-folder <directory> [prefix]");
   const context = await loadContext();
   requireApiKey(context.client);
-  const directory = resolve(source);
+  const directory = await realpath(resolve(source));
   const files = await imageFiles(directory);
   if (!files.length)
-    throw new Error(
-      `No images found in ${relative(process.cwd(), directory) || "."}`,
-    );
-
-  const selectedPrefix = await resolveFolderPrefix(
-    options,
-    positionalPrefix,
-    context,
-    directory,
-    files,
-  );
+    throw new Error(`No images found in ${relative(process.cwd(), directory) || "."}`);
+  const selectedPrefix = await resolveFolderPrefix(options, positionalPrefix, context, directory, files);
   if (selectedPrefix === null) return summary(options, 0);
   const prefix = assetPrefix(selectedPrefix);
 
-  const remote = await context.client.syncAssets(
-    context.config.workspace,
-    prefix,
-  );
-  const byKey = new Map(remote.assets.map((asset) => [asset.key, asset]));
-  const identities = await context.client.assetIdentities(context.config.workspace,
-    folderAssetDirectories(prefix, files.map((file) => file.relative)));
-  const existingKeys = new Set(identities.map((asset) => asset.key));
-  const limits = await context.client.uploadLimits();
-  const local = [] as Array<{
-    key: string;
-    absolute: string;
-    relative: string;
-    mimeType: string;
-    checksum: string;
-  }>;
-  const plannedKeys = new Set<string>();
-  const resolvedKeys = new Set<string>();
-  for (const file of files) {
-    const stemKey = assetKey(prefix, file.relative);
-    if (plannedKeys.has(stemKey))
-      throw new Error(`Files normalize to the same asset key: ${stemKey}`);
-    plannedKeys.add(stemKey);
-    // Published CLI versions kept the suffix. Reuse that exact key rather than
-    // creating a second asset or changing historical snapshot URLs.
-    const key = folderAssetKey(prefix, file.relative, existingKeys);
-    if (resolvedKeys.has(key))
-      throw new Error(`Files resolve to the same asset key: ${key}`);
-    resolvedKeys.add(key);
-    if (existingKeys.has(key) && !byKey.has(key))
-      throw new Error(`${key} exists without a ready current version; finish or retry its upload before pushing this folder`);
-    const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
-    local.push({
-      ...file,
-      key,
-      checksum: checksum(bytes),
+  // Older servers discard optional IDs: capability negotiation must precede
+  // journal/mutex creation as well as every remote mutation.
+  if (!options.dryRun) await context.client.requireFolderUploadResume();
+  const projectRoot = await realpath(context.directory);
+  const release = options.dryRun ? null : await acquireFolderMutex(projectRoot);
+  try {
+    const journalPath = join(projectRoot, pendingFilename);
+    const journal = await readFolderJournal(journalPath, {
+      server: context.config.server, workspace: context.config.workspace, source: directory, prefix,
     });
-  }
-
-  const pushLockPath = join(context.directory, ".vardum.push.lock");
-  const pushLock = await readPushLock(pushLockPath, context.config.workspace);
-  const lockKey = `${relative(context.directory, directory) || "."}:${prefix}`;
-  const trackedDirectory = relative(context.directory, directory) || ".";
-  const aliases = Object.entries(pushLock.entries).filter(([, entry]) =>
-    entry.directory === trackedDirectory && assetPrefix(entry.prefix) === prefix);
-  const previous: Record<string, string> = Object.create(null);
-  for (const [, entry] of aliases)
-    for (const [key, id] of Object.entries(entry.assets)) {
-      if (previous[key] && previous[key] !== id)
-        throw new Error(`Conflicting folder tracking for ${key}; resolve the push lock before continuing`);
-      previous[key] = id;
+    const saveJournal = () => writeFolderState(journalPath, journal);
+    const remote = await context.client.syncAssets(context.config.workspace, prefix);
+    const byKey = new Map(remote.assets.map((asset) => [asset.key, asset]));
+    const identities = await context.client.assetIdentities(context.config.workspace,
+      folderAssetDirectories(prefix, files.map((file) => file.relative)));
+    if (!options.dryRun && identities.some((identity) => typeof identity.hasUnfinishedUploads !== "boolean"))
+      throw new Error("Vardum returned an invalid resumable asset identity response (missing hasUnfinishedUploads)");
+    const identityByKey = new Map(identities.map((asset) => [asset.key, asset]));
+    const existingKeys = new Set([...identityByKey.keys(), ...Object.keys(journal.files)]);
+    const limits = await context.client.uploadLimits();
+    const local: Array<typeof files[number] & { key: string; checksum: string }> = [];
+    const plannedKeys = new Set<string>();
+    const resolvedKeys = new Set<string>();
+    for (const file of files) {
+      const stemKey = assetKey(prefix, file.relative);
+      if (plannedKeys.has(stemKey))
+        throw new Error(`Files normalize to the same asset key: ${stemKey}`);
+      plannedKeys.add(stemKey);
+      const key = folderAssetKey(prefix, file.relative, existingKeys);
+      if (resolvedKeys.has(key))
+        throw new Error(`Files resolve to the same asset key: ${key}`);
+      resolvedKeys.add(key);
+      const current = byKey.get(key);
+      const identity = identityByKey.get(key);
+      if (current && (!identity || identity.id !== current.id))
+        throw new Error(`${key} changed asset identity during the folder plan; rerun the command after inspecting that key on the server`);
+      const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
+      const hash = checksum(bytes);
+      const pending = journal.files[key];
+      if (pending && (pending.relative !== file.relative || pending.checksum !== hash ||
+          pending.mimeType !== file.mimeType || pending.size !== bytes.byteLength))
+        throw new Error(`${file.relative} differs from the pending upload; restore its original bytes before resuming ${pendingFilename}`);
+      if (pending && identity && pending.assetId !== identity.id)
+        throw new Error(`${key} has a different remote asset identity; keep the pending journal and resolve the conflict before retrying`);
+      local.push({ ...file, size: bytes.byteLength, key, checksum: hash });
     }
-  const currentAssets: Record<string, string> = Object.create(null);
-  const outdated = local.filter((file) => {
-    const existing = byKey.get(file.key);
-    if (existing?.checksum !== file.checksum) return true;
-    currentAssets[file.key] = existing.id;
-    return false;
-  });
+    for (const pending of Object.values(journal.files))
+      if (!resolvedKeys.has(pending.key))
+        throw new Error(`${pending.relative} is missing from the pending folder upload; restore it before resuming ${pendingFilename}`);
 
-  let changed = 0;
-  // Uploads finalize as they go and processing is awaited once at the end:
-  // waiting per file turned a 50-image folder into 50 sequential waits.
-  const processing = new Map<string, string>();
-  for (const [index, file] of outdated.entries()) {
-    const entry = report(
-      "push",
-      file.key,
-      options,
-      `(${index + 1}/${outdated.length})`,
-    );
-    changed += 1;
-    if (options.dryRun) continue;
-    const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
-    if (checksum(bytes) !== file.checksum)
-      throw new Error(
-        `${file.relative} changed since the folder plan; retry the push`,
-      );
-    const target =
-      byKey.get(file.key) ??
-      (await context.client.createAsset(
-        context.config.workspace,
-        file.key,
-        mediaStem(basename(file.relative)),
-      ));
-    processing.set(
-      file.key,
-      await context.client.uploadVersion(
-        context.config.workspace,
-        target.id,
-        basename(file.relative),
-        file.mimeType,
-        bytes,
-      ),
-    );
-    currentAssets[file.key] = target.id;
-    entry.applied = true;
-  }
-  if (processing.size) {
-    if (!options.json)
-      console.log(`waiting for ${processing.size} upload(s) to process…`);
-    await waitForAssetVersions(
-      context.client,
-      context.config.workspace,
-      prefix,
-      processing,
-    );
-  }
-
-  if (options.delete) {
-    const removable = Object.entries(previous).filter(
-      ([key]) => !local.some((file) => file.key === key),
-    );
-    // Deleting an asset drops every stored version of it, so name them and ask
-    // before doing it. CI (no TTY) keeps the old unattended behaviour.
-    const confirmed =
-      !removable.length ||
-      options.force ||
-      options.json ||
-      !stdin.isTTY ||
-      (await confirmDeletion(removable.map(([key]) => key)));
-    for (const [key, assetId] of removable) {
-      if (!confirmed) {
-        currentAssets[key] = assetId; // stay tracked for the next run
+    const pushLockPath = join(projectRoot, ".vardum.push.lock");
+    const pushLock = await readPushLock(pushLockPath, context.config.workspace, context.config.server);
+    const trackedDirectory = relative(projectRoot, directory) || ".";
+    const lockKey = `${trackedDirectory}:${prefix}`;
+    const aliases = Object.entries(pushLock.entries).filter(([, entry]) =>
+      entry.directory === trackedDirectory && assetPrefix(entry.prefix) === prefix);
+    const previous: Record<string, string> = Object.create(null);
+    for (const [, entry] of aliases)
+      for (const [key, id] of Object.entries(entry.assets)) {
+        if (previous[key] && previous[key] !== id)
+          throw new Error(`Conflicting folder tracking for ${key}; resolve the push lock before continuing`);
+        previous[key] = id;
+      }
+    const currentAssets: Record<string, string> = Object.create(null);
+    const outdated = local.filter((file) => {
+      const existing = byKey.get(file.key);
+      const identity = identityByKey.get(file.key);
+      if (journal.files[file.key] || existing?.checksum !== file.checksum ||
+          existing.mimeType !== file.mimeType || existing.size !== file.size ||
+          identity?.hasUnfinishedUploads === true || identity?.status === "pending" || identity?.status === "processing") return true;
+      currentAssets[file.key] = existing.id;
+      return false;
+    });
+    let changed = 0;
+    const processing: Array<{ file: FolderIntent; action: Action }> = [];
+    for (const [index, file] of outdated.entries()) {
+      const action = report("push", file.key, options, `(${index + 1}/${outdated.length})`);
+      changed += 1;
+      if (options.dryRun) {
+        const pending = journal.files[file.key];
+        if (pending) Object.assign(action, { phase: pending.phase, assetId: pending.assetId, versionId: pending.versionId });
         continue;
       }
-      const entry = report("delete", key, options);
-      changed += 1;
-      if (!options.dryRun) {
-        await context.client.deleteAsset(context.config.workspace, assetId);
-        entry.applied = true;
+      const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
+      if (checksum(bytes) !== file.checksum)
+        throw new Error(`${file.relative} changed since the folder plan; retry the push`);
+      let intent = journal.files[file.key];
+      if (!intent) {
+        const existing = byKey.get(file.key);
+        const identity = identityByKey.get(file.key);
+        intent = {
+          key: file.key, relative: file.relative, filename: basename(file.relative),
+          displayName: mediaStem(basename(file.relative)), checksum: file.checksum,
+          mimeType: file.mimeType, size: bytes.byteLength,
+          assetId: identity?.id ?? randomUUID(), versionId: randomUUID(),
+          expectedCurrentVersionId: existing?.versionId ?? null,
+          createAsset: !identity, assetCreated: Boolean(identity), phase: "planned",
+        };
+        journal.files[file.key] = intent;
+        Object.assign(action, { phase: intent.phase, assetId: intent.assetId, versionId: intent.versionId });
+        await saveJournal();
+      }
+      await resumeFolderUpload(context.client, context.config.workspace, intent, bytes, saveJournal, action);
+      currentAssets[file.key] = intent.assetId;
+      processing.push({ file: intent, action });
+    }
+    if (processing.some(({ file }) => file.phase !== "ready")) {
+      if (!options.json) console.log(`waiting for ${processing.filter(({ file }) => file.phase !== "ready").length} upload(s) to process…`);
+      await waitForFolderUploads(context.client, context.config.workspace, processing, saveJournal);
+    }
+
+    if (options.delete) {
+      const removable = Object.entries(previous).filter(([key]) => !resolvedKeys.has(key));
+      const confirmed = !removable.length || options.force || options.json ||
+        !stdin.isTTY || await confirmDeletion(removable.map(([key]) => key));
+      for (const [key, assetId] of removable) {
+        if (!confirmed) { currentAssets[key] = assetId; continue; }
+        const action = report("delete", key, options);
+        changed += 1;
+        if (!options.dryRun) {
+          try { await context.client.deleteAsset(context.config.workspace, assetId); }
+          catch (error) {
+            if (!(error instanceof VardumHttpError && error.status === 404)) throw error;
+          }
+          action.applied = true;
+        }
       }
     }
+    if (!options.dryRun) {
+      pushLock.server = context.config.server;
+      pushLock.entries[lockKey] = { directory: trackedDirectory, prefix, assets: currentAssets };
+      for (const [alias] of aliases)
+        if (alias !== lockKey) delete pushLock.entries[alias];
+      // Ready journal entries remain until tracking is durably saved. A crash
+      // between these writes rechecks the same ready versions on the next run.
+      await writeFolderState(pushLockPath, pushLock);
+      await clearFolderJournal(journalPath);
+    }
+    summary(options, changed);
+  } finally {
+    await release?.();
   }
-  if (!options.dryRun) {
-    pushLock.entries[lockKey] = {
-      directory: relative(context.directory, directory) || ".",
-      prefix,
-      assets: currentAssets,
-    };
-    for (const [alias] of aliases)
-      if (alias !== lockKey) delete pushLock.entries[alias];
-    await atomicWrite(
-      pushLockPath,
-      Buffer.from(`${JSON.stringify(pushLock, null, 2)}\n`),
-    );
-  }
-  summary(options, changed);
 }
 
 async function update(options: Options) {
@@ -892,26 +895,6 @@ function assertManifest(manifest: Manifest, config: VardConfig) {
     throw new Error("Vard does not belong to the configured workspace");
 }
 
-/** Waits for every uploaded version to turn ready, one listing per round. */
-async function waitForAssetVersions(
-  client: VardumClient,
-  workspaceId: string,
-  prefix: string,
-  pending: Map<string, string>,
-) {
-  const waiting = new Map(pending);
-  for (let attempt = 0; attempt < 120 && waiting.size; attempt += 1) {
-    const listing = await client.syncAssets(workspaceId, prefix);
-    for (const asset of listing.assets)
-      if (waiting.get(asset.key) === asset.versionId) waiting.delete(asset.key);
-    if (!waiting.size) return;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-  }
-  throw new Error(
-    `Timed out waiting for asset processing: ${[...waiting.keys()].join(", ")}`,
-  );
-}
-
 async function confirmDeletion(keys: string[]) {
   console.log(`\nThese ${keys.length} asset(s) are no longer in the folder:`);
   for (const key of keys.slice(0, 10)) console.log(`  ${key}`);
@@ -947,22 +930,20 @@ async function waitForManifestVersion(
 async function readPushLock(
   path: string,
   workspace: string,
+  server: string,
 ): Promise<PushLock> {
-  try {
-    const lock = JSON.parse(await readFile(path, "utf8")) as PushLock;
-    if (lock.schema !== 1 || lock.workspace !== workspace)
-      throw new Error(".vardum.push.lock belongs to a different workspace");
-    return lock;
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
-      return { schema: 1, workspace, entries: {} };
-    throw error;
-  }
+  const raw = await readFolderState(path);
+  if (raw === null) return { schema: 1, workspace, server, entries: Object.create(null) };
+  const lock = JSON.parse(raw) as PushLock;
+  if (lock.schema !== 1 || lock.workspace !== workspace || lock.server !== undefined && lock.server !== server)
+    throw new Error(".vardum.push.lock belongs to a different server or workspace");
+  if (!lock.entries || typeof lock.entries !== "object" || Array.isArray(lock.entries) ||
+      Object.values(lock.entries).some((entry) => !entry || typeof entry !== "object" ||
+        typeof entry.directory !== "string" || typeof entry.prefix !== "string" ||
+        !entry.assets || typeof entry.assets !== "object" || Array.isArray(entry.assets) ||
+        Object.values(entry.assets).some((id) => typeof id !== "string" || !id)))
+    throw new Error("Invalid .vardum.push.lock; restore valid folder tracking before pushing");
+  return lock;
 }
 
 function parseOptions(args: string[]): Options {

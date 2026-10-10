@@ -49,6 +49,7 @@ import {
 import { maximumUploadSize, uploadLimits } from "./upload-limits.js";
 import { config } from "./config.js";
 import { thumbnailTransformation } from "./asset-thumbnail.js";
+import { admitUploadIntent, UploadIntentConflict, uploadVersionState } from "./upload-resume.js";
 import {
   assetPaginationQuery,
   assetPageSql,
@@ -112,6 +113,14 @@ const uploadBody = z
       .regex(/^[^/\\\u0000-\u001f]+$/),
     mimeType: z.enum(supportedMimeTypes),
     size: z.number().int().min(1),
+    id: z.uuid().optional(),
+    expectedChecksum: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    expectedCurrentVersionId: z.uuid().nullable().optional(),
+  })
+  .refine((body) => body.id
+    ? body.expectedChecksum !== undefined && body.expectedCurrentVersionId !== undefined
+    : body.expectedChecksum === undefined && body.expectedCurrentVersionId === undefined, {
+    message: "Resumable uploads require id, expectedChecksum and expectedCurrentVersionId together",
   })
   .refine(({ mimeType, size }) => size <= maximumUploadSize(mimeType), {
     message: "File is larger than the upload limit for its type",
@@ -785,6 +794,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
                   latestVersionId: item.latestVersionId,
                   status: item.status,
                   error: item.error,
+                  hasUnfinishedUploads: item.hasUnfinishedUploads,
                   customDomain: item.customDomain,
                   thumbnailUrl: thumbnailUrl(workspace, asset),
                 };
@@ -830,6 +840,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
             displayName: asset.displayName,
             isPublic: asset.isPublic,
             currentVersionId: asset.currentVersionId,
+            hasUnfinishedUploads: sql<boolean>`exists (
+              select 1 from ${assetVersion} unfinished
+              where unfinished.asset_id = ${asset.id} and unfinished.workspace_id = ${workspaceId}
+                and (unfinished.status in ('pending', 'processing') or
+                  (unfinished.status = 'failed' and unfinished.retryable))
+            )`,
             mimeType: assetVersion.mimeType,
             size: assetVersion.size,
             width: assetVersion.width,
@@ -1169,6 +1185,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       schema: {
         params: workspaceParams,
         body: z.object({
+          id: z.uuid().optional(),
           key: assetKey,
           displayName: z.string().min(1).max(255),
         }),
@@ -1187,9 +1204,22 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       try {
         const created = await inWorkspace(workspaceId, async (transaction) => {
+          // Serialize same-request retries and key races across API replicas.
+          await lockWorkspaceBudget(transaction, workspaceId);
+          if (request.body.id) {
+            const [existing] = await transaction.select({
+              id: asset.id, key: asset.key, displayName: asset.displayName, isPublic: asset.isPublic,
+            }).from(asset).where(eq(asset.id, request.body.id));
+            if (existing) {
+              if (existing.key !== request.body.key)
+                throw new UploadIntentConflict("Asset request ID belongs to a different key");
+              return { ...existing, replayed: true };
+            }
+          }
           const [row] = await transaction
             .insert(asset)
             .values({
+              ...(request.body.id ? { id: request.body.id } : {}),
               workspaceId,
               key: request.body.key,
               displayName: request.body.displayName,
@@ -1216,11 +1246,14 @@ export function registerAssetRoutes(app: FastifyInstance) {
             requestId: request.id,
           });
 
-          return row;
+          return { ...row, replayed: false };
         });
 
-        return reply.code(201).send(created);
+        const { replayed, ...row } = created;
+        return reply.code(replayed ? 200 : 201).send(row);
       } catch (error) {
+        if (error instanceof UploadIntentConflict)
+          return reply.code(409).send({ error: error.message });
         if (isUniqueViolation(error)) {
           return reply.code(409).send({ error: "Asset key already exists" });
         }
@@ -1427,80 +1460,52 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .send({ error: authorization.error });
       }
 
-      const versionId = randomUUID();
-      const storageKey = `originals/${workspaceId}/${assetId}/${versionId}/source`;
+      try {
+        const admitted = await inWorkspace(workspaceId, (transaction) =>
+          admitUploadIntent(transaction, workspaceId, assetId, request.body,
+            authorization.principal, request.id));
+        if (!admitted) return reply.code(404).send({ error: "Asset not found" });
+        const { version, created } = admitted;
+        const state = uploadVersionState(version);
+        if (version.status !== "pending")
+          return reply.code(200).send(state);
+
+        // A replay can refresh its short-lived signature, never its reservation
+        // deadline. Do not issue a signature for processing or terminal versions.
+        const remaining = Math.floor((uploadDeadline(version.createdAt).getTime() - Date.now()) / 1000);
+        if (remaining < 1)
+          return reply.code(409).send({ error: "Upload expired. Upload a new file." });
+        const upload = await createUpload(version.storageKey, version.mimeType, version.size,
+          Math.min(15 * 60, remaining));
+        return reply.code(created ? 201 : 200).send({
+          ...state, upload: { method: "POST" as const, url: upload.url, fields: upload.fields },
+        });
+      } catch (error) {
+        if (error instanceof UploadIntentConflict)
+          return reply.code(409).send({ error: error.message });
+        if (isUniqueViolation(error))
+          return reply.code(409).send({ error: "Upload request ID already exists" });
+        throw error;
+      }
+    },
+  );
+
+  api.get(
+    "/api/workspaces/:workspaceId/assets/:assetId/versions/:versionId",
+    { schema: { params: versionParams } },
+    async (request, reply) => {
+      const { workspaceId, assetId, versionId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, ["read"]);
+      if (!("principal" in authorization))
+        return reply.code(authorization.statusCode).send({ error: authorization.error });
       const version = await inWorkspace(workspaceId, async (transaction) => {
-        await reserveUpload(transaction, workspaceId, request.body.size);
-        const [target] = await transaction
-          .select({
-            id: asset.id,
-            key: asset.key,
-            displayName: asset.displayName,
-          })
-          .from(asset)
-          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
-          .for("update");
-        if (!target) return null;
-
-        const [latest] = await transaction
-          .select({ number: max(assetVersion.number) })
-          .from(assetVersion)
-          .where(eq(assetVersion.assetId, assetId));
-        const number = (latest?.number ?? 0) + 1;
-
-        await transaction.insert(assetVersion).values({
-          id: versionId,
-          workspaceId,
-          assetId,
-          number,
-          storageKey,
-          filename: request.body.filename,
-          mimeType: request.body.mimeType,
-          size: request.body.size,
-          createdBy: authorization.principal.reference,
-          updatedBy: authorization.principal.reference,
-        });
-        await transaction.insert(auditEvent).values({
-          workspaceId,
-          actorType: authorization.principal.actorType,
-          actorId: authorization.principal.actorId,
-          action: "asset.version_created",
-          targetType: "asset_version",
-          targetId: versionId,
-          metadata: {
-            assetId,
-            key: target.key,
-            displayName: target.displayName,
-            number,
-            filename: request.body.filename,
-            mimeType: request.body.mimeType,
-            size: request.body.size,
-          },
-          requestId: request.id,
-        });
-
-        return {
-          id: versionId,
-          number,
-          status: "pending" as const,
-          expiresAt: uploadDeadline(new Date()).toISOString(),
-        };
+        const [row] = await transaction.select().from(assetVersion).where(and(
+          eq(assetVersion.assetId, assetId), eq(assetVersion.id, versionId),
+        ));
+        return row;
       });
-      if (!version) return reply.code(404).send({ error: "Asset not found" });
-
-      const upload = await createUpload(
-        storageKey,
-        request.body.mimeType,
-        request.body.size,
-      );
-      return reply.code(201).send({
-        ...version,
-        upload: {
-          method: "POST" as const,
-          url: upload.url,
-          fields: upload.fields,
-        },
-      });
+      return version ? uploadVersionState(version)
+        : reply.code(404).send({ error: "Version not found" });
     },
   );
 
@@ -1686,11 +1691,8 @@ export function registerAssetRoutes(app: FastifyInstance) {
   );
 }
 
-function isUniqueViolation(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "23505"
-  );
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ("code" in error && error.code === "23505") return true;
+  return "cause" in error && error.cause !== error && isUniqueViolation(error.cause);
 }

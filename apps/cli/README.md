@@ -95,6 +95,14 @@ Every command accepts `--json`, which replaces the human output with a single
 changes landed, each with `applied: true|false`, so CI can read the result
 instead of parsing sentences.
 
+In the source checkout, folder upload actions also include `phase`, `assetId`
+and `versionId` once an upload intent is recorded. `applied: true` means that
+the exact version is ready and its checksum and metadata have been verified.
+An action with `applied: false` may have created an asset, reserved a version,
+uploaded bytes or started processing; its phase identifies the last known step.
+Journal files are fsynced before requests and replaced atomically; directory
+entries are also flushed on systems that support directory fsync.
+
 `sync` is an alias for `pull`. Pull and mapped push use `.vardum.lock` to detect
 local/remote conflicts. `--delete` removes only outputs or remote assets recorded
 by an earlier CLI run; unrelated project files and manually managed workspace
@@ -128,6 +136,37 @@ while being read. An oversized unchanged file therefore fails rather than
 being skipped. Folder push checks the bytes again against its plan before
 creating a new asset. These source changes do not patch the immutable published
 CLI 0.6.0 package; they require a separate CLI release.
+
+The source checkout supports resumable `push-folder` uploads. This behavior
+requires a matching server that advertises `folderUploadResume: 1` through
+`GET /api/capabilities`; the CLI refuses mutations on an older server. It is
+not included in the published CLI 0.6.0 package, and its next release remains
+unpublished until released separately.
+
+Rerun the same folder command after a storage failure, lost response or
+processing timeout. The CLI keeps `.vardum.push.pending.json` in the project
+root, with stable asset/version IDs, SHA-256 checksums and file metadata saved
+before requests. It binds that journal to the server, workspace, canonical
+source directory and normalized prefix. Restore changed or missing source
+bytes before resuming. The journal contains no API keys or signed storage URLs.
+The CLI resumes pending uploads, waits for exact processing versions, and
+retries retryable failures without reserving another version. An existing
+asset without a ready version can adopt a matching pending upload; original
+asset names are preserved. A completed unchanged push creates no new versions.
+
+Keep the pending journal until recovery completes. Ready entries are removed
+only after `.vardum.push.lock` has been durably updated. Expired or nonretryable
+versions require inspection and explicit resolution on the server; the error
+includes their IDs. After resolving them, archive the journal before planning
+a new upload. Do not discard it merely because a command failed.
+
+Only one local folder push can own `.vardum.push.mutex` at a time. Normal
+errors release it. A killed process can leave the mutex behind: confirm that
+no folder push is running, remove only the abandoned mutex, and rerun the same
+command while keeping the pending journal. Add the pending journal, mutex and
+`.vardum.push.pending.json.*.tmp` / `.vardum.push.lock.*.tmp` files to the target
+project's `.gitignore`. `push-folder --dry-run` creates no journal, mutex,
+tracking file or version-check cache and performs no remote mutations.
 
 ## Folder membership updates
 
