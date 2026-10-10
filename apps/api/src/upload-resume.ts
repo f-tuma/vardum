@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, max, or } from "drizzle-orm";
 import { asset, assetVersion, auditEvent } from "./db/app-schema.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
 import type { Transaction } from "./db/tenant.js";
 import { lockWorkspaceBudget, reserveUpload, uploadDeadline } from "./upload-lifecycle.js";
 
@@ -32,6 +33,7 @@ export async function admitUploadIntent(
   // Admission and retries share the same ordering as budget checks. Existing
   // reservations are recognized before charging pending/storage capacity again.
   await lockWorkspaceBudget(tx, workspaceId);
+  await lockWorkspaceContent(tx, workspaceId);
   const [target] = await tx.select().from(asset).where(eq(asset.id, assetId)).for("update");
   if (!target) return null;
 

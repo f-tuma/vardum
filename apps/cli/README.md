@@ -168,6 +168,53 @@ command while keeping the pending journal. Add the pending journal, mutex and
 project's `.gitignore`. `push-folder --dry-run` creates no journal, mutex,
 tracking file or version-check cache and performs no remote mutations.
 
+The source checkout also supports an opt-in import into the **configured Vard**:
+
+```sh
+vardum push-folder ./source-images brand --output assets/brand/ --dry-run
+vardum push-folder ./source-images brand --output assets/brand/
+```
+
+Without `--output`, folder push keeps its library-only behavior. With `--output`,
+the CLI uploads sources under the workspace prefix and adds missing explicit
+Vard mappings. Output paths combine the normalized output prefix with each
+original relative source filename: `icons/logo.jpg` becomes
+`assets/brand/icons/logo.jpg`, while the asset key is `brand/icons/logo`.
+`--output ""` selects project root. Unsafe paths, case/Unicode and file/directory
+collisions fail. The import supports 1,000 files and validates the entire plan
+before uploading. Existing exact source/path mappings are kept; existing
+transforms, pins, writable mappings and conflicting outputs are not replaced.
+`--output` cannot be combined with `--delete` or `--force`. Context comes from
+`vardum.json`; server, workspace and Vard overrides are not accepted.
+
+This source-only feature requires **both** `folderUploadResume: 1` and
+`folderVardImport: 1` from the server, including during `--dry-run`. The server
+preflights the actual import permissions and projected collisions with explicit
+mappings and folder rules before any upload. A dry-run reports library
+`new`/`update`/`skip` and mapping `add`/`keep` separately, with no local journal,
+mutex, tracking or version-check-cache writes. It calls a read-only import-plan
+endpoint and creates no remote assets, versions or mappings. It is not included
+in the published CLI 0.6.0 package; a separate npm release is required.
+
+Vard imports use a schema 2 pending journal that additionally binds the Vard and
+output prefix and records every source's stable identity and exact ready version,
+including unchanged sources. Mapping failure, lost responses and local tracking
+failures preserve ready entries. Rerun the same command to reuse the upload IDs
+and finish missing mappings without creating versions for unchanged files.
+The server rechecks every exact current ready version at apply time; concurrent
+updates cause refusal instead of mapping an older version. A library-only schema
+1 journal cannot be retargeted into a Vard, and an unfinished schema 2 import
+cannot be resumed in library-only mode or against a different target.
+
+JSON output has separate `library` and `mappings` arrays with phases and
+`applied` flags, including completed work when the command later fails.
+`applied: false` does not prove that no remote change occurred: a lost response
+can follow a successful upload or mapping write. Keep the pending journal and
+retry. Imports update `.vardum.push.lock` after mappings complete; they do not
+write `.vardum.lock`, run a pull, or overwrite source files. Run a normal
+`vardum pull` separately when you intentionally want to refresh delivered assets
+and their committed snapshot.
+
 ## Folder membership updates
 
 Configure literal recursive rules in the Vard editor or through MCP:

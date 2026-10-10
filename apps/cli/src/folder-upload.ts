@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { VardumHttpError, type FolderVersion, type VardConfig, type VardumClient } from "./client.js";
+import { validateOutputPaths } from "./sync.js";
 
 export const pendingFilename = ".vardum.push.pending.json";
 export const mutexFilename = ".vardum.push.mutex";
@@ -28,7 +29,7 @@ export type FolderIntent = {
   assetCreated: boolean;
   phase: UploadPhase;
 };
-export type FolderJournal = {
+export type LibraryFolderJournal = {
   schema: 1;
   server: string;
   workspace: string;
@@ -36,6 +37,20 @@ export type FolderJournal = {
   prefix: string;
   files: Record<string, FolderIntent>;
 };
+export type FolderImportIntent = FolderIntent & {
+  outputPath: string;
+  libraryAction: "new" | "update" | "skip";
+  mappingAction: "add" | "keep";
+  mappingId: string | null;
+  mappingPhase: "planned" | "apply-requested" | "applied";
+};
+export type FolderImportJournal = Omit<LibraryFolderJournal, "schema" | "files"> & {
+  schema: 2;
+  vard: string;
+  outputPrefix: string;
+  files: Record<string, FolderImportIntent>;
+};
+export type FolderJournal = LibraryFolderJournal | FolderImportJournal;
 export type FolderUploadAction = {
   applied: boolean;
   phase?: UploadPhase;
@@ -46,6 +61,7 @@ export type FolderJournalContext = Pick<VardConfig, "server" | "workspace"> & {
   source: string;
   prefix: string;
 };
+export type FolderImportJournalContext = FolderJournalContext & { vard: string; outputPrefix: string };
 
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -119,17 +135,24 @@ async function syncDirectory(path: string) {
   }
 }
 
-export async function readFolderJournal(path: string, context: FolderJournalContext): Promise<FolderJournal> {
+export function readFolderJournal(path: string, context: FolderImportJournalContext): Promise<FolderImportJournal>;
+export function readFolderJournal(path: string, context: FolderJournalContext): Promise<LibraryFolderJournal>;
+export async function readFolderJournal(path: string, context: FolderJournalContext | FolderImportJournalContext): Promise<FolderJournal> {
   const raw = await readFolderState(path);
-  if (raw === null) return { schema: 1, ...context, files: Object.create(null) };
+  const importing = "vard" in context;
+  if (raw === null) return { schema: importing ? 2 : 1, ...context, files: Object.create(null) } as FolderJournal;
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new Error(`Invalid ${pendingFilename}; restore the journal before resuming`); }
-  if (!record(value) || value.schema !== 1 || !record(value.files) ||
-      Object.keys(value).some((key) => !["schema", "server", "workspace", "source", "prefix", "files"].includes(key)))
+  if (!record(value) || ![1, 2].includes(value.schema as number) || !record(value.files) ||
+      Object.keys(value).some((key) => !["schema", "server", "workspace", "source", "prefix", "files", ...(value.schema === 2 ? ["vard", "outputPrefix"] : [])].includes(key)))
     throw new Error(`Invalid ${pendingFilename}; restore the journal before resuming`);
+  if (value.schema !== (importing ? 2 : 1))
+    throw new Error(`${pendingFilename} belongs to a different folder mode; resume the original command with its original --output setting before changing modes`);
   if (value.server !== context.server || value.workspace !== context.workspace ||
       value.source !== context.source || value.prefix !== context.prefix)
     throw new Error(`${pendingFilename} belongs to a different server, workspace, source directory or prefix; resume the original folder first`);
+  if (importing && (value.vard !== context.vard || value.outputPrefix !== context.outputPrefix))
+    throw new Error(`${pendingFilename} belongs to a different Vard or output prefix; resume the original --output target first`);
   for (const [key, file] of Object.entries(value.files)) {
     if (!record(file) || file.key !== key || !text(key) || !text(file.relative) ||
         file.relative.startsWith("/") || file.relative.split("/").some((part) => !part || part === "." || part === "..") ||
@@ -140,9 +163,18 @@ export async function readFolderJournal(path: string, context: FolderJournalCont
         !(file.expectedCurrentVersionId === null || uuid(file.expectedCurrentVersionId)) ||
         typeof file.createAsset !== "boolean" || typeof file.assetCreated !== "boolean" ||
         !phases.includes(file.phase as UploadPhase) ||
-        Object.keys(file).some((field) => !["key", "relative", "filename", "displayName", "checksum", "mimeType", "size", "assetId", "versionId", "expectedCurrentVersionId", "createAsset", "assetCreated", "phase"].includes(field)))
+        Object.keys(file).some((field) => !["key", "relative", "filename", "displayName", "checksum", "mimeType", "size", "assetId", "versionId", "expectedCurrentVersionId", "createAsset", "assetCreated", "phase", ...(importing ? ["outputPath", "libraryAction", "mappingAction", "mappingId", "mappingPhase"] : [])].includes(field)))
       throw new Error(`Invalid ${pendingFilename} intent for ${key}; restore the journal before resuming`);
+    if (importing && (file.outputPath !== `${context.outputPrefix}${file.relative}` ||
+        !["new", "update", "skip"].includes(file.libraryAction as string) ||
+        !["add", "keep"].includes(file.mappingAction as string) ||
+        !["planned", "apply-requested", "applied"].includes(file.mappingPhase as string) ||
+        !(file.mappingId === null || text(file.mappingId)) ||
+        (file.mappingAction === "keep" || file.mappingPhase === "applied") && !text(file.mappingId) ||
+        file.libraryAction === "skip" && (file.phase !== "ready" || file.createAsset || !file.assetCreated)))
+      throw new Error(`Invalid ${pendingFilename} mapping intent for ${key}; restore the journal before resuming`);
   }
+  if (importing) validateOutputPaths(Object.values(value.files).map((file) => (file as Record<string, unknown>).outputPath as string));
   const journal = value as FolderJournal;
   journal.files = Object.assign(Object.create(null), journal.files);
   return journal;

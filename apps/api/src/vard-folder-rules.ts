@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { mediaOutputPath, mimeForFilename } from "@vardum/shared";
 import { z } from "zod";
 
 export const MAX_VARD_OUTPUTS = 1000;
@@ -69,6 +70,15 @@ export function folderItemId(assetId: string, outputPath: string) {
     .update(JSON.stringify([assetId, outputPath]))
     .digest("hex");
   return `folder:${hash}`;
+}
+
+export function folderOutputPath(
+  key: string,
+  mimeType: string,
+  rule: { sourcePrefix: string; outputPrefix: string },
+) {
+  const relative = rule.outputPrefix + key.slice(rule.sourcePrefix.length);
+  return mimeForFilename(relative) ? relative : mediaOutputPath(relative, mimeType);
 }
 
 export function validateResolvedOutputs(paths: string[]) {

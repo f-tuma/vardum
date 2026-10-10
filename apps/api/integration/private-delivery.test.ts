@@ -14,6 +14,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 const execFile = promisify(execFileCallback);
 const migrations = fileURLToPath(new URL("../drizzle", import.meta.url));
+const vardImportCliPath = process.env.VARDUM_TEST_CLI_PATH;
 
 // Explicit integration command only. Never reads .env or connects to configured services.
 // Requires unprivileged execution and native PostgreSQL binaries in PG_BINDIR.
@@ -30,6 +31,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   let stopQueue: (() => Promise<unknown>) | undefined;
   let destroyStorage: (() => void) | undefined;
   const objects = new Map<string, Buffer>();
+  const objectTypes = new Map<string, string>();
   let storageReads = 0;
   let storageFailure = false;
   let deleteFailure: boolean | ((key: string) => boolean) = false;
@@ -46,6 +48,25 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       if (typeof deleteFailure === "function" ? keys.some(deleteFailure) : deleteFailure) return res.end(`<DeleteResult><Error><Key>${keys[0]}</Key><Code>AccessDenied</Code></Error></DeleteResult>`);
       for (const key of keys) objects.delete(key);
       return res.end("<DeleteResult/>");
+    }
+    if (req.method === "POST" && req.headers["content-type"]?.startsWith("multipart/form-data")) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const form = await new Request("http://objects.invalid/fixture", {
+        method: "POST",
+        headers: { "content-type": req.headers["content-type"] },
+        body: Buffer.concat(chunks),
+      }).formData();
+      const uploadKey = form.get("key");
+      const file = form.get("file");
+      if (typeof uploadKey !== "string" || !file || typeof file === "string") {
+        res.statusCode = 400;
+        return res.end("Invalid fixture upload");
+      }
+      objects.set(uploadKey, Buffer.from(await file.arrayBuffer()));
+      objectTypes.set(uploadKey, String(form.get("Content-Type") ?? file.type));
+      res.statusCode = 204;
+      return res.end();
     }
     if (url.searchParams.has("list-type")) {
       res.setHeader("content-type", "application/xml");
@@ -65,6 +86,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       objects.set(key, Buffer.concat(chunks));
+      if (req.headers["content-type"]) objectTypes.set(key, req.headers["content-type"]);
       return res.end();
     }
     storageReads++;
@@ -88,7 +110,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       res.statusCode = 206;
       res.setHeader("content-range", `bytes ${start}-${end}/${bytes.length}`);
     }
-    res.setHeader("content-type", "application/octet-stream");
+    res.setHeader("content-type", objectTypes.get(key) ?? "application/octet-stream");
     res.setHeader("content-length", body.length);
     res.setHeader("etag", '"fixture"');
     res.end(body);
@@ -1778,6 +1800,18 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   await t.test("upload resume and planned checksum under the production database role", async (resumeTest) => {
     const { checkUploadResume } = await import("./upload-resume.fixture.js");
     await checkUploadResume(resumeTest, { admin: admin!, app, objects, keyHeaders, cookies });
+  });
+  await t.test("VARD additive import under the production database role", async (importTest) => {
+    const { checkVardImport } = await import("./vard-import.fixture.js");
+    await checkVardImport(importTest, { admin: admin!, app, objects, keyHeaders, cookies,
+      setReadHook: (hook) => { beforeObjectRead = hook; },
+    });
+  });
+  await t.test("VARD import through the real CLI, uploads, worker and pull", async (importCliTest) => {
+    const { checkVardImportCli } = await import("./vard-import-cli.fixture.js");
+    await checkVardImportCli(importCliTest, {
+      admin: admin!, app, objects, keyHeaders, root, cliPath: vardImportCliPath,
+    });
   });
   await t.test("ingest recovery and retry under the production database role", async (recoveryTest) => {
     const { checkIngestRecovery } = await import("./ingest-recovery.fixture.js");

@@ -325,6 +325,63 @@ export async function checkInstalledPackages({
       );
       await writeFile(join(project, "assets/editable.svg"), svg("green"));
       assert.equal(JSON.parse((await command("push")).stdout).changed, 1);
+
+      // Consume the packed CLI through the real API, RustFS and asynchronous
+      // worker. Import must preserve manual flags/IDs and existing folder rules.
+      const importSource = join(project, "import-source");
+      await mkdir(importSource);
+      await writeFile(join(importSource, "logo.svg"), svg("green"));
+      await writeFile(join(importSource, "extra.svg"), svg("purple"));
+      const beforeImport = await tool("get_vard", { vardId: vard.id }, reader);
+      const beforeImportLock = await readFile(lockPath, "utf8");
+      async function importAssetSnapshot() {
+        const assets = [];
+        let cursor = null;
+        do {
+          const query = new URLSearchParams({ prefix: "pkg/", pagination: "cursor", limit: "100" });
+          if (cursor) query.set("cursor", cursor);
+          const page = await api(`/api/workspaces/${workspaceId}/assets?${query}`, undefined, "GET");
+          assets.push(...page.assets);
+          cursor = page.nextCursor;
+        } while (cursor);
+        return Promise.all(assets.sort((a, b) => a.key.localeCompare(b.key)).map(async (item) => ({
+          id: item.id, key: item.key, isPublic: item.isPublic,
+          currentVersionId: item.currentVersionId, latestVersionId: item.latestVersionId,
+          status: item.status, hasUnfinishedUploads: item.hasUnfinishedUploads,
+          history: await api(`/api/workspaces/${workspaceId}/assets/${item.id}/versions?limit=100`, undefined, "GET"),
+        })));
+      }
+      const beforeImportAssets = await importAssetSnapshot();
+      const importArgs = ["push-folder", "import-source", "pkg/", "--output", "assets/import/"];
+      const plannedImport = JSON.parse((await command(...importArgs, "--dry-run")).stdout);
+      assert.equal(plannedImport.changed, 3);
+      assert.deepEqual(plannedImport.library.map((item) => item.libraryAction).sort(), ["new", "skip"]);
+      assert.ok(plannedImport.mappings.every((item) => item.mappingAction === "add"));
+      await assert.rejects(run(process.execPath, [cli.binary, ...importArgs, "--dry-run", "--json"], {
+        cwd: project, env: { ...env, VARDUM_API_KEY: readKey }, timeout: 30_000,
+      }), /permission|403/i);
+      assert.deepEqual(await importAssetSnapshot(), beforeImportAssets);
+      assert.deepEqual((await tool("get_vard", { vardId: vard.id }, reader)).items, beforeImport.items);
+      assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 3);
+      const imported = await tool("get_vard", { vardId: vard.id }, reader);
+      for (const previous of beforeImport.items)
+        assert.deepEqual(imported.items.find((item) => item.id === previous.id), previous);
+      assert.equal(imported.items.length, beforeImport.items.length + 2);
+      assert.equal(await readFile(lockPath, "utf8"), beforeImportLock);
+      assert.equal(await readFile(join(importSource, "logo.svg"), "utf8"), svg("green"));
+      assert.equal(await readFile(join(importSource, "extra.svg"), "utf8"), svg("purple"));
+      const importedAssets = await importAssetSnapshot();
+      assert.equal(JSON.parse((await command(...importArgs)).stdout).changed, 0);
+      assert.deepEqual((await tool("get_vard", { vardId: vard.id }, reader)).items, imported.items);
+      assert.deepEqual(await importAssetSnapshot(), importedAssets);
+      await command("pull");
+      assert.equal(Object.keys(JSON.parse(await readFile(lockPath, "utf8")).items).length, 7);
+      assert.equal(await readFile(join(project, "assets/import/logo.svg"), "utf8"), svg("green"));
+      assert.equal(await readFile(join(project, "assets/import/extra.svg"), "utf8"), svg("purple"));
+      assert.equal(await readFile(join(project, "assets/folder/extra.svg"), "utf8"), svg("purple"));
+      const extraAsset = importedAssets.find((item) => item.key === "pkg/extra");
+      assert.ok(extraAsset);
+      console.log("Installed CLI additive folder import: real storage/worker, dry-run/scope denial, preserved mappings, repeat0, separate pull passed");
       await tool("delete_vard", { vardId: vard.id });
       await writeFile(lockPath, originalLock);
       await rm(join(project, "assets"), { recursive: true });
@@ -355,6 +412,7 @@ export async function checkInstalledPackages({
         401,
       );
       await tool("delete_asset", { assetId: asset.id });
+      await tool("delete_asset", { assetId: extraAsset.id });
       assert.deepEqual(
         (await tool("list_assets", { prefix: "pkg/" })).assets,
         [],

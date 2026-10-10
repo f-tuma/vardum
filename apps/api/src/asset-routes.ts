@@ -13,6 +13,9 @@ import {
 } from "./asset-import.js";
 
 import { authorizeAsset } from "./authorization.js";
+import { assetKey } from "./asset-key.js";
+export { assetKey } from "./asset-key.js";
+import { lockWorkspaceContent } from "./db/content-guard.js";
 import {
   asset,
   assetFolder,
@@ -100,10 +103,6 @@ const createFolderBody = z
   });
 const assetParams = workspaceParams.extend({ assetId: z.uuid() });
 const versionParams = assetParams.extend({ versionId: z.uuid() });
-export const assetKey = z
-  .string()
-  .max(255)
-  .regex(/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/);
 const uploadBody = z
   .object({
     filename: z
@@ -470,6 +469,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
         const created = await inWorkspace(workspaceId, async (transaction) => {
           await lockWorkspaceBudget(transaction, workspaceId);
+          await lockWorkspaceContent(transaction, workspaceId);
           const [existing] = await transaction
             .select({ id: asset.id })
             .from(asset)
@@ -551,14 +551,16 @@ export function registerAssetRoutes(app: FastifyInstance) {
             { error, key: object.key },
             "Asset import copy failed",
           );
-          await inWorkspace(workspaceId, (transaction) =>
-            transaction.delete(asset).where(eq(asset.id, assetId)),
-          );
+          await inWorkspace(workspaceId, async (transaction) => {
+            await lockWorkspaceContent(transaction, workspaceId);
+            await transaction.delete(asset).where(eq(asset.id, assetId));
+          });
           skipped += 1;
           continue;
         }
 
         const queued = await inWorkspace(workspaceId, async (transaction) => {
+          await lockWorkspaceContent(transaction, workspaceId);
           const [pending] = await transaction
             .select()
             .from(assetVersion)
@@ -605,6 +607,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       const prefix = `${request.body.prefix}${request.body.name}/`;
       await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [created] = await transaction
           .insert(assetFolder)
           .values({
@@ -653,6 +656,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [[stored], [assets], [children]] = await Promise.all([
           transaction
             .select({ id: assetFolder.id })
@@ -1027,6 +1031,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
         return reply.code(authorization.statusCode).send({ error: authorization.error });
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
           .select({ displayName: asset.displayName })
           .from(asset)
@@ -1080,6 +1085,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .code(authorization.statusCode)
           .send({ error: authorization.error });
       const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
           .select({ isPublic: asset.isPublic })
           .from(asset)
@@ -1131,6 +1137,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       const deleted = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
           .select({ key: asset.key, displayName: asset.displayName })
           .from(asset)
@@ -1206,6 +1213,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
         const created = await inWorkspace(workspaceId, async (transaction) => {
           // Serialize same-request retries and key races across API replicas.
           await lockWorkspaceBudget(transaction, workspaceId);
+          await lockWorkspaceContent(transaction, workspaceId);
           if (request.body.id) {
             const [existing] = await transaction.select({
               id: asset.id, key: asset.key, displayName: asset.displayName, isPublic: asset.isPublic,
@@ -1380,6 +1388,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
           .select({
             key: asset.key,
@@ -1523,6 +1532,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .send({ error: authorization.error });
       const result = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceBudget(transaction, workspaceId);
+        await lockWorkspaceContent(transaction, workspaceId);
         const [version] = await transaction
           .select()
           .from(assetVersion)
@@ -1614,7 +1624,10 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       if (uploadDeadline(pending.createdAt).getTime() < Date.now()) {
-        await inWorkspace(workspaceId, (tx) => expirePending(tx, versionId));
+        await inWorkspace(workspaceId, async (tx) => {
+          await lockWorkspaceContent(tx, workspaceId);
+          await expirePending(tx, versionId);
+        });
         return reply
           .code(409)
           .send({ error: "Upload expired. Upload a new file." });
@@ -1635,6 +1648,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       const status = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
         const [current] = await transaction
           .select({
             status: assetVersion.status,

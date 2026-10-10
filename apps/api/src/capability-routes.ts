@@ -16,6 +16,7 @@ export function registerCapabilityRoutes(app: FastifyInstance) {
             emailChange: z.boolean(),
             invitations: z.boolean(),
             folderUploadResume: z.literal(1),
+            folderVardImport: z.literal(1),
           }),
         },
       },
@@ -27,6 +28,7 @@ export function registerCapabilityRoutes(app: FastifyInstance) {
         emailChange: smtpEnabled,
         invitations: smtpEnabled,
         folderUploadResume: 1 as const,
+        folderVardImport: 1 as const,
       };
     },
   );
