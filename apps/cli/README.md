@@ -4,35 +4,30 @@ The CLI materializes a workspace **Vard** into a project. Create a Vard in the
 web UI, select its assets and output paths, then run `vardum init` in the target
 repository to create `vardum.json`.
 
-This README describes **CLI 0.8.0**, which retains schema **2** frozen snapshots
-and adds a complete folder-upload plan. Check the
-[0.8 release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.8.md)
-and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md)
-for publication evidence and the matching server contracts.
+This README describes [CLI **0.8.1**](https://www.npmjs.com/package/@vardum/cli/v/0.8.1).
+It keeps schema **2** frozen snapshots, the complete folder-upload plan and
+resumable uploads. The matching client batch uses shared **0.4.1** and MCP **0.4.1**.
+This patch makes setup self-contained; it does not change the snapshot schema.
 
 ## First project
 
-For a runnable three-file example, follow [First project](../../examples/first-project/README.md).
-
-Use Node.js 22 or newer. The installation below pins published **CLI 0.8.0**.
-For a shorter setup, follow [Quick start](../../docs/guide/quick-start.md).
-Folder upload and import require the matching server contracts in the release
-notes. The first-project example remains an explicit CLI 0.6.0 compatibility fixture.
-Published CLI 0.5.0 has a broken workspace dependency and does not support frozen
-snapshots.
+Use Node.js **22 or newer**, an existing Vardum workspace and a project with
+`package.json`. If needed, create the project manifest with `npm init -y` first.
+The exact installation below does not require access to the source repository.
 
 1. In the web app, upload an image, create a Vard and add an output such as
    `public/logo.svg`. Keep its Setup tab open for the server URL, workspace
-   ID and Vard ID. **Copy setup** combines the following steps into one command
-   with all three values filled in (bash/zsh).
+   ID and Vard ID. **Copy setup** fills all three values in a bash/zsh command
+   pinned to the UI's last verified public release. A deployed UI can lag this
+   npm patch; the manual steps below install this README's exact version.
 2. In your project root, install an exact CLI version, initialize the project
    and authorize your machine:
 
    ```sh
-   npm install --save-dev --save-exact @vardum/cli@0.8.0
-   npx vardum init
-   npx vardum login
-   npx vardum pull
+   npm install --save-dev --save-exact @vardum/cli@0.8.1
+   npx --no-install vardum init
+   npx --no-install vardum login
+   npx --no-install vardum pull
    ```
 
    `init` asks for the three values from the Setup tab and creates
@@ -46,32 +41,48 @@ snapshots.
    npx --no-install vardum pull --frozen --json
    ```
 
-   Supply a workspace read key through the CI secret `VARDUM_API_KEY`.
+   Create a workspace API key with **Read** permission in **Settings → API keys**.
+   Supply it through the CI secret `VARDUM_API_KEY`; do not commit the key or
+   paste it into the terminal setup command.
    A normal `pull` intentionally adopts remote changes; frozen pull restores
    the reviewed snapshot. `vardum push` only updates mappings marked Writable.
-
-For a source checkout, run
-`pnpm --filter "@vardum/cli..." build` and use `node /absolute/path/to/vardum/apps/cli/dist/index.js`
-in place of `npx vardum` from the target project.
 
 Private files, private Vards and all write operations need a workspace key.
 Authorize the machine once and the CLI keeps it:
 
 ```sh
-vardum login
+npx --no-install vardum login
 ```
 
 That opens the browser, asks which workspace and whether the key may push, and
 stores it in `$XDG_CONFIG_HOME/vardum/credentials.json` with mode `0600`. The
-key carries your own permissions and nothing more, and appears in Settings //
+key carries your own permissions and nothing more, and appears in Settings →
 API keys as `cli@<machine>`. `vardum logout` revokes it on the server and
 removes it locally.
 
 For CI, keep passing the key explicitly — it overrides anything stored:
 
 ```sh
-VARDUM_API_KEY=varda_... vardum pull --frozen --json
+VARDUM_API_KEY=varda_... npx --no-install vardum pull --frozen --json
 ```
+
+## Backend requirements
+
+The CLI connects to your Vardum instance, not directly to a storage bucket.
+Basic pull needs working manifest and version-delivery endpoints on that instance.
+Private files require a workspace read key even when restoring an old snapshot.
+For self-hosting, verify `GET /api/capabilities` before using newer operations:
+
+| Operation | Required server contract |
+| --- | --- |
+| Library `push-folder` mutations | `folderUploadResume: 1` |
+| `push-folder --output` (including dry-run) | Both `folderUploadResume: 1` and `folderVardImport: 1` |
+| Uploads and upload previews | `GET /api/upload-limits` with valid image/video limits |
+
+The upload backend needs migrations through `0015_upload_request_checksum.sql`
+and ready-version checksum metadata. Older servers are refused before these
+mutations; installing this client does not upgrade a server. The older published
+CLI 0.5.0 has a broken workspace dependency and cannot maintain frozen snapshots.
 
 ## Commands
 
@@ -201,8 +212,8 @@ tracking file or version-check cache and performs no remote mutations.
 CLI 0.8.0 retains the opt-in import into the **configured Vard** introduced in 0.7.0:
 
 ```sh
-vardum push-folder ./source-images brand --output assets/brand/ --dry-run
-vardum push-folder ./source-images brand --output assets/brand/
+npx --no-install vardum push-folder ./source-images brand --output assets/brand/ --dry-run
+npx --no-install vardum push-folder ./source-images brand --output assets/brand/
 ```
 
 Without `--output`, folder push keeps its library-only behavior. With `--output`,
@@ -275,10 +286,8 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 
 ## Reproducible asset consumption
 
-**Minimum compatible CLI: 0.6.0**, with the matching server from the
-[compatibility table](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md#compatibility).
-Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. CLI 0.8.0 consumes existing schema 2
+**Minimum compatible CLI for schema 2: 0.6.0**. Pin the exact tested version in CI. Older clients, including published 0.5.0,
+cannot safely maintain schema 2 snapshots. CLI 0.8.1 consumes existing schema 2
 snapshots without migration, as published CLI 0.7.0 does. Keep the exact tested CLI pinned;
 a source version bump or passing tests do not publish future versions.
 
@@ -346,5 +355,5 @@ visibility in the app or through MCP `set_asset_visibility` (publication require
 `publish` permission).
 New workspace API/CLI keys have a finite 10,000-request/60-second allowance;
 private file requests now consume it. Existing custom key limits still apply.
-This allowance is not a throughput guarantee; see the
-[upgrade notes](https://github.com/f-tuma/vardum/blob/main/docs/operations.md#asset-visibility-upgrade) for legacy keys.
+This allowance is not a throughput guarantee; existing legacy keys may have
+different limits. Check the key settings on the intended instance.

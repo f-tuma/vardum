@@ -1,6 +1,6 @@
 {
   "name": "@vardum/mcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MCP server for workspace-scoped Vardum assets and Vards",
   "license": "MIT",
   "type": "module",
@@ -37,7 +37,7 @@
     "url": "git+https://github.com/f-tuma/vardum.git",
     "directory": "apps/mcp"
   },
-  "homepage": "https://github.com/f-tuma/vardum/tree/main/apps/mcp#readme",
+  "homepage": "https://vardum.com",
   "bugs": {
     "url": "https://github.com/f-tuma/vardum/issues"
   }

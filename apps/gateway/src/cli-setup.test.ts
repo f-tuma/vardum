@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { cliSetupCommand, CLI_SETUP_VERSION } from "./cli-setup";
+import { cliSetupCommand } from "./cli-setup";
 
 test("copied setup preserves shell arguments and stops on a failed step", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "vardum-setup-command-"));
@@ -40,7 +40,7 @@ if (process.env.FAIL_INIT && process.argv.includes("init")) process.exit(1);
       "install",
       "--save-dev",
       "--save-exact",
-      `@vardum/cli@${CLI_SETUP_VERSION}`,
+      "@vardum/cli@0.8.0",
     ],
     [
       "--no-install",
