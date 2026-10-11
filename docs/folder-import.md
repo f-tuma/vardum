@@ -1,9 +1,14 @@
 # Import a folder into a Vard
 
-This feature is in source and is not included in the published CLI 0.6.0.
+This feature is available in published **CLI 0.7.0** and is absent from CLI 0.6.0.
+Verify the matching backend capabilities before using it; see
+[release notes and upgrade order](client-release-0.7.md) and
+[npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server
-before upgrading project clients.
+with migrations through `0015_upload_request_checksum.sql` before upgrading
+project clients. The consumption flow continues to use schema **2** frozen
+snapshots.
 
 Run the command from a project containing `vardum.json`. It uses the server,
 workspace and Vard in that configuration. With a write key, preview the import:
@@ -37,7 +42,9 @@ file/directory overlaps and more than 1,000 outputs are rejected. An already
 invalid Vard needs repair in the editor first. This preview is not a reservation:
 concurrent edits can still make final application fail.
 
-The next client release also gives library-only previews an all-file `library`
+The all-file library report described in the following two paragraphs is
+unreleased source work for the next client release (VARD-69); it is not included
+in the published CLI 0.7.0. Library-only previews gain an all-file `library`
 report, separate from the existing mutation `actions`. Each row shows the
 source-relative `source`, exact resulting `key`, and `libraryAction` (`new`,
 `update`, or `skip`). Skipped rows do not add an action or a change and retain
@@ -112,5 +119,9 @@ grant itself broader key permissions.
 
 Use this additive endpoint for imports. The legacy `PUT .../items` deliberately
 replaces the complete manual list and can remove previously imported mappings.
-The import endpoint does not make an old stale whole-list edit safe. Protection
-for modern editor revisions is a separate follow-up.
+The import endpoint does not make an old stale whole-list edit safe. Servers
+advertising `vardEditRevision: 1` offer dedicated [guarded editor routes](vard-editor-concurrency.md).
+An import invalidates a previously read editor definition when it adds manual
+mappings, so a stale guarded save fails with 409 and keeps the imported mappings.
+Legacy clients and routes remain unguarded; published MCP 0.3.0 still uses them.
+Revision-aware MCP editing is unreleased source for the next client release.

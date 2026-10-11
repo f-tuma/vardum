@@ -3,6 +3,10 @@
 Use Node.js 22 or newer and a Vardum server with recursive folder rules and
 schema 2 snapshots. This small consumer pins the published **@vardum/cli 0.6.0**
 and its public npm lockfile. It uses three SVG originals, with no transformations.
+This is also the server-candidate compatibility fixture, so its version and
+lockfile remain fixed. For a new project using published CLI 0.7.0, follow the
+[quick start](../../docs/guide/quick-start.md); the frozen snapshot contract is
+still schema 2.
 
 1. Copy this directory into a new project outside the Vardum source workspace:
 

@@ -231,9 +231,11 @@ function OverviewContent({
           const card = (
             <Card size="sm">
               <CardHeader>
-                <CardDescription>{stat.label}</CardDescription>
+                <CardDescription>
+                  <span className="font-mono text-xs lowercase">{stat.label}</span>
+                </CardDescription>
                 <CardTitle>
-                  <span className="text-2xl font-semibold tabular-nums">{stat.value}</span>
+                  <span className="font-mono text-2xl font-medium tabular-nums">{stat.value}</span>
                 </CardTitle>
                 {stat.link && (
                   <CardAction>

@@ -2,9 +2,15 @@
 
 Production smoke calls `scripts/smoke-runtime-tls.mjs` from the image acceptance
 gate after verifying the running API/worker image identity, successful one-shot
-migration and application capability policies. CI and release upload the sanitized
-`runtime-tls/summary.json` and `summary.txt`, including partial proof on failure.
-No second application build is needed.
+migration and application capability policies. Ordinary CI and npm release
+validation project selected TLS fields into `runtime-summary.json` and
+`runtime-summary.txt`, with `checksums.txt`, rather than uploading the raw TLS
+summaries. Partial results retain the aggregate TLS status, production-smoke
+outcome and evidence completeness separately. Individual cases may be marked
+passed before a later mutation assertion fails; recorded database fingerprints
+and their equality are preserved alongside the writer's reported unchanged flag.
+No second application build is needed. These summaries provide neither offline
+replay nor release certification.
 
 To replay against already verified local Linux/amd64 images:
 

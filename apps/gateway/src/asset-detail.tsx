@@ -264,7 +264,7 @@ function AssetDetailPage({
 
         <div className="grid items-start gap-6 lg:grid-cols-3">
           <div className="flex flex-col gap-6 lg:col-span-2">
-            <div className="flex h-96 items-center justify-center overflow-hidden rounded-xl border bg-muted lg:h-128">
+            <div className="flex h-96 items-center justify-center overflow-hidden rounded-xl border bg-muted bg-cells lg:h-128">
               <AssetThumb
                 url={previewUrl}
                 mimeType={asset.mimeType}

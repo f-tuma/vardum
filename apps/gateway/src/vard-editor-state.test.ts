@@ -210,3 +210,34 @@ test("Vard API forwards mutation errors and item writes contain only manual draf
   );
   assert.deepEqual(saved, definition);
 });
+
+test("captured drafts retain all original rows, rules, settings and literal unavailable pins across refetches", async () => {
+  const { captureVardBaseline, vardItemInputs } = await import("./vard-editor-state.js");
+  const revision = `v1:${"a".repeat(64)}`;
+  const original = {
+    ...definition,
+    folderRules: definition.folderRules.map(({ sourcePrefix, outputPrefix }) => ({ sourcePrefix, outputPrefix })),
+    revision,
+    items: [
+      { ...manual, pinnedVersionId: "missing-pin", versionId: null, transformation: { w: 32 } },
+      { ...manual, id: "second", pinnedVersionId: null, pinned: false, writable: true },
+    ],
+  };
+  const baseline = captureVardBaseline(original);
+  original.name = "Refetched";
+  original.revision = `v1:${"b".repeat(64)}`;
+  original.folderRules[0]!.sourcePrefix = "changed/";
+  original.items[0]!.transformation!.w = 64;
+  original.items.push({ ...manual, id: "added-elsewhere", pinnedVersionId: null, transformation: null });
+  assert.equal(baseline.definition.revision, revision);
+  assert.equal(baseline.definition.name, "Website");
+  assert.equal(baseline.definition.folderRules[0]?.sourcePrefix, "brand/");
+  assert.equal(baseline.items.length, 2);
+  assert.equal(baseline.items[0]?.versionId, "missing-pin");
+  assert.equal(baseline.items[0]?.transformation?.w, 32);
+  const next = [...baseline.items, { ...baseline.items[0]!, id: "new-local-id", outputPath: "new.svg" }];
+  const inputs = vardItemInputs(next, new Set(baseline.items.map(({ id }) => id)));
+  assert.deepEqual(inputs.map(({ id }) => id), ["manual-id", "second", null]);
+  assert.equal(inputs[0]?.versionId, "missing-pin");
+  assert.equal(inputs[1]?.writable, true);
+});

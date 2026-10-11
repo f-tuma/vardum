@@ -1,6 +1,6 @@
 {
   "name": "@vardum/mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server for workspace-scoped Vardum assets and Vards",
   "license": "MIT",
   "type": "module",
@@ -34,11 +34,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frgtn-dot-dev/vardum.git",
+    "url": "git+https://github.com/f-tuma/vardum.git",
     "directory": "apps/mcp"
   },
-  "homepage": "https://github.com/frgtn-dot-dev/vardum/tree/main/apps/mcp#readme",
+  "homepage": "https://github.com/f-tuma/vardum/tree/main/apps/mcp#readme",
   "bugs": {
-    "url": "https://github.com/frgtn-dot-dev/vardum/issues"
+    "url": "https://github.com/f-tuma/vardum/issues"
   }
 }
