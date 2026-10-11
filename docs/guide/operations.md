@@ -82,8 +82,9 @@ compose -p vardum up -d --wait api worker gateway
 | `DELIVERY_REQUESTS_PER_SECOND` | 100 | Delivery per API process |
 
 - Over quota: `413`. Too many unfinished or too fast: `429`. Busy: `503`.
-- Variants in `derived/` are not counted; give them a lifecycle rule, never
-  `originals/`.
+- Variants in `derived/` are not counted; monitor their storage growth and retain
+  stored bytes. Automatic deletion requires a separately accepted retention and
+  reconstruction model; see the [preservation contract](../adr/0001-derived-output-preservation.md).
 
 [Full runbook](../operations.md#resource-budgets-and-unfinished-uploads)
 
