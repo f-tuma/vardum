@@ -659,11 +659,13 @@ function AssetTile({
   const badge = statusBadge(asset);
   return (
     <li className="group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-ring">
-      <div className="relative aspect-4/3 bg-muted bg-cells">
-        <AssetThumb url={assetPreviewUrl(workspace.slug, asset)} mimeType={asset.mimeType} />
+      <div className="relative aspect-4/3 shrink-0 overflow-hidden bg-muted bg-cells">
+        <div className="absolute inset-0">
+          <AssetThumb url={assetPreviewUrl(workspace.slug, asset)} mimeType={asset.mimeType} />
+        </div>
         {badge && <div className="absolute top-2 left-2">{badge}</div>}
       </div>
-      <div className="flex items-start gap-1 p-3">
+      <div className="flex shrink-0 items-start gap-1 p-3">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <AssetLink asset={asset} workspace={workspace} prefix={prefix} search={search} />
           <span className="truncate font-mono text-xs text-muted-foreground">{asset.key}</span>
