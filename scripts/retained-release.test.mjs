@@ -176,11 +176,14 @@ test("download rejects untrusted redirects, errors and bounded overflow", async 
   await assert.rejects(boundedBytes(new Response("x", { headers: { "content-length": "4" } }), 3), /byte limit/);
 });
 
-test("retained publication and arbitrary candidate selection stay disabled", () => {
+test("retained policy keeps safe mode readonly and limits explicit publication to reviewed main", () => {
   const policy = { eventName: "workflow_dispatch", ref: "refs/heads/main", repository: candidate.repository,
     controllerCommit: "a".repeat(40), validationOnly: true };
   assert.equal(retainedPolicy(policy).publicationAllowed, false);
-  for (const ref of [policy.ref, "refs/tags/v0.7.0"]) assert.throws(() => retainedPolicy({ ...policy, ref, validationOnly: false }), /disabled/);
+  assert.equal(retainedPolicy({ ...policy, validationOnly: false }).publicationAllowed, true);
+  assert.throws(() => retainedPolicy({ ...policy, ref: "refs/tags/v0.7.0", validationOnly: false }), /reviewed main/);
+  assert.throws(() => retainedPolicy({ ...policy, validationOnly: false },
+    { ...candidate, publication: { ...candidate.publication, enabled: false } }), /disabled/);
   assert.throws(() => retainedPolicy({ ...policy, eventName: "push" }));
   assert.throws(() => selectRetainedRelease("11674484014"), /Unknown reviewed/);
   assert.equal(selectRetainedRelease(candidate.selection), candidate);
@@ -262,6 +265,7 @@ test("retained reports project only allowlisted fields and separate controller/a
     const report = await readFile(join(directory, "retained-summary.json"), "utf8");
     assert.doesNotMatch(report, /secret|sensitive|signed\.invalid/);
     const data = JSON.parse(report); assert.equal(data.controllerCommit, "a".repeat(40)); assert.equal(data.artifactSource.commit, candidate.commit);
+    assert.equal(data.publicationConfigured, true);
     assert.equal(data.publicationEnabled, false); assert.equal(data.checks.independentInstalls, "failure");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -295,7 +299,7 @@ test("enabled retained policy requires manual main, repository identity and a di
     { ...candidate, publication: { ...candidate.publication, enabled } }), /disabled/);
 });
 
-test("every publication CLI guard denies safe or disabled requests before files, network and subprocesses", async () => {
+test("every enabled publication CLI guard denies unsafe contexts before files, network and subprocesses", async () => {
   const root = await mkdtemp(join(tmpdir(), "vard75-mutation-guards-"));
   const preload = join(root, "deny-touch.mjs"), directory = join(root, "missing");
   try {
@@ -312,7 +316,7 @@ syncBuiltinESMExports();
 globalThis.fetch = async () => { throw new Error("UNEXPECTED NETWORK"); };
 `);
     for (const command of ["publication-policy", "github-preflight", "prepare-tag", "publish", "verify-registry", "github-release"]) {
-      for (const value of [undefined, "", "true", "TRUE", "0", "null", "false"]) {
+      for (const value of [undefined, "", "true", "TRUE", "0", "null"]) {
         const env = { ...process.env, ...publicationEnvironment };
         if (value === undefined) delete env.RELEASE_VALIDATION_ONLY;
         else env.RELEASE_VALIDATION_ONLY = value;
@@ -321,11 +325,11 @@ globalThis.fetch = async () => { throw new Error("UNEXPECTED NETWORK"); };
           fileURLToPath(new URL("./retained-release.mjs", import.meta.url)), command, candidate.selection,
           ...(command === "publication-policy" ? [] : [directory])], { encoding: "utf8", env });
         assert.equal(result.status, 1, `${command}/${value}: ${result.stderr}`);
-        assert.match(result.stderr, value === "false" ? /Retained publication disabled/ : /requires RELEASE_VALIDATION_ONLY=false/);
+        assert.match(result.stderr, /requires RELEASE_VALIDATION_ONLY=false/);
         assert.doesNotMatch(result.stderr, /ENOENT|UNEXPECTED|GH_TOKEN is required/);
       }
       for (const changes of [{ GITHUB_EVENT_NAME: "push" }, { GITHUB_EVENT_NAME: "pull_request" },
-        { GITHUB_REPOSITORY: "someone/vardum" }, { GITHUB_SHA: "invalid" },
+        { GITHUB_REPOSITORY: "someone/vardum" }, { GITHUB_SHA: "invalid" }, { GITHUB_SHA: candidate.commit },
         { GITHUB_REF: "refs/heads/other" }, { GITHUB_REF: "refs/tags/v0.7.0" }]) {
         const result = spawnSync(process.execPath, ["--import", preload,
           fileURLToPath(new URL("./retained-release.mjs", import.meta.url)), command, candidate.selection,
@@ -333,9 +337,22 @@ globalThis.fetch = async () => { throw new Error("UNEXPECTED NETWORK"); };
           encoding: "utf8", env: { ...process.env, ...publicationEnvironment, ...changes },
         });
         assert.equal(result.status, 1);
-        assert.match(result.stderr, /manual dispatch|Unexpected controller repository|did not match|Retained publication disabled/);
+        assert.match(result.stderr, /manual dispatch|Unexpected controller repository|did not match|reviewed main controller|must be distinct/);
         assert.doesNotMatch(result.stderr, /ENOENT|UNEXPECTED|GH_TOKEN is required/);
       }
+    }
+    const allowed = spawnSync(process.execPath, ["--import", preload,
+      fileURLToPath(new URL("./retained-release.mjs", import.meta.url)), "publication-policy", candidate.selection],
+      { encoding: "utf8", env: { ...process.env, ...publicationEnvironment } });
+    assert.equal(allowed.status, 0, allowed.stderr);
+    assert.equal(allowed.stdout.trim(), "Reviewed retained publication policy passed");
+    for (const command of ["github-preflight", "prepare-tag", "publish", "verify-registry", "github-release"]) {
+      const permitted = spawnSync(process.execPath, ["--import", preload,
+        fileURLToPath(new URL("./retained-release.mjs", import.meta.url)), command, candidate.selection, directory],
+        { encoding: "utf8", env: { ...process.env, ...publicationEnvironment } });
+      assert.equal(permitted.status, 1);
+      assert.match(permitted.stderr, /UNEXPECTED FILE READ/);
+      assert.doesNotMatch(permitted.stderr, /UNEXPECTED NETWORK|UNEXPECTED SUBPROCESS/);
     }
     assert.deepEqual((await readdir(root)).sort(), ["deny-touch.mjs"]);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -394,14 +411,15 @@ test("publication evidence records requested mode, configured gate and exact fai
   const checks = { policy: "failure", download: "skipped", npmPreflight: "skipped", githubPreflight: "skipped",
     tagPreparation: "skipped", npmPublish: "skipped", registryVerification: "skipped", githubRelease: "skipped", job: "failure" };
   try {
-    for (const validationOnly of [false, true]) {
-      const directory = join(root, String(validationOnly));
+    for (const enabled of [false, true]) for (const validationOnly of [false, true]) {
+      const directory = join(root, `${enabled}-${validationOnly}`);
       await writeRetainedPublicationEvidence(directory, { controllerCommit: "a".repeat(40), validationOnly,
-        checks: { ...checks, rawLog: "sensitive" }, token: "secret", environment: "credentials", url: "https://signed.invalid/" });
+        checks: { ...checks, rawLog: "sensitive" }, token: "secret", environment: "credentials", url: "https://signed.invalid/" },
+        { ...candidate, publication: { ...candidate.publication, enabled } });
       assert.deepEqual((await readdir(directory)).sort(), ["checksums.txt", "retained-publication.json", "retained-publication.txt"]);
       const json = await readFile(join(directory, "retained-publication.json"), "utf8"), report = JSON.parse(json);
       assert.doesNotMatch(json, /secret|sensitive|credentials|signed\.invalid/);
-      assert.equal(report.publicationEnabled, false); assert.equal(report.publicationRequested, !validationOnly);
+      assert.equal(report.publicationEnabled, enabled); assert.equal(report.publicationRequested, !validationOnly);
       assert.equal(report.validationOnly, validationOnly); assert.equal(report.mode, "retained-publication");
       assert.equal(report.controllerCommit, "a".repeat(40)); assert.equal(report.artifactSource.commit, candidate.commit);
       assert.deepEqual(report.checks, checks);
@@ -439,5 +457,5 @@ test("retained publication job is manual main explicit mode, scopes credentials 
   assert.equal((job.match(/id-token: write/g) ?? []).length, 1);
   assert.equal((job.match(/vardum-retained-publication-sanitized\/(?:retained-publication\.(?:json|txt)|checksums\.txt)/g) ?? []).length, 3);
   assert.doesNotMatch(job, /path:.*\*|\.log|runtime-images/);
-  assert.equal(candidate.publication.enabled, false);
+  assert.equal(retainedPublicationPolicy(publicationEnvironment).publicationAllowed, true);
 });

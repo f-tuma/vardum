@@ -19,7 +19,7 @@ export function retainedPolicy({ eventName, ref, repository, controllerCommit, v
   assert.match(controllerCommit ?? "", /^[a-f0-9]{40}$/);
   assert.equal(typeof validationOnly, "boolean");
   if (!validationOnly) {
-    assert.equal(candidate.publication.enabled, true, "Retained publication disabled: reviewed main controller policy exception and VARD-45 npm-owner gate required");
+    assert.equal(candidate.publication.enabled, true, "Retained publication disabled by the reviewed descriptor");
     assert.equal(ref, candidate.publication.controllerRef, "Publication requires the reviewed main controller");
     assert.notEqual(controllerCommit, candidate.commit, "Controller and artifact source must be distinct");
   }

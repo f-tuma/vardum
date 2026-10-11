@@ -2,7 +2,7 @@
 
 ## Current status
 
-Reviewed **2026-10-10** (planner project **frgtn.VARD**, VARD-75; public baseline VARD-20).
+Reviewed **2026-10-11** (planner project **frgtn.VARD**, VARD-75; public baseline VARD-20).
 The available public versions are [CLI **0.6.0**](https://registry.npmjs.org/@vardum%2Fcli/0.6.0),
 [MCP **0.2.0**](https://registry.npmjs.org/@vardum%2Fmcp/0.2.0) and
 [shared **0.2.0**](https://registry.npmjs.org/@vardum%2Fshared/0.2.0).
@@ -25,8 +25,10 @@ residual OS/native assessment still open. See [current readiness status](product
 Passing source tests does not make those candidates publicly available or ready
 for production.
 
-The current private source repository is `f-tuma/vardum`. npm-owner confirmation
-of its package-side trusted publishers remains VARD-45. The successful
+The current private source repository is `f-tuma/vardum`. Acceptance of its
+package-side trusted publishers remains unverified under VARD-45 until an actual
+Actions publication succeeds. A browser npm login is only needed if that attempt
+identifies a publisher configuration requiring owner correction. The successful
 [validation-only run](https://github.com/f-tuma/vardum/actions/runs/37129022120)
 validated and downloaded archives, with **publish skipped**; it does not prove
 current publisher identity or a new npm publication.
@@ -156,9 +158,9 @@ round trip; local package checks do not verify the hosted runner or action runti
 Select `release_mode=retained`, `retained_candidate=vard68-upload-import-v1`, and
 `validation_only=true` on the controller branch. The retained job has only
 `contents: read` and `actions: read`. It has no npm environment, OIDC permission,
-tag write or publication step. Setting `validation_only=false` fails its policy
-check before download or installation. Fresh-source jobs and their publish job
-are excluded from this mode.
+tag write or publication step. Setting `validation_only=false` requests the
+separate publication path described below and requires the reviewed main
+controller. Fresh-source jobs and their publish job are excluded from retained mode.
 
 The reviewed descriptor in
 [`scripts/retained-release-contract.mjs`](../scripts/retained-release-contract.mjs)
@@ -220,57 +222,70 @@ GitHub release retries also verify the source tag and every existing asset's act
 bytes before uploading any missing file; an existing release never silently skips
 archive verification.
 
-### Retained publication remains disabled
+### Publish the retained candidate through Actions
 
-VARD-75 stays open until hosted retained validation succeeds and the npm owner and
-GitHub environment approvals are resolved. `prepare-tag`, `publish`,
-`verify-registry` and `github-release` helpers independently require the actual
-`RELEASE_VALIDATION_ONLY=false` value before file or network access and are gated by the descriptor's
-`publication.enabled=false`. A separate `retained-publish` job is prepared in
-`Release`, dependent on successful retained validation, but stays unreachable
-while that descriptor is disabled. Its job condition requires manual retained
-dispatch from `refs/heads/main` with `validation_only=false`; safe validation
-skips the entire job, including its `npm` environment and OIDC permission.
-No tag, release, npm package, publisher connection or deployment policy is changed
-by this delivery.
+The descriptor now enables deliberate retained publication. This source change
+does not publish packages by itself. VARD-75 stays open until the actual workflow
+publishes and verifies the original batch. From the reviewed main controller:
 
-The future controller must be the reviewed **`refs/heads/main`** implementation of
-`.github/workflows/release.yml`; its source SHA must remain distinct from the
-immutable artifact source SHA. The existing `npm` environment's tag-only rule
-requires a separately reviewed exception for that exact controller branch, plus
-VARD-45 owner confirmation of all three package publishers. GitHub checks the
-[branch/tag deployment policy against the workflow run's ref](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+```sh
+gh workflow run release.yml --repo f-tuma/vardum --ref main \
+  -f release_mode=retained -f retained_candidate=vard68-upload-import-v1 \
+  -f validation_only=false
+```
+
+The separate `retained-publish` job requires successful retained validation,
+manual retained dispatch from `refs/heads/main`, and explicit
+`validation_only=false`. Every mutation helper independently requires the actual
+`RELEASE_VALIDATION_ONLY=false` value, the reviewed repository/main controller,
+and a controller SHA distinct from the immutable artifact source. Safe validation
+still skips the entire publication job, including its `npm` environment and OIDC
+permission. Its report records the configured flag separately from publication
+being disabled for that validation run.
+
+The existing `npm` environment's tag policy `v*` remains necessary for ordinary
+source releases. Retained publication additionally needs the exact branch `main`
+allowed in that environment; keep the tag rule and other protection rules.
+[GitHub checks deployment policies against the workflow run's ref](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 A source tag alone cannot make a main controller satisfy a tag-only rule.
-The intended npm identity remains `f-tuma/vardum`, `release.yml`, environment
-`npm`; [npm's trust checks](https://docs.npmjs.com/trusted-publishers/) are independent
-of artifact validation and cannot be proven by a read-only run.
+An enabled descriptor does not prove that this external policy has been changed.
 
-The prepared job uses Node 22.23.3 and npm 12.0.2, independently downloads the
-original pinned artifact, checks its reviewed contract, and preflights all npm
-versions and existing GitHub release assets before the first tag or npm write.
-Its helpers recheck the immutable origin, tag target, and actual registry bytes;
-byte-identical versions and assets permit retries. Publication runs shared → CLI
-→ MCP without packing source. A separate allowlisted publication report records
-controller/artifact identities, the configured enable flag, explicit mode and
-each step outcome. Evidence collection cannot turn failed or skipped publication
-into success, and readonly validation reports continue to state that publication
-was disabled for that validation path.
+Actions uses npm trusted publishing directly. The intended npm identity is
+`f-tuma/vardum`, workflow `release.yml`, environment `npm`, with direct
+`npm publish` allowed. An npm browser session and static npm token are not needed
+for a working OIDC connection. Archive validation cannot prove publisher trust:
+the actual publish attempt must establish acceptance. If npm rejects it, retain
+the same candidate and inspect the error before requesting owner login to correct
+the affected publisher. Preserve 2FA and do not replace OIDC with a static token.
+See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
-After those gates, a newly reviewed flag-enable change may prepare or verify
-`v0.7.0` at the immutable candidate commit using the built-in `GITHUB_TOKEN`.
-[GitHub documents that its token's tag push does not trigger another workflow](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow),
-so the old candidate's tag workflow must not be accidentally invoked using a PAT.
-Never substitute a fake ref/OIDC claim, a static npm token, a different publisher,
-or public provenance for the private source repository. Provenance stays disabled
-for private source, and ordinary source publication keeps its matching-tag policy.
+The job uses Node 22.23.3 and npm 12.0.2, independently downloads the original
+pinned artifact, checks its reviewed contract, and preflights all npm versions
+and existing GitHub release assets before the first tag or npm write. Publication
+runs shared → CLI → MCP without packing source. Byte-identical published versions
+and assets permit retries; conflicts stop before further writes. An authentication
+or transport failure can leave earlier packages published. Inspect recorded
+outcomes and registry bytes, then rerun this same selection from main; never
+repack or silently choose a new version to get past a failure.
+
+The workflow prepares or verifies `v0.7.0` at the original candidate commit using
+its built-in `GITHUB_TOKEN`.
+[That token's tag write does not trigger another workflow](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow),
+so do not push the historical candidate tag with a PAT or local Git credentials.
+The publication report allowlists only identities, mode, configured enable flag
+and exact step outcomes. Failed/skipped evidence cannot claim a successful release.
+Private source provenance remains disabled; ordinary source publication retains
+its matching-tag policy.
 
 ### One-time npm setup
 
 The September 20 release exercised the historical publisher identity below
-(VARD-40). For the current private repository, an npm owner must inspect each
-package (`@vardum/shared`, `@vardum/cli`, `@vardum/mcp`) in npm Settings → Trusted
-publishing and confirm the intended identity. That confirmation is still open
-under VARD-45; these are not three currently verified connections.
+(VARD-40). The current identity is not yet verified under VARD-45. First attempt
+the requested Actions publication with the existing OIDC connection. If npm
+rejects publisher trust, an owner can inspect the affected packages
+(`@vardum/shared`, `@vardum/cli`, `@vardum/mcp`) in npm Settings → Trusted
+publishing and correct their connections. Do not assume a connection is broken
+merely because the browser is logged out.
 
 | Field | Historical successful identity | Intended current identity, unverified |
 | --- | --- | --- |
@@ -280,8 +295,9 @@ under VARD-45; these are not three currently verified connections.
 | Environment | `npm` | `npm` |
 | Allowed actions | Allow direct `npm publish` | Allow direct `npm publish` |
 
-The GitHub `npm` environment must restrict deployment to tags matching `v*`;
-configure any required reviewers there. npm validates trust when the workflow
+The GitHub `npm` environment must restrict source release deployment to tags `v*`
+and additionally allow the exact branch `main` for the reviewed retained controller. Keep
+any configured reviewers and other protections. npm validates trust when the workflow
 actually publishes. Saving the form or passing validation-only archive checks
 does not test that trust.
 The workflow pins Node 22.23.3 and npm 12.0.2, which support trusted publishing.
