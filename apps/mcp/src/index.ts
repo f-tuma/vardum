@@ -6,6 +6,7 @@ import {
   supportedMimeTypes,
   type SyncAsset,
   type VardDefinition,
+  type VardEditorDefinition,
   type VardFolderRule,
   type VardManifest,
 } from "@vardum/shared";
@@ -70,6 +71,17 @@ const headers: Record<string, string> = {
 };
 if (API_KEY) headers["x-api-key"] = API_KEY;
 
+class VardumHttpError extends Error {
+  constructor(
+    readonly responseError: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly currentRevision?: string,
+  ) {
+    super(`${responseError} (${status})`);
+  }
+}
+
 async function api<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -89,18 +101,76 @@ async function api<T = unknown>(
   const text = await res.text();
   if (!res.ok) {
     let msg = text || res.statusText;
+    let code: string | undefined;
+    let currentRevision: string | undefined;
     try {
-      const parsed = JSON.parse(text) as { error?: string; message?: string };
+      const parsed = JSON.parse(text) as { error?: string; message?: string; code?: unknown; currentRevision?: unknown };
+      if (typeof parsed.code === "string") code = parsed.code;
+      if (typeof parsed.currentRevision === "string") currentRevision = parsed.currentRevision;
       msg = parsed.message ?? parsed.error ?? msg;
     } catch {
       /* use body text */
     }
-    throw new Error(`${msg} (${res.status})`);
+    throw new VardumHttpError(msg, res.status, code, currentRevision);
   }
   try {
     return JSON.parse(text) as T;
   } catch {
     throw new Error("Invalid JSON response");
+  }
+}
+
+const vardRevision = (value: unknown): value is string => typeof value === "string" && /^v1:[a-f0-9]{64}$/.test(value);
+const editorUuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
+
+async function requireVardEditRevision() {
+  const capabilities = await api<unknown>("/api/capabilities");
+  if (!capabilities || typeof capabilities !== "object" ||
+      (capabilities as Record<string, unknown>).vardEditRevision !== 1)
+    throw new Error("This server does not support revision-guarded Vard editing (vardEditRevision: 1); upgrade the server before editing Vards");
+}
+
+function editorPath(workspaceId: string, vardId: string) {
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}/editor`;
+}
+
+function validateVardEditor(value: unknown): VardEditorDefinition {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid Vard editor definition; upgrade the server and reload before editing");
+  const definition = value as Record<string, unknown>;
+  if (definition.schema !== 1 || !vardRevision(definition.revision) ||
+      typeof definition.id !== "string" || typeof definition.workspaceId !== "string" ||
+      typeof definition.name !== "string" || typeof definition.isPublic !== "boolean" ||
+      typeof definition.updatedAt !== "string" || !Array.isArray(definition.folderRules) ||
+      !Array.isArray(definition.items) || definition.items.some((item: unknown) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+        const mapping = item as Record<string, unknown>;
+        return !editorUuid(mapping.id) || !(mapping.pinnedVersionId === null || editorUuid(mapping.pinnedVersionId));
+      }))
+    throw new Error("Invalid Vard editor definition or missing revision/literal pins; upgrade the server and reload before editing");
+  return value as VardEditorDefinition;
+}
+
+async function editorResult(action: () => Promise<unknown>) {
+  try {
+    const data = await action();
+    return { content: [{ type: "text" as const, text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] };
+  } catch (error) {
+    if (error instanceof VardumHttpError && error.status === 409 && error.code === "vard_revision_conflict") {
+      const data = {
+        status: error.status,
+        code: error.code,
+        error: error.responseError,
+        currentRevision: error.currentRevision,
+        instruction: "Reload with get_vard, review the current definition, and reapply the intended edit with its revision. Do not retry the stale save.",
+      };
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+        structuredContent: data,
+      };
+    }
+    throw error;
   }
 }
 
@@ -151,6 +221,12 @@ read-only, unpinned, and untransformed. No globs or excludes. Manual + generated
 not collide (including case/Unicode or file/directory overlaps) and total at most 1000.
 get_vard returns editable manual items and folderRules, even if resolution fails. Use
 get_vard with resolved=true for a separate live preview; never persist expanded items.
+get_vard supplies an opaque revision and literal pinnedVersionId for each manual item.
+update_vard, replace_vard_items and delete_vard require the original expectedRevision; a stale
+revision returns vard_revision_conflict. Reload and review before reapplying; never retry blindly.
+replace_vard_items requires each existing manual UUID or null for a new item. Copy the stored
+pinnedVersionId to versionId, including unavailable pins; resolved versionId is not the saved pin.
+These editor tools require vardEditRevision: 1; unsupported servers are refused without legacy writes.
 update_vard replaces only supplied fields; folderRules: [] removes rules without changing manual items.
 A new private folder member makes the whole anonymous public manifest unavailable.
 Normal vardum pull intentionally updates membership; --frozen consumes the committed snapshot.
@@ -496,9 +572,14 @@ server.tool(
   },
 );
 
+const expectedRevisionInput = z
+  .string()
+  .regex(/^v1:[a-f0-9]{64}$/)
+  .describe("Original opaque revision from get_vard; reload and review after a conflict before reapplying the edit");
+
 server.tool(
   "get_vard",
-  "Retrieve editable Vard configuration (manual items and folderRules), even when expansion fails. Set resolved=true for a separate live manifest preview, not a committed frozen snapshot. Never write resolved items back as manual items.",
+  "Retrieve editable Vard configuration with its revision, manual item IDs and literal pinnedVersionId, even when expansion fails. Requires vardEditRevision: 1. Set resolved=true for a separate live manifest preview without an editing revision; never write resolved items back as manual items.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
@@ -506,23 +587,29 @@ server.tool(
       .boolean()
       .optional()
       .describe(
-        "True: resolve current outputs, which may fail on collisions/limits. Omitted/false: editable configuration only.",
+        "True: resolve current outputs, which may fail on collisions/limits. Omitted/false: editable definition and revision only.",
       ),
   },
   async ({ workspaceId, vardId, resolved }) => {
-    const data = await api<VardDefinition | VardManifest>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}${resolved ? "/manifest" : ""}`,
-    );
+    if (resolved) {
+      const data = await api<VardManifest>(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}/manifest`,
+      );
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    }
+    await requireVardEditRevision();
+    const data = validateVardEditor(await api<unknown>(editorPath(workspaceId, vardId)));
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   },
 );
 
 server.tool(
   "update_vard",
-  "Update only supplied metadata or folderRules; omitted fields and manual item IDs are preserved. folderRules: [] removes rules. Saving valid configuration may still leave a collision/limit error in the live preview; repair rules or manual paths. Requires API update permission.",
+  "Update supplied metadata or folderRules using the caller's original expectedRevision; returns the full manual-only definition and revision. Omitted fields and manual IDs are preserved; folderRules: [] removes rules. Requires API read+update permission and vardEditRevision: 1. On conflict reload, review and reapply the intended edit; never retry a stale save automatically.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
+    expectedRevision: expectedRevisionInput,
     name: z.string().min(1).max(80).optional().describe("New display name"),
     isPublic: z
       .boolean()
@@ -530,49 +617,55 @@ server.tool(
       .describe("Public manifest only; does not publish resolved assets"),
     folderRules: folderRulesInput.optional(),
   },
-  async ({ workspaceId, vardId, name, isPublic, folderRules }) => {
+  async ({ workspaceId, vardId, expectedRevision, name, isPublic, folderRules }) => editorResult(async () => {
     const body: {
+      expectedRevision: string;
       name?: string;
       isPublic?: boolean;
       folderRules?: VardFolderRule[];
-    } = {};
+    } = { expectedRevision };
     if (name !== undefined) body.name = name;
     if (isPublic !== undefined) body.isPublic = isPublic;
     if (folderRules !== undefined) body.folderRules = folderRules;
-    const data = await api<VardMetadata>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}`,
-      { method: "PATCH", body: JSON.stringify(body) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
+    await requireVardEditRevision();
+    return validateVardEditor(await api<unknown>(editorPath(workspaceId, vardId), {
+      method: "PATCH", body: JSON.stringify(body),
+    }));
+  }),
 );
 
 server.tool(
   "delete_vard",
-  "Delete a Vard and all its output configurations permanently.",
+  "Delete a Vard and all output configurations permanently using the caller's original expectedRevision. Requires API delete permission and vardEditRevision: 1. On conflict reload and review before deciding to delete again.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
+    expectedRevision: expectedRevisionInput,
   },
-  async ({ workspaceId, vardId }) => {
-    await api(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}`,
-      { method: "DELETE" },
-    );
-    return { content: [{ type: "text", text: "Vard deleted." }] };
-  },
+  async ({ workspaceId, vardId, expectedRevision }) => editorResult(async () => {
+    await requireVardEditRevision();
+    const query = new URLSearchParams({ expectedRevision });
+    await api(editorPath(workspaceId, vardId) + `?${query}`, { method: "DELETE" });
+    return "Vard deleted.";
+  }),
 );
 
 server.tool(
   "replace_vard_items",
-  "Replace only manual items in a Vard; folderRules are unchanged. Never pass expanded folder outputs here. Each manual item maps an asset to an output path and optional transformation settings.",
+  "Replace manual items using the caller's original expectedRevision; returns the full definition and revision. Keep existing manual IDs, use null for new IDs, and copy pinnedVersionId to versionId literally, including unavailable pins; never infer a pin from resolved versionId or pass expanded folder outputs. Requires API read+update permission and vardEditRevision: 1. On conflict reload, review and reapply the intended edit; never retry a stale list automatically.",
   {
     workspaceId: z.string().describe("Workspace ID"),
     vardId: z.string().describe("Vard ID"),
+    expectedRevision: expectedRevisionInput,
     items: z
       .array(
         z
           .object({
+            id: z
+              .string()
+              .uuid()
+              .nullable()
+              .describe("Existing manual item UUID to preserve identity, or null to create a new manual item"),
             assetId: z.string().describe("The asset ID to include"),
             outputPath: z
               .string()
@@ -584,9 +677,8 @@ server.tool(
               .string()
               .uuid()
               .nullable()
-              .optional()
               .describe(
-                "Exact ready version ID to pin; null/omitted follows latest. Pinned outputs must not be writable.",
+                "Literal saved pin: copy pinnedVersionId from get_vard, never resolved versionId. Null follows latest. Pinned outputs must not be writable.",
               ),
             transformation: z
               .record(z.unknown())
@@ -598,19 +690,15 @@ server.tool(
           .strict(),
       )
       .describe(
-        "Complete list of manual items to set (replaces manual items only)",
+        "Complete manual item list only; folderRules are preserved",
       ),
   },
-  async ({ workspaceId, vardId, items }) => {
-    const data = await api<{
-      id: string;
-      items: Array<{ id: string; assetId: string; outputPath: string }>;
-    }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}/items`,
-      { method: "PUT", body: JSON.stringify({ items }) },
-    );
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  },
+  async ({ workspaceId, vardId, expectedRevision, items }) => editorResult(async () => {
+    await requireVardEditRevision();
+    return validateVardEditor(await api<unknown>(editorPath(workspaceId, vardId) + "/items", {
+      method: "PUT", body: JSON.stringify({ expectedRevision, items }),
+    }));
+  }),
 );
 
 // ── Main ────────────────────────────────────────────────────────────────────

@@ -36,7 +36,9 @@ Claude Desktop, Cursor and other JSON configs:
 }
 ```
 
-The client starts the server; there is nothing to run by hand.
+The client starts the server; there is nothing to run by hand. These examples
+use published **0.3.0**, whose Vard edits use the legacy contract without
+revision guards.
 
 ## Configuration
 
@@ -81,6 +83,23 @@ The client starts the server; there is nothing to run by hand.
   "folderRules": [{ "sourcePrefix": "brand/", "outputPrefix": "assets/brand/" }]
 }
 ```
+
+## Guarded editing — unreleased source
+
+The next MCP release uses a separate editor protocol to prevent stale edits
+from replacing newer mappings. It needs a server advertising
+`vardEditRevision: 1`; published 0.3.0 does not implement this protocol.
+
+Read `get_vard` first and retain its `revision`. Pass that original token as
+`expectedRevision` for update, replacement or deletion. Whole-list replacements
+must retain existing manual `id` values and copy each literal `pinnedVersionId`
+into an explicit `versionId`, including `null` to follow latest. Do not infer a
+saved pin from a resolved delivery version.
+
+A conflict stops the write. Reload, review the latest definition and reapply
+the intended change; never automatically retry the stale list with a new token.
+See the [source tool reference](../../apps/mcp/README.md#guarded-editing--unreleased-source)
+and [editor protocol](../vard-editor-concurrency.md) for inputs and deployment.
 
 ## Not available to agents
 

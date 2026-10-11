@@ -6,6 +6,8 @@ import type {
   VardItem,
   VardManifest,
   VardDefinition,
+  VardEditorDefinition,
+  VardEditorItemInput,
   VardFolderRule,
 } from "@vardum/shared";
 
@@ -34,6 +36,7 @@ export type DeploymentCapabilities = {
   passwordRecovery: boolean;
   emailChange: boolean;
   invitations: boolean;
+  vardEditRevision?: number;
 };
 
 export function getDeploymentCapabilities() {
@@ -284,6 +287,95 @@ export function replaceVardItems(
 
 export function deleteVard(workspaceId: string, vardId: string) {
   return request<void>(`/api/workspaces/${workspaceId}/vards/${vardId}`, {
+    method: "DELETE",
+  });
+}
+
+// Editor writes exclusively use dedicated guarded routes. Old replicas fail closed.
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly currentRevision?: string;
+
+  constructor(message: string, status: number, code?: string, currentRevision?: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+    this.currentRevision = currentRevision;
+  }
+}
+
+export class VardEditorUnavailableError extends Error {
+  constructor() {
+    super("This server did not supply a valid Vard revision. Editing is unavailable until the server is updated.");
+    this.name = "VardEditorUnavailableError";
+  }
+}
+
+export function isVardRevisionConflict(cause: unknown): cause is ApiRequestError {
+  return cause instanceof ApiRequestError && cause.status === 409 && cause.code === "vard_revision_conflict";
+}
+
+export function hasVardRevision(definition: VardDefinition): definition is VardDefinition & { revision: string } {
+  return typeof definition.revision === "string" && /^v1:[a-f0-9]{64}$/.test(definition.revision);
+}
+
+function checkedVardEditor(definition: VardDefinition): VardEditorDefinition {
+  if (!hasVardRevision(definition) || definition.items.some((item) =>
+    item.pinnedVersionId !== null && typeof item.pinnedVersionId !== "string"
+  )) throw new VardEditorUnavailableError();
+  return definition as VardEditorDefinition;
+}
+
+function requireVardRevision(revision: string) {
+  if (!/^v1:[a-f0-9]{64}$/.test(revision)) throw new VardEditorUnavailableError();
+}
+
+export async function getVardEditor(workspaceId: string, vardId: string) {
+  return checkedVardEditor(await request<VardDefinition>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}/editor`,
+  ));
+}
+
+export async function updateVardEditor(
+  workspaceId: string,
+  vardId: string,
+  expectedRevision: string,
+  input: { name?: string; isPublic?: boolean; folderRules?: VardFolderRule[] },
+) {
+  requireVardRevision(expectedRevision);
+  return checkedVardEditor(await request<VardDefinition>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}/editor`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, expectedRevision }),
+    },
+  ));
+}
+
+export async function replaceVardEditorItems(
+  workspaceId: string,
+  vardId: string,
+  expectedRevision: string,
+  items: VardEditorItemInput[],
+) {
+  requireVardRevision(expectedRevision);
+  return checkedVardEditor(await request<VardDefinition>(
+    `/api/workspaces/${workspaceId}/vards/${vardId}/editor/items`,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision, items }),
+    },
+  ));
+}
+
+export function deleteVardEditor(workspaceId: string, vardId: string, expectedRevision: string) {
+  requireVardRevision(expectedRevision);
+  const query = new URLSearchParams({ expectedRevision });
+  return request<void>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?${query}`, {
     method: "DELETE",
   });
 }
@@ -762,10 +854,15 @@ async function request<T = unknown>(url: string, options?: RequestInit) {
   const body = (await response.json().catch(() => null)) as {
     error?: string;
     message?: string;
+    code?: string;
+    currentRevision?: string;
   } | null;
   if (!response.ok)
-    throw new Error(
+    throw new ApiRequestError(
       body?.message ?? body?.error ?? `Request failed (${response.status})`,
+      response.status,
+      typeof body?.code === "string" ? body.code : undefined,
+      typeof body?.currentRevision === "string" ? body.currentRevision : undefined,
     );
   return body as T;
 }

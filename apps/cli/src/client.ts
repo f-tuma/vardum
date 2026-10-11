@@ -3,6 +3,9 @@ import type {
   SyncAsset,
   UploadLimits,
   VardItem,
+  VardEditorDefinition,
+  VardEditorItemInput,
+  VardFolderRule,
   VardManifest,
 } from "@vardum/shared";
 import { checkUploadSize, validateUploadLimits } from "./upload-file.js";
@@ -77,7 +80,12 @@ export type FolderImportResultFile = Pick<FolderImportFile, "assetId" | "key" | 
 };
 
 export class VardumHttpError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly currentRevision?: string,
+  ) {
     super(`${message} (${status})`);
   }
 }
@@ -112,6 +120,58 @@ export class VardumClient {
       throw new Error("This server does not support resumable folder uploads (folderUploadResume: 1); upgrade the server before pushing this folder");
     if (vardImport && (capabilities as Record<string, unknown>).folderVardImport !== 1)
       throw new Error("This server does not support folder imports into Vards (folderVardImport: 1); upgrade the server before using --output");
+  }
+
+  /** Guarded editor calls require this exact capability; no legacy fallback. */
+  async requireVardEditRevision() {
+    const capabilities = await this.request<unknown>("/api/capabilities");
+    if (!capabilities || typeof capabilities !== "object" ||
+        (capabilities as Record<string, unknown>).vardEditRevision !== 1)
+      throw new Error("This server does not support revision-guarded Vard editing (vardEditRevision: 1); upgrade the server before editing Vards");
+  }
+
+  /** Manual mappings and literal saved pins, with an opaque revision for later writes. */
+  async vardEditor(workspaceId: string, vardId: string): Promise<VardEditorDefinition> {
+    await this.requireVardEditRevision();
+    return validateVardEditor(await this.request<unknown>(this.editorPath(workspaceId, vardId)));
+  }
+
+  /** The expected revision must be the caller's original editor revision. */
+  async updateVardEditor(workspaceId: string, vardId: string, input: {
+    expectedRevision: string;
+    name?: string;
+    isPublic?: boolean;
+    folderRules?: VardFolderRule[];
+  }): Promise<VardEditorDefinition> {
+    validateVardRevision(input.expectedRevision);
+    await this.requireVardEditRevision();
+    return validateVardEditor(await this.request<unknown>(this.editorPath(workspaceId, vardId), {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+    }));
+  }
+
+  /** Preserve existing IDs and use pinnedVersionId as versionId, never the resolved versionId. */
+  async replaceVardEditorItems(workspaceId: string, vardId: string, expectedRevision: string,
+    items: VardEditorItemInput[]): Promise<VardEditorDefinition> {
+    validateVardRevision(expectedRevision);
+    if (items.some((item) => !(item.id === null || editorUuid(item.id)) ||
+        !(item.versionId === null || editorUuid(item.versionId))))
+      throw new Error("Vard editor items require an existing UUID or null id and an explicit UUID or null versionId copied from pinnedVersionId");
+    await this.requireVardEditRevision();
+    return validateVardEditor(await this.request<unknown>(this.editorPath(workspaceId, vardId) + "/items", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedRevision, items }),
+    }));
+  }
+
+  async deleteVardEditor(workspaceId: string, vardId: string, expectedRevision: string) {
+    validateVardRevision(expectedRevision);
+    await this.requireVardEditRevision();
+    const query = new URLSearchParams({ expectedRevision });
+    await this.request<void>(this.editorPath(workspaceId, vardId) + `?${query}`, { method: "DELETE" });
+  }
+
+  private editorPath(workspaceId: string, vardId: string) {
+    return `/api/workspaces/${encodeURIComponent(workspaceId)}/vards/${encodeURIComponent(vardId)}/editor`;
   }
 
   async planFolderImport(config: VardConfig, files: FolderImportFile[]) {
@@ -309,14 +369,18 @@ export class VardumClient {
     const text = await response.text();
     if (!response.ok) {
       let message = text || response.statusText;
+      let code: string | undefined;
+      let currentRevision: string | undefined;
       try {
-        const parsed = JSON.parse(text) as { error?: string; message?: string };
+        const parsed = JSON.parse(text) as { error?: string; message?: string; code?: unknown; currentRevision?: unknown };
+        if (typeof parsed.code === "string") code = parsed.code;
+        if (typeof parsed.currentRevision === "string") currentRevision = parsed.currentRevision;
         if (parsed.message) message = parsed.message;
         else if (parsed.error) message = parsed.error;
       } catch {
         // Keep the response body.
       }
-      throw new VardumHttpError(message, response.status);
+      throw new VardumHttpError(message, response.status, code, currentRevision);
     }
     try {
       return JSON.parse(text) as T;
@@ -328,6 +392,30 @@ export class VardumClient {
   private headers(): Record<string, string> {
     return this.apiKey ? { "x-api-key": this.apiKey } : {};
   }
+}
+
+const editorUuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
+const editorRevision = (value: unknown): value is string => typeof value === "string" && /^v1:[a-f0-9]{64}$/.test(value);
+
+function validateVardRevision(value: unknown): asserts value is string {
+  if (!editorRevision(value))
+    throw new Error("A valid original expectedRevision is required; reload the Vard editor before saving");
+}
+
+function validateVardEditor(value: unknown): VardEditorDefinition {
+  const invalid = () => new Error("Vardum returned an invalid Vard editor definition; upgrade the server and reload before editing");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const definition = value as Record<string, unknown>;
+  if (definition.schema !== 1 || !editorRevision(definition.revision) ||
+      typeof definition.id !== "string" || typeof definition.workspaceId !== "string" ||
+      typeof definition.name !== "string" || typeof definition.isPublic !== "boolean" ||
+      typeof definition.updatedAt !== "string" || !Array.isArray(definition.folderRules) ||
+      !Array.isArray(definition.items) || definition.items.some((item: unknown) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+        const mapping = item as Record<string, unknown>;
+        return !editorUuid(mapping.id) || !(mapping.pinnedVersionId === null || editorUuid(mapping.pinnedVersionId));
+      })) throw invalid();
+  return value as VardEditorDefinition;
 }
 
 function safeHttpUrl(value: string) {

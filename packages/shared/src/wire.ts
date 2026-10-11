@@ -18,6 +18,8 @@ export type VardItem = {
  outputPath: string;
  writable: boolean;
  pinned: boolean;
+ /** Literal saved pin, supplied by the guarded editor even when the version is unavailable. */
+ pinnedVersionId?: string | null;
  transformation: Transformation | null;
  versionId: string | null;
  sourceChecksum: string | null;
@@ -48,6 +50,24 @@ export type VardFolderRule = {
 /** Editable configuration: items are manual mappings only, never expanded outputs. */
 export type VardDefinition = VardManifest & {
  folderRules: VardFolderRule[];
+ /** Opaque state-equivalence token supplied by guarded editor endpoints. */
+ revision?: string;
+};
+
+/** The dedicated editor always supplies its revision and literal pin IDs. */
+export type VardEditorDefinition = VardDefinition & {
+ revision: string;
+ items: (VardItem & { pinnedVersionId: string | null })[];
+};
+
+export type VardEditorItemInput = {
+ /** Existing manual mapping ID, or null to allocate a new mapping. */
+ id: string | null;
+ assetId: string;
+ versionId: string | null;
+ outputPath: string;
+ transformation: Transformation | null;
+ writable: boolean;
 };
 
 export type SyncAsset = {

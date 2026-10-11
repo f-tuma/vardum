@@ -102,5 +102,9 @@ grant itself broader key permissions.
 
 Use this additive endpoint for imports. The legacy `PUT .../items` deliberately
 replaces the complete manual list and can remove previously imported mappings.
-The import endpoint does not make an old stale whole-list edit safe. Protection
-for modern editor revisions is a separate follow-up.
+The import endpoint does not make an old stale whole-list edit safe. Servers
+advertising `vardEditRevision: 1` offer dedicated [guarded editor routes](vard-editor-concurrency.md).
+An import invalidates a previously read editor definition when it adds manual
+mappings, so a stale guarded save fails with 409 and keeps the imported mappings.
+Legacy clients and routes remain unguarded; published MCP 0.3.0 still uses them.
+Revision-aware MCP editing is unreleased source for the next client release.

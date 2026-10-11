@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { VardDefinition, VardItem, VardManifest } from "@vardum/shared";
+import type { VardDefinition, VardEditorDefinition, VardEditorItemInput, VardItem, VardManifest } from "@vardum/shared";
 import type { VardMetadata } from "./asset-api";
 
 export type DraftItem = Pick<
@@ -20,8 +20,8 @@ export function manualDraftItems(definition: VardDefinition): DraftItem[] {
     assetId: item.assetId,
     key: item.key,
     outputPath: item.outputPath,
-    versionId: item.pinned ? item.versionId : null,
-    transformation: item.transformation,
+    versionId: item.pinnedVersionId !== undefined ? item.pinnedVersionId : item.pinned ? item.versionId : null,
+    transformation: item.transformation ? { ...item.transformation } : null,
     writable: item.writable,
   }));
 }
@@ -48,4 +48,34 @@ export async function refreshVardPreview(
 export function generatedOutputs(preview: VardManifest): VardItem[] {
   // Manual IDs can change independently of this cached preview after a save.
   return preview.items.filter(({ id }) => id.startsWith("folder:"));
+}
+
+export type VardItemBaseline = {
+  definition: VardEditorDefinition;
+  items: DraftItem[];
+};
+
+// Capture once at the start of a draft; background query data is never its baseline.
+export function captureVardBaseline(definition: VardEditorDefinition): VardItemBaseline {
+  const captured = {
+    ...definition,
+    folderRules: definition.folderRules.map((rule) => ({ ...rule })),
+    items: definition.items.map((item) => ({
+      ...item,
+      pinnedVersionId: item.pinnedVersionId ?? null,
+      transformation: item.transformation ? { ...item.transformation } : null,
+    })),
+  };
+  return { definition: captured, items: manualDraftItems(captured) };
+}
+
+export function vardItemInputs(items: DraftItem[], existingIds: Set<string>): VardEditorItemInput[] {
+  return items.map(({ id, assetId, versionId, outputPath, transformation, writable }) => ({
+    id: existingIds.has(id) ? id : null,
+    assetId,
+    versionId,
+    outputPath,
+    transformation,
+    writable,
+  }));
 }

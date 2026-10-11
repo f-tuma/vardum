@@ -210,67 +210,193 @@ export async function checkInstalledPackages({
         folderRules: [{ sourcePrefix: "pkg/", outputPrefix: "assets/folder/" }],
       });
       assert.equal(vard.isPublic, false);
-      const items = [
-        {
-          assetId: asset.id,
-          outputPath: "assets/editable.svg",
-          writable: true,
-          transformation: null,
-        },
-        {
-          assetId: asset.id,
-          outputPath: "assets/pinned.svg",
-          versionId: firstVersion,
-          writable: false,
-          transformation: null,
-        },
-        {
-          assetId: asset.id,
-          outputPath: "assets/logo.png",
-          writable: false,
-          transformation: { w: 8, format: "png" },
-        },
-      ];
-      await tool("replace_vard_items", { vardId: vard.id, items });
-      // The old boolean could be silently discarded by the API. Reject it now.
-      assert.equal(
-        (
-          await writer.callTool({
-            name: "replace_vard_items",
-            arguments: {
-              workspaceId,
-              vardId: vard.id,
-              items: [{ ...items[1], pinned: true }],
-            },
-          })
-        ).isError,
-        true,
-      );
-      const definition = await tool("get_vard", { vardId: vard.id }, reader);
-      const pinned = definition.items.find(
-        (item) => item.outputPath === "assets/pinned.svg",
-      );
-      assert.equal(pinned.pinned, true);
-      assert.equal(pinned.versionId, firstVersion);
-      await tool("update_vard", {
-        vardId: vard.id,
-        name: "Renamed package contract",
+      const editorCheck = await runInstalledConsumerCheck("vardEditRevision", { publicRegistry }, async () => {
+        const initialDefinition = await tool("get_vard", { vardId: vard.id }, reader);
+        assert.match(initialDefinition.revision, /^v1:[a-f0-9]{64}$/);
+        const items = [
+          {
+            id: null,
+            versionId: null,
+            assetId: asset.id,
+            outputPath: "assets/editable.svg",
+            writable: true,
+            transformation: null,
+          },
+          {
+            id: null,
+            assetId: asset.id,
+            outputPath: "assets/pinned.svg",
+            versionId: firstVersion,
+            writable: false,
+            transformation: null,
+          },
+          {
+            id: null,
+            versionId: null,
+            assetId: asset.id,
+            outputPath: "assets/logo.png",
+            writable: false,
+            transformation: { w: 8, format: "png" },
+          },
+        ];
+        const firstDefinition = await tool("replace_vard_items", {
+          vardId: vard.id, expectedRevision: initialDefinition.revision, items,
+        });
+        assert.match(firstDefinition.revision, /^v1:[a-f0-9]{64}$/);
+        assert.equal(firstDefinition.items.length, 3);
+        assert.deepEqual(firstDefinition.folderRules, initialDefinition.folderRules);
+        // The old boolean could be silently discarded by the API. Reject it now.
+        assert.equal(
+          (
+            await writer.callTool({
+              name: "replace_vard_items",
+              arguments: {
+                workspaceId,
+                vardId: vard.id,
+                expectedRevision: firstDefinition.revision,
+                items: [{ ...items[1], pinned: true }],
+              },
+            })
+          ).isError,
+          true,
+        );
+        const definition = await tool("get_vard", { vardId: vard.id }, reader);
+        assert.deepEqual(definition, firstDefinition);
+        const pinned = definition.items.find(
+          (item) => item.outputPath === "assets/pinned.svg",
+        );
+        assert.equal(pinned.pinned, true);
+        assert.equal(pinned.versionId, firstVersion);
+        assert.equal(pinned.pinnedVersionId, firstVersion);
+        assert.equal(definition.items.find((item) => item.outputPath === "assets/editable.svg").pinnedVersionId, null);
+        const renamed = await tool("update_vard", {
+          vardId: vard.id,
+          expectedRevision: definition.revision,
+          name: "Renamed package contract",
+        });
+        assert.notEqual(renamed.revision, definition.revision);
+        assert.deepEqual(renamed.items, definition.items);
+        // A whole-list round trip must keep manual identity and literal saved pins.
+        // Resolved versionId on the editable item must never accidentally pin it.
+        const savedItems = renamed.items.map((item) => ({
+          id: item.id, assetId: item.assetId, versionId: item.pinnedVersionId,
+          outputPath: item.outputPath, writable: item.writable, transformation: item.transformation,
+        }));
+        const unchanged = await tool("replace_vard_items", {
+          vardId: vard.id, expectedRevision: renamed.revision, items: savedItems,
+        });
+        assert.equal(unchanged.revision, renamed.revision);
+        assert.deepEqual(unchanged.items, renamed.items);
+        assert.deepEqual(unchanged.folderRules, renamed.folderRules);
+        for (const [name, staleFields] of [
+          ["update_vard", { name: "Stale package contract" }],
+          ["replace_vard_items", { items: savedItems }],
+          ["delete_vard", {}],
+        ]) {
+          const conflict = await writer.callTool({ name, arguments: {
+            workspaceId, vardId: vard.id, expectedRevision: definition.revision, ...staleFields,
+          } });
+          assert.equal(conflict.isError, true);
+          const detail = JSON.parse(conflict.content[0].text);
+          assert.deepEqual(conflict.structuredContent, detail);
+          assert.equal(detail.status, 409);
+          assert.equal(detail.code, "vard_revision_conflict");
+          assert.equal(detail.error, "Vard changed; reload before saving.");
+          assert.equal(detail.currentRevision, unchanged.revision);
+          assert.match(detail.instruction, /Reload with get_vard.*review/);
+        }
+        assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), unchanged);
+        assert.equal(
+          (await tool("get_vard", { vardId: vard.id, resolved: true })).items
+            .length,
+          4,
+        );
+        assert.ok(
+          (await tool("list_vards", {}, reader)).some(
+            (item) => item.id === vard.id,
+          ),
+        );
+        for (const [name, fields] of [
+          ["update_vard", { name: "Forbidden" }],
+          ["replace_vard_items", { items: savedItems }],
+          ["delete_vard", {}],
+        ]) {
+          const deniedVard = await reader.callTool({ name, arguments: {
+            workspaceId, vardId: vard.id, expectedRevision: unchanged.revision, ...fields,
+          } });
+          assert.equal(deniedVard.isError, true);
+        }
+        assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), unchanged);
+
+        console.log("Installed source MCP guarded editor: stable IDs/pins, no-op round trip, stale update/replace/delete, structured conflicts and scope denials passed");
       });
-      assert.equal(
-        (await tool("get_vard", { vardId: vard.id, resolved: true })).items
-          .length,
-        4,
-      );
-      assert.ok(
-        (await tool("list_vards", {}, reader)).some(
-          (item) => item.id === vard.id,
-        ),
-      );
-      const deniedVard = await reader.callTool({
-        name: "update_vard",
-        arguments: { workspaceId, vardId: vard.id, name: "Forbidden" },
-      });
-      assert.equal(deniedVard.isError, true);
+      if (editorCheck.status !== "passed") {
+        // Run the complete legacy contract against the independently installed
+        // public compatibility MCP; source editor assertions cannot apply to it.
+        const items = [
+          {
+            assetId: asset.id,
+            outputPath: "assets/editable.svg",
+            writable: true,
+            transformation: null,
+          },
+          {
+            assetId: asset.id,
+            outputPath: "assets/pinned.svg",
+            versionId: firstVersion,
+            writable: false,
+            transformation: null,
+          },
+          {
+            assetId: asset.id,
+            outputPath: "assets/logo.png",
+            writable: false,
+            transformation: { w: 8, format: "png" },
+          },
+        ];
+        await tool("replace_vard_items", { vardId: vard.id, items });
+        // The old boolean could be silently discarded by the API. Reject it now.
+        assert.equal(
+          (
+            await writer.callTool({
+              name: "replace_vard_items",
+              arguments: {
+                workspaceId,
+                vardId: vard.id,
+                items: [{ ...items[1], pinned: true }],
+              },
+            })
+          ).isError,
+          true,
+        );
+        const definition = await tool("get_vard", { vardId: vard.id }, reader);
+        const pinned = definition.items.find(
+          (item) => item.outputPath === "assets/pinned.svg",
+        );
+        assert.equal(pinned.pinned, true);
+        assert.equal(pinned.versionId, firstVersion);
+        await tool("update_vard", {
+          vardId: vard.id,
+          name: "Renamed package contract",
+        });
+        assert.equal(
+          (await tool("get_vard", { vardId: vard.id, resolved: true })).items
+            .length,
+          4,
+        );
+        assert.ok(
+          (await tool("list_vards", {}, reader)).some(
+            (item) => item.id === vard.id,
+          ),
+        );
+        const deniedVard = await reader.callTool({
+          name: "update_vard",
+          arguments: { workspaceId, vardId: vard.id, name: "Forbidden" },
+        });
+        assert.equal(deniedVard.isError, true);
+
+        console.log("Public compatibility MCP 0.2.0: legacy Vard contract passed; guarded editor protocol is outside this acceptance scope");
+      }
 
       const project = join(root, "project");
       const configHome = join(root, "credentials");
@@ -429,7 +555,12 @@ export async function checkInstalledPackages({
       });
       if (importCheck.status !== "passed")
         console.log("Public compatibility CLI 0.6.0: new folder import protocol is outside this acceptance scope");
-      await tool("delete_vard", { vardId: vard.id });
+      if (editorCheck.status === "passed") {
+        const beforeDelete = await tool("get_vard", { vardId: vard.id }, reader);
+        await tool("delete_vard", { vardId: vard.id, expectedRevision: beforeDelete.revision });
+      } else {
+        await tool("delete_vard", { vardId: vard.id });
+      }
       await writeFile(lockPath, originalLock);
       await rm(join(project, "assets"), { recursive: true });
       const restored = await run(
