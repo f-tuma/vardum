@@ -156,9 +156,10 @@ server/runtime artifact or closure of residual findings. See
    Commit `package.json` and the package-manager lockfile. Keep the schema 2
    `.vardum.lock`; no snapshot migration is needed. Pin MCP configuration to
    `@vardum/mcp@0.4.1`. Use Node.js **22 or newer**.
-3. Review `vardum status` and folder `--dry-run --json` before applying. A separate
-   normal pull intentionally updates delivered files and the snapshot; CI uses
-   `vardum pull --frozen`. Locked URLs still depend on retention, signing,
+3. Review `npx --no-install vardum status` and folder `--dry-run --json` before
+   applying. A separate normal pull intentionally updates delivered files and
+   the snapshot; CI uses `npx --no-install vardum pull --frozen`. Locked URLs
+   still depend on retention, signing,
    authorization and byte preservation, including the
    [derived-output preservation contract](adr/0001-derived-output-preservation.md).
 4. Gateway source **Copy setup** now uses an independently reviewed verified
@@ -173,8 +174,11 @@ server/runtime/provider/backup/restore/capacity acceptance.
 
 Keep `v0.8.1`, its source tree and the original tested artifacts immutable.
 Post-publication documentation and gateway pin changes do not alter the packed
-README bytes or the tag. Never repack source under these published versions or
-route this source batch through the retained 0.7 controller.
+README bytes or the tag. Never use a source repack as a publication or recovery
+replacement under these published versions, or route this source batch through
+the retained 0.7 controller. Ordinary PR CI may create disposable source packs
+for checks; those packs do not replace the original tag batch, published bytes
+or release evidence.
 
 For a failed publisher, rerun only failed jobs of the original tag run:
 
