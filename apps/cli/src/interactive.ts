@@ -1,31 +1,26 @@
 import type { Interface } from "node:readline/promises";
 import { relative, resolve } from "node:path";
 import type { SyncAsset, VardumClient } from "./client.js";
-import { assetKey, assetPrefix, folderAssetDirectories, folderAssetKey } from "./sync.js";
-
-type ScannedFile = {
-  absolute: string;
-  relative: string;
-  mimeType: string;
-  size: number;
-};
+import { assetPrefix } from "./sync.js";
+import type { FolderPlanPreview, FolderSource } from "./folder-plan.js";
 
 const maxPlanRows = 15;
 
 /**
  * The interactive half of `vardum push-folder`: pick the workspace folder these
  * images deploy into, show the plan, and confirm before changing anything.
- * Returns the chosen prefix ("" for the workspace root) or null when the user
+ * Returns the prepared, confirmed plan or null when the user
  * quits. Non-interactive callers never reach here — `pushFolder` only calls it
  * when stdin is a TTY, no prefix was given, and --json is off.
  */
-export async function planPushFolder(
+export async function planPushFolder<Plan extends FolderPlanPreview>(
   prompts: Interface,
   client: VardumClient,
   workspaceId: string,
   directory: string,
-  files: ScannedFile[],
-): Promise<string | null> {
+  files: FolderSource[],
+  prepare: (prefix: string) => Promise<Plan>,
+): Promise<Plan | null> {
   const display = relative(process.cwd(), resolve(directory)) || ".";
   const bytes = files.reduce((total, file) => total + file.size, 0);
   console.log(
@@ -39,12 +34,12 @@ export async function planPushFolder(
   while (true) {
     const prefix = await chooseFolder(prompts, folders);
     if (prefix === null) return null;
-    const plan = await buildPlan(client, workspaceId, prefix, files);
-    showPlan(prefix, plan);
+    const plan = await prepare(prefix);
+    showFolderPlan(plan);
     const action = await confirm(prompts);
     if (action === "quit") return null;
     if (action === "edit") continue;
-    return prefix;
+    return plan;
   }
 }
 
@@ -106,40 +101,17 @@ async function chooseFolder(
   }
 }
 
-type Plan = { rows: Array<{ key: string; replaces: boolean }>; bytes: number };
-
-async function buildPlan(
-  client: VardumClient,
-  workspaceId: string,
-  prefix: string,
-  files: ScannedFile[],
-): Promise<Plan> {
-  const under = await client.assetIdentities(workspaceId, folderAssetDirectories(prefix, files.map((file) => file.relative)));
-  const keys = new Set(under.map((asset) => asset.key));
-  const stems = new Set<string>();
-  const resolved = new Set<string>();
-  return {
-    rows: files.map((file) => {
-      const key = folderAssetKey(prefix, file.relative, keys);
-      const stem = assetKey(prefix, file.relative);
-      if (stems.has(stem) || resolved.has(key))
-        throw new Error(`Files resolve to the same asset key: ${key}`);
-      stems.add(stem);
-      resolved.add(key);
-      return { key, replaces: keys.has(key) };
-    }),
-    bytes: files.reduce((total, file) => total + file.size, 0),
-  };
-}
-
-function showPlan(prefix: string, plan: Plan) {
-  const fresh = plan.rows.filter((row) => !row.replaces).length;
+export function showFolderPlan(plan: FolderPlanPreview) {
+  const count = (action: "new" | "update" | "skip") => plan.rows.filter((row) => row.libraryAction === action).length;
   console.log(
-    `\nPlan  → ${prefix || "workspace root"}  ${plan.rows.length} file(s), ${formatBytes(plan.bytes)}`,
+    `\nPlan  → ${plan.prefix || "workspace root"}  ${plan.rows.length} file(s), ${formatBytes(plan.bytes)}`,
   );
-  console.log(`  ${fresh} new  ·  ${plan.rows.length - fresh} replace existing`);
-  for (const row of plan.rows.slice(0, maxPlanRows))
-    console.log(`  ${row.replaces ? "replace" : "new    "}  ${row.key}`);
+  console.log(`  ${count("new")} new asset  ·  ${count("update")} update version  ·  ${count("skip")} skip identical`);
+  for (const row of plan.rows.slice(0, maxPlanRows)) {
+    console.log(`  ${row.libraryAction.padEnd(6)} ${row.source} → ${row.key}${row.resumed ? " (resume pending upload)" : ""}`);
+    if (row.notice) console.log(`         ${row.notice}`);
+    if (row.uncertain) console.log("         Upload activity is unavailable; this preview cannot rule out an unfinished upload.");
+  }
   if (plan.rows.length > maxPlanRows)
     console.log(`  … and ${plan.rows.length - maxPlanRows} more`);
 }

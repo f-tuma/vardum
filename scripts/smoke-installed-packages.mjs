@@ -491,6 +491,30 @@ export async function checkInstalledPackages({
           })));
         }
         const beforeImportAssets = await importAssetSnapshot();
+      const beforeLibraryPlanLocal = await importLocalSnapshot();
+      const libraryPlan = JSON.parse((await command("push-folder", "import-source", "pkg", "--dry-run")).stdout);
+      const slashLibraryPlan = JSON.parse((await command("push-folder", "import-source", "pkg/", "--dry-run")).stdout);
+      assert.deepEqual(libraryPlan.library, slashLibraryPlan.library, "Prefix aliases must produce the same strict-API plan");
+      assert.deepEqual(libraryPlan.library.map((item) => item.libraryAction).sort(), ["new", "skip"]);
+      assert.deepEqual(libraryPlan.library.map((item) => item.key).sort(), ["pkg/extra", "pkg/logo.svg"]);
+      assert.equal(libraryPlan.changed, 1);
+      assert.equal(libraryPlan.actions.length, 1, "Skipped files must not become mutation actions");
+      assert.ok(libraryPlan.library.every((item) => item.applied === false));
+      try {
+        await writeFile(join(importSource, "logo.svg"), svg("cyan"));
+        const updatePlan = JSON.parse((await command("push-folder", "import-source", "pkg", "--dry-run")).stdout);
+        assert.deepEqual(updatePlan.library.map((item) => item.libraryAction).sort(), ["new", "update"]);
+        assert.equal(updatePlan.changed, 2);
+        assert.equal(updatePlan.actions.length, 2);
+        assert.equal(updatePlan.library.find((item) => item.key === "pkg/logo.svg").assetId, asset.id);
+      } finally {
+        await writeFile(join(importSource, "logo.svg"), svg("green"));
+      }
+      assert.deepEqual(await importLocalSnapshot(), beforeLibraryPlanLocal);
+      assert.deepEqual(await importAssetSnapshot(), beforeImportAssets);
+      assert.deepEqual(await tool("get_vard", { vardId: vard.id }, reader), beforeImport);
+      assert.equal(await readFile(lockPath, "utf8"), beforeImportLock);
+      console.log("Installed CLI library-only plan: new/update/skip, exact legacy keys, prefix aliases and unchanged dry-run state passed");
         const importArgs = ["push-folder", "import-source", "pkg/", "--output", "assets/import/"];
         const plannedImport = JSON.parse((await command(...importArgs, "--dry-run")).stdout);
         assert.equal(plannedImport.changed, 3);

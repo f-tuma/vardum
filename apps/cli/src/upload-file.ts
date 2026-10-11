@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { basename } from "node:path";
@@ -36,6 +36,7 @@ type FileMetadata = Pick<
   BigIntStats,
   "size" | "dev" | "ino" | "mtimeNs" | "ctimeNs" | "isFile"
 >;
+export type UploadFileSnapshot = Pick<FileMetadata, "size" | "dev" | "ino" | "mtimeNs" | "ctimeNs">;
 type UploadFileHandle = {
   stat(): Promise<FileMetadata>;
   read(
@@ -68,6 +69,16 @@ const fileIO: UploadFileIO = {
 
 /** Capture at most the accepted size, from the same handle that was inspected. */
 export async function readUploadFile(
+  path: string,
+  mimeType: string,
+  limits: UploadLimits,
+  io: UploadFileIO = fileIO,
+) {
+  return (await captureUploadFile(path, mimeType, limits, io)).bytes;
+}
+
+/** Carry the verified file identity into confirmation without retaining its bytes. */
+export async function captureUploadFile(
   path: string,
   mimeType: string,
   limits: UploadLimits,
@@ -109,10 +120,19 @@ export async function readUploadFile(
       before.ctimeNs !== after.ctimeNs
     )
       throw changed();
-    return bytes;
+    const snapshot: UploadFileSnapshot = { size: after.size, dev: after.dev, ino: after.ino,
+      mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs };
+    return { bytes, snapshot };
   } finally {
     await handle.close();
   }
+}
+
+export async function assertUploadFileSnapshot(path: string, snapshot: UploadFileSnapshot) {
+  const current = await stat(path, { bigint: true });
+  if (!current.isFile() || current.size !== snapshot.size || current.dev !== snapshot.dev ||
+      current.ino !== snapshot.ino || current.mtimeNs !== snapshot.mtimeNs || current.ctimeNs !== snapshot.ctimeNs)
+    throw new Error(`${basename(path)} changed since the folder plan; retry the push`);
 }
 
 function megabytes(bytes: number) {

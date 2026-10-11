@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { VardumClient, type ManifestItem, type SyncAsset } from "./client.js";
-import { checksum } from "./sync.js";
+import { checksum, imageFiles } from "./sync.js";
+import { prepareFolderPlan } from "./folder-plan.js";
+import { planPushFolder } from "./interactive.js";
+import type { Interface } from "node:readline/promises";
 
 const cli = process.env.VARDUM_TEST_CLI_PATH ?? fileURLToPath(new URL("./index.ts", import.meta.url));
 const tsx = import.meta.resolve("tsx");
@@ -62,6 +65,9 @@ async function fixture(t: test.TestContext) {
     deleted: new Set<string>(),
     malformedVersion: false,
     omitIdentities: false,
+    omitResumeMetadata: false,
+    identityReads: 0,
+    beforeIdentityRecheck: null as (() => Promise<void>) | null,
     omitIdentityKeys: new Set<string>(),
     processing: false,
     readyCurrentElsewhere: false,
@@ -84,6 +90,14 @@ async function fixture(t: test.TestContext) {
     const url = req.url!;
     state.requests.push({ method: req.method!, url });
     res.setHeader("content-type", "application/json");
+    const parsed = new URL(url, "http://fixture");
+    const listedPrefix = parsed.searchParams.get("prefix") ?? "";
+    if (req.method === "GET" && ["/api/workspaces/workspace/sync/assets", "/api/workspaces/workspace/assets"].includes(parsed.pathname) &&
+        !/^(?:[a-z0-9][a-z0-9._-]*\/)*$/.test(listedPrefix)) {
+      res.statusCode = 400;
+      res.end(JSON.stringify({ error: "Invalid folder prefix" }));
+      return;
+    }
     const jsonBody = async () => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -148,16 +162,18 @@ async function fixture(t: test.TestContext) {
     } else if (url.endsWith("/manifest")) {
       res.end(JSON.stringify({ schema: 1, id: "vard", workspaceId: "workspace", items: [item()] }));
     } else if (url.startsWith("/api/workspaces/workspace/sync/assets?")) {
-      res.end(JSON.stringify({ workspaceSlug: "demo", assets: state.assets, nextCursor: null }));
+      res.end(JSON.stringify({ workspaceSlug: "demo", assets: state.assets.filter((asset) => asset.key.startsWith(listedPrefix)), nextCursor: null }));
     } else if (url.startsWith("/api/workspaces/workspace/assets?")) {
+      if (++state.identityReads === 2 && state.beforeIdentityRecheck) await state.beforeIdentityRecheck();
       const assets = new Map([...state.assets, ...state.unready].map((asset) => [asset.key, asset]));
       for (const asset of state.assetRecords.values()) if (!assets.has(asset.key)) assets.set(asset.key, asset);
       if (state.omitIdentities) assets.clear();
       for (const key of state.omitIdentityKeys) assets.delete(key);
-      res.end(JSON.stringify({ assets: [...assets.values()].map((asset) => {
+      res.end(JSON.stringify({ assets: [...assets.values()].filter((asset) => asset.key.startsWith(listedPrefix) &&
+        !asset.key.slice(listedPrefix.length).includes("/")).map((asset) => {
         const versions = [...state.versions.values()].filter((version) => version.assetId === asset.id).sort((a, b) => b.number - a.number);
         return { ...asset, latestVersionId: versions[0]?.id ?? null, status: versions[0]?.status ?? null,
-          hasUnfinishedUploads: versions.some((version) => ["pending", "processing"].includes(version.status) || version.status === "failed" && version.retryable) };
+          hasUnfinishedUploads: state.omitResumeMetadata ? undefined : versions.some((version) => ["pending", "processing"].includes(version.status) || version.status === "failed" && version.retryable) };
       }), nextCursor: null }));
     } else if (url.startsWith("/api/workspaces/workspace/assets/") && req.method === "DELETE") {
       const id = url.split("/").at(-1)!;
@@ -277,7 +293,17 @@ async function fixture(t: test.TestContext) {
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import readline from "node:readline/promises";
 const originalOpen = fs.open;
+if (process.env.VARDUM_TEST_CANCEL_FOLDER) {
+  Object.defineProperty(process.stdin, "isTTY", { value: true });
+  const answers = ["images", "q"];
+  readline.createInterface = () => ({ question: async () => {
+    const answer = answers.shift();
+    if (!answers.length && process.env.VARDUM_TEST_CANCEL_FOLDER === "eof") throw new Error("Aborted with Ctrl+D");
+    return answer;
+  }, close() {} });
+}
 if (process.env.VARDUM_TEST_CRASH_IMPORT) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (...args) => {
@@ -322,15 +348,16 @@ syncBuiltinESMExports();
   let fastTimers = false;
   let failTracking = false;
   let crashImport = false;
+  let cancelFolder = "";
   const run = (...args: string[]) => new Promise<{ code: number; data: any }>((resolve) => {
-    execFile(process.execPath, ["--import", tsx, ...(edit || fastTimers || failTracking || crashImport ? ["--import", preload] : []), cli, ...args, "--json"], {
+    execFile(process.execPath, ["--import", tsx, ...(edit || fastTimers || failTracking || crashImport || cancelFolder ? ["--import", preload] : []), cli, ...args, ...(cancelFolder ? [] : ["--json"])], {
       cwd: project,
-      env: { PATH: process.env.PATH, VARDUM_CONFIG_HOME: configHome, VARDUM_API_KEY: authenticated ? "test-key" : "", VARDUM_TEST_EDIT: edit, VARDUM_TEST_PATH: editPath, VARDUM_TEST_FAST_TIMERS: fastTimers ? "1" : "", VARDUM_TEST_TRACKING_PATH: failTracking ? join(project, ".vardum.push.lock") : "", VARDUM_TEST_CRASH_IMPORT: crashImport ? "1" : "" },
+      env: { PATH: process.env.PATH, VARDUM_CONFIG_HOME: configHome, VARDUM_API_KEY: authenticated ? "test-key" : "", VARDUM_TEST_EDIT: edit, VARDUM_TEST_PATH: editPath, VARDUM_TEST_FAST_TIMERS: fastTimers ? "1" : "", VARDUM_TEST_TRACKING_PATH: failTracking ? join(project, ".vardum.push.lock") : "", VARDUM_TEST_CRASH_IMPORT: crashImport ? "1" : "", VARDUM_TEST_CANCEL_FOLDER: cancelFolder },
       timeout: 10000,
     }, (error, stdout, stderr) => {
       const code = error ? Number(error.code) : 0;
       const output = code ? stderr : stdout;
-      resolve({ code, data: output.trim() ? JSON.parse(output) : {} });
+      resolve({ code, data: cancelFolder ? { stdout, stderr } : output.trim() ? JSON.parse(output) : {} });
     });
   });
   return {
@@ -340,6 +367,7 @@ syncBuiltinESMExports();
     fastTimers() { fastTimers = true; },
     failTracking(value = true) { failTracking = value; },
     crashImport(value = true) { crashImport = value; },
+    cancelFolder(value = "q") { cancelFolder = value; },
     mutations: () => state.requests.filter(({ method, url }) => method !== "GET" && !url.endsWith("/items/import-plan")),
     lock: async () => JSON.parse(await readFile(lockPath, "utf8")),
   };
@@ -457,6 +485,145 @@ test("root folder tracking retains constructor keys across repeated pushes", asy
   assert.equal(second.data.changed, 0);
   const lock = JSON.parse(await readFile(join(f.project, ".vardum.push.lock"), "utf8"));
   assert.deepEqual(lock.entries["folder:"].assets, { constructor: f.state.assetId });
+});
+
+test("library-only plans agree with TTY for exact mixed actions and paired normalized prefixes without writes", async (t) => {
+  const f = await fixture(t);
+  const folder = join(f.project, "folder");
+  await mkdir(folder);
+  for (const name of ["alpha.png", "icon.png", "legacy.png", "update.png"]) await writeFile(join(folder, name), "same");
+  const ready = (key: string, bytes = "same"): SyncAsset => ({ id: key, key, displayName: "Original display name",
+    versionId: v1, checksum: checksum(Buffer.from(bytes)), mimeType: "image/png", size: bytes.length });
+  f.state.assets = [ready("brand/mobile/icon"), ready("brand/mobile/legacy.png"), ready("brand/mobile/update", "old")];
+  const client = new VardumClient(f.origin, "test-key");
+  // The fixture rejects the original wire bug, rather than silently accepting any prefix.
+  await assert.rejects(client.syncAssets("workspace", "brand/mobile"), /400/);
+  f.state.requests.length = 0;
+  const configBefore = await readFile(join(f.project, "vardum.json"));
+  const lockBefore = await readFile(f.lockPath);
+  const cachePath = join(f.project, "../config/vardum/version-check.json");
+  await rm(cachePath);
+  const one = await f.run("push-folder", "folder", "brand/mobile", "--dry-run");
+  const two = await f.run("push-folder", "folder", "brand/mobile/", "--dry-run");
+  assert.equal(one.code, 0, one.data.error);
+  assert.deepEqual(two.data, one.data);
+  assert.deepEqual(one.data.library.map((row: any) => [row.source, row.key, row.libraryAction]), [
+    ["alpha.png", "brand/mobile/alpha", "new"], ["icon.png", "brand/mobile/icon", "skip"],
+    ["legacy.png", "brand/mobile/legacy.png", "skip"], ["update.png", "brand/mobile/update", "update"],
+  ]);
+  assert.equal(one.data.changed, 2);
+  assert.deepEqual(one.data.actions, [
+    { action: "push", path: "brand/mobile/alpha", applied: false },
+    { action: "push", path: "brand/mobile/update", applied: false },
+  ]);
+  assert.ok(one.data.library.every((row: any) => row.applied === false));
+  assert.match(one.data.library[1].notice, /Reusing existing asset/);
+  assert.match(one.data.library[2].notice, /Preserving existing filename key/);
+  assert.equal(one.data.library[1].assetId, "brand/mobile/icon");
+  assert.equal(one.data.library[2].assetId, "brand/mobile/legacy.png");
+  const logs: string[] = [];
+  t.mock.method(console, "log", (line: string) => logs.push(line));
+  const answers = ["brand/mobile", ""];
+  const prompts = { question: async () => answers.shift()! } as unknown as Interface;
+  const files = await imageFiles(folder);
+  const selected = await planPushFolder(prompts, client, "workspace", folder, files, (prefix) =>
+    prepareFolderPlan(client, "workspace", prefix, files,
+      { schema: 1, server: f.origin, workspace: "workspace", source: folder, prefix, files: {} }, false));
+  assert.ok(selected);
+  assert.deepEqual(selected.rows.map((row) => [row.source, row.key, row.libraryAction]),
+    one.data.library.map((row: any) => [row.source, row.key, row.libraryAction]));
+  assert.ok(logs.some((line) => line.includes("1 new asset") && line.includes("1 update version") && line.includes("2 skip identical")));
+  assert.ok(logs.some((line) => line.includes("icon.png → brand/mobile/icon")));
+  assert.ok(logs.some((line) => line.includes("legacy.png → brand/mobile/legacy.png")));
+  assert.deepEqual(f.mutations(), []);
+  assert.deepEqual(await readFile(join(f.project, "vardum.json")), configBefore);
+  assert.deepEqual(await readFile(f.lockPath), lockBefore);
+  for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+    await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+  await assert.rejects(readFile(cachePath), /ENOENT/);
+});
+
+test("library plans block known stem/filename ambiguity before local or remote mutations", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/icon.png"), "same");
+  f.state.unready = ["brand/mobile/icon", "brand/mobile/icon.png"].map((key) => ({ id: randomUUID(), key, displayName: key }));
+  for (const flags of [[], ["--dry-run"]]) {
+    const result = await f.run("push-folder", "folder", "brand/mobile", ...flags);
+    assert.match(result.data.error, /Both brand\/mobile\/icon and brand\/mobile\/icon.png exist/);
+    assert.deepEqual(result.data.actions, []);
+    assert.deepEqual(f.mutations(), []);
+  }
+  for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+    await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+});
+
+test("a confirmed mixed plan rejects changes to a skipped source or remote target before any upload", async (t) => {
+  for (const drift of ["source", "remote"]) {
+    const f = await fixture(t);
+    await mkdir(join(f.project, "folder"));
+    await writeFile(join(f.project, "folder/alpha.png"), "same");
+    const skipPath = join(f.project, "folder/skip.png");
+    await writeFile(skipPath, "same");
+    f.state.assets = [{ id: randomUUID(), key: "images/skip", displayName: "skip", versionId: v1,
+      checksum: checksum(Buffer.from("same")), mimeType: "image/png", size: 4 }];
+    f.state.beforeIdentityRecheck = async () => {
+      if (drift === "source") await writeFile(skipPath, "edit");
+      else f.state.assets[0] = { ...f.state.assets[0]!, versionId: v2 };
+    };
+    const result = await f.run("push-folder", "folder", "images");
+    assert.equal(result.code, 1, drift);
+    assert.match(result.data.error, /changed.*folder plan/, drift);
+    assert.deepEqual(result.data.actions, [], drift);
+    assert.deepEqual(result.data.library.map((row: any) => [row.libraryAction, row.applied]), [["new", false], ["skip", false]]);
+    assert.deepEqual(f.mutations(), [], drift);
+    for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+      await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+  }
+});
+
+test("legacy dry-run reports unavailable upload activity without negotiating or inventing safe completion", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.project, "folder"));
+  await writeFile(join(f.project, "folder/icon.png"), "same");
+  f.state.assets = [{ id: randomUUID(), key: "images/icon", displayName: "icon", versionId: v1,
+    checksum: checksum(Buffer.from("same")), mimeType: "image/png", size: 4 }];
+  f.state.omitResumeMetadata = true;
+  const dry = await f.run("push-folder", "folder", "images", "--dry-run");
+  assert.equal(dry.code, 0, dry.data.error);
+  assert.equal(dry.data.library[0].libraryAction, "skip");
+  assert.equal(dry.data.library[0].uncertain, true);
+  assert.equal(dry.data.library[0].applied, false);
+  assert.deepEqual(dry.data.actions, []);
+  assert.ok(!f.state.requests.some(({ url }) => url === "/api/capabilities"));
+  const push = await f.run("push-folder", "folder", "images");
+  assert.match(push.data.error, /missing hasUnfinishedUploads/);
+  assert.deepEqual(f.mutations(), []);
+});
+
+test("TTY quit and EOF cancellation leave the update cache, sources, locks and remote library untouched", async (t) => {
+  for (const cancel of ["q", "eof"]) {
+    const f = await fixture(t);
+    await mkdir(join(f.project, "folder"));
+    const source = join(f.project, "folder/icon.png");
+    await writeFile(source, "same");
+    const configBefore = await readFile(join(f.project, "vardum.json"));
+    const lockBefore = await readFile(f.lockPath);
+    const cache = join(f.project, "../config/vardum/version-check.json");
+    await rm(cache);
+    f.cancelFolder(cancel);
+    const result = await f.run("push-folder", "folder");
+    assert.equal(result.code, cancel === "q" ? 0 : 1, result.data.stderr);
+    assert.match(result.data.stdout, /icon.png → images\/icon/);
+    if (cancel === "eof") assert.match(result.data.stderr, /cancelled/);
+    assert.deepEqual(f.mutations(), []);
+    assert.equal(await readFile(source, "utf8"), "same");
+    assert.deepEqual(await readFile(join(f.project, "vardum.json")), configBefore);
+    assert.deepEqual(await readFile(f.lockPath), lockBefore);
+    await assert.rejects(readFile(cache), /ENOENT/);
+    for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+      await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+  }
 });
 
 test("folder naming collisions fail before any asset or upload mutation", async (t) => {
@@ -634,6 +801,8 @@ test("storage failure resumes the same pending intent; partial JSON identifies c
   assert.equal(first.code, 1);
   assert.match(first.data.error, /Storage upload failed/);
   assert.deepEqual(first.data.actions.map((action: any) => [action.phase, action.applied]), [["ready", true], ["upload-requested", false]]);
+  assert.deepEqual(first.data.library.map((row: any) => [row.source, row.libraryAction, row.phase, row.applied]),
+    [["alpha.png", "new", "ready", true], ["constructor.png", "new", "upload-requested", false]]);
   const journal = await f.pending();
   assert.equal(journal.files["images/alpha"].phase, "ready");
   assert.equal(journal.files["images/constructor"].phase, "upload-requested");
@@ -643,6 +812,7 @@ test("storage failure resumes the same pending intent; partial JSON identifies c
   assert.equal(f.state.versions.size, 2);
   assert.equal(f.state.uploads.length, 3);
   assert.deepEqual(second.data.actions.map((action: any) => action.applied), [true, true]);
+  assert.ok(second.data.library.every((row: any) => row.resumed === true && row.libraryAction === "new"));
   assert.equal((await f.push()).data.changed, 0);
 });
 
@@ -712,10 +882,13 @@ test("a lost adoption response finds the same actual ready version after its int
   };
   f.state.versions.set(versionId, version);
   f.state.versionResponseLost = true;
-  assert.equal((await f.push()).code, 1);
+  const lost = await f.push();
+  assert.equal(lost.code, 1);
   const intent = (await f.pending()).files["images/logo"];
   assert.notEqual(intent.versionId, versionId);
   assert.equal(intent.phase, "version-create-requested");
+  assert.deepEqual([lost.data.library[0].versionId, lost.data.library[0].phase, lost.data.library[0].applied],
+    [intent.versionId, intent.phase, false]);
   version.status = "ready";
   version.checksum = version.expectedChecksum;
   f.state.assets = [{ id: assetId, key: "images/logo", displayName: "Original name", versionId,
@@ -724,6 +897,9 @@ test("a lost adoption response finds the same actual ready version after its int
   assert.equal(result.code, 0, result.data.error);
   assert.equal(result.data.actions[0].versionId, versionId);
   assert.equal(result.data.actions[0].applied, true);
+  assert.equal(result.data.library[0].versionId, versionId);
+  assert.equal(result.data.library[0].phase, "ready");
+  assert.equal(result.data.library[0].applied, true);
   assert.equal(f.state.versions.size, 1);
   assert.equal(f.state.uploads.length, 0);
 });
@@ -1240,6 +1416,7 @@ test("an import preserves unrelated tracking from another folder push completed 
   await writeFile(join(f.project, "other-folder/other.png"), "same");
   let interleaved = false;
   f.state.beforeImportPlanResponse = async () => {
+    f.state.beforeImportPlanResponse = null;
     // The import has already read tracking but has not acquired its mutex.
     // Run an actual second command to completion while its plan is held open.
     await assert.rejects(readFile(join(f.project, ".vardum.push.mutex")), /ENOENT/);
@@ -1259,6 +1436,62 @@ test("an import preserves unrelated tracking from another folder push completed 
     directory: "other-folder", prefix: "elsewhere/", assets: { "elsewhere/other": otherAsset.id },
   });
   assert.equal(tracking.entries["folder:images/"].assets["images/logo"], result.data.library[0].assetId);
+});
+
+test("an import revalidates its confirmed authoritative plan before any journal or upload writes", async (t) => {
+  for (const drift of ["collision", "mapping", "version", "action"]) {
+    const f = await folderFixture(t);
+    if (drift === "version" || drift === "action") readyFolderAsset(f);
+    const lockBefore = await readFile(f.lockPath);
+    f.state.beforeImportPlanResponse = async () => {
+      f.state.beforeImportPlanResponse = null;
+      if (drift === "collision") f.state.importPlanStatus = 409;
+      if (drift === "mapping") {
+        const file = f.state.importPlans[0].files[0];
+        f.state.mappings.set("outputs/logo.png", { ...file, mappingId: "concurrent-mapping" });
+      }
+      if (drift === "version") f.state.assets[0] = { ...f.state.assets[0]!, versionId: v2 };
+      if (drift === "action") f.state.assets[0] = { ...f.state.assets[0]!, checksum: checksum(Buffer.from("edit")) };
+    };
+    const result = await f.push("--output", "outputs");
+    assert.equal(result.code, 1, drift);
+    assert.match(result.data.error, /Projected folder rule collision|folder import plan changed/, drift);
+    assert.equal(f.state.importPlans.length, 2);
+    assert.equal(f.state.uploads.length, 0);
+    assert.equal(f.state.created.length, 0);
+    assert.equal(f.state.imports.length, 0);
+    assert.deepEqual(f.mutations(), []);
+    assert.ok([...result.data.library, ...result.data.mappings].every((row: any) => row.applied === false));
+    assert.deepEqual(await readFile(f.lockPath), lockBefore);
+    for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+      await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+  }
+});
+
+test("an import rejects filename/stem identities appearing during confirmation before any write", async (t) => {
+  for (const originalKey of [null, "images/logo", "images/logo.png"]) {
+    const f = await folderFixture(t);
+    if (originalKey) readyFolderAsset(f, originalKey);
+    const lockBefore = await readFile(f.lockPath);
+    const concurrentKey = originalKey === "images/logo.png" ? "images/logo" : "images/logo.png";
+    f.state.beforeImportPlanResponse = async () => {
+      f.state.beforeImportPlanResponse = null;
+      // An unready sibling is absent from syncAssets and from fixed-key import plans.
+      f.state.unready.push({ id: randomUUID(), key: concurrentKey, displayName: "Concurrent asset" });
+    };
+    const result = await f.push("--output", "outputs");
+    assert.equal(result.code, 1, originalKey ?? "new key");
+    assert.match(result.data.error, /Both images\/logo and images\/logo.png exist|changed.*folder plan/);
+    assert.equal(f.state.importPlans.length, 2);
+    assert.deepEqual(f.mutations(), []);
+    assert.equal(f.state.uploads.length, 0);
+    assert.equal(f.state.created.length, 0);
+    assert.equal(f.state.imports.length, 0);
+    assert.ok([...result.data.library, ...result.data.mappings].every((row: any) => row.applied === false));
+    assert.deepEqual(await readFile(f.lockPath), lockBefore);
+    for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+      await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+  }
 });
 
 test("an import reports the adopted active version consistently when its storage upload fails", async (t) => {

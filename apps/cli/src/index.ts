@@ -5,7 +5,7 @@ import { mediaStem, mimeForFilename } from "@vardum/shared";
 import { stdin, stdout } from "node:process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { readFile, realpath, writeFile } from "node:fs/promises";
-import { VardumClient, VardumHttpError, type FolderImportFile, type Manifest, type VardConfig } from "./client.js";
+import { VardumClient, VardumHttpError, type Manifest, type VardConfig } from "./client.js";
 import {
   credentialsPath,
   machineLabel,
@@ -13,7 +13,8 @@ import {
   removeCredential,
   writeCredential,
 } from "./credentials.js";
-import { planPushFolder } from "./interactive.js";
+import { planPushFolder, showFolderPlan } from "./interactive.js";
+import { assertFolderPlanCurrent, assertFolderSourcesCurrent, prepareFolderPlan, type FolderPlanPreview, type FolderPlanRow, type FolderSourceCache } from "./folder-plan.js";
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
 import { maybeWarnOutdated, updateVardum, VERSION } from "./update.js";
 import { readUploadFile } from "./upload-file.js";
@@ -32,10 +33,7 @@ import {
   type UploadPhase,
 } from "./folder-upload.js";
 import {
-  assetKey,
   assetPrefix,
-  folderAssetKey,
-  folderAssetDirectories,
   atomicWrite,
   checksum,
   checksumFile,
@@ -87,6 +85,8 @@ type FolderImportReport = {
   appliedMeaning: string;
 };
 let folderImportReport: FolderImportReport | undefined;
+type LibraryReportRow = Action & Pick<FolderPlanRow, "source" | "key" | "libraryAction" | "notice" | "uncertain" | "resumed">;
+let folderLibraryReport: { library: LibraryReportRow[]; appliedMeaning: string } | undefined;
 type PushLock = {
   schema: 1;
   server?: string;
@@ -104,8 +104,8 @@ const versionCommands = ["version", "--version", "-v"];
 // again — a second parse of a bad flag used to throw inside the catch.
 const json = rawArgs.includes("--json");
 
-if (![...helpCommands, ...versionCommands, "update"].includes(command) &&
-    !(command === "push-folder" && rawArgs.includes("--dry-run")))
+// Folder selection, preview and cancellation must not create an update cache.
+if (![...helpCommands, ...versionCommands, "update", "push-folder"].includes(command))
   maybeWarnOutdated();
 
 try {
@@ -149,7 +149,7 @@ try {
       ? // Actions already applied belong in the payload: a push that fails on
         // file 40 of 50 has really changed 39 things, and CI needs to know.
         JSON.stringify(
-          { error: cancelled ? "Cancelled" : message, actions, ...folderImportReport },
+          { error: cancelled ? "Cancelled" : message, actions, ...folderLibraryReport, ...folderImportReport },
           null,
           2,
         )
@@ -622,6 +622,20 @@ async function push(options: Options) {
   summary(options, changed);
 }
 
+async function prepareLibraryFolder(
+  options: Options, context: Awaited<ReturnType<typeof loadContext>>, projectRoot: string,
+  directory: string, files: Awaited<ReturnType<typeof imageFiles>>, prefix: string, captures: FolderSourceCache,
+) {
+  if (!options.dryRun) await context.client.requireFolderUploadResume();
+  const journal = await readFolderJournal(join(projectRoot, pendingFilename), {
+    server: context.config.server, workspace: context.config.workspace, source: directory, prefix,
+  });
+  const journalBefore = JSON.stringify(journal);
+  const prepared = await prepareFolderPlan(context.client, context.config.workspace, prefix, files, journal, !options.dryRun, captures);
+  await readPushLock(join(projectRoot, ".vardum.push.lock"), context.config.workspace, context.config.server);
+  return { ...prepared, journal, journalBefore };
+}
+
 async function pushFolder(options: Options) {
   const [source, positionalPrefix] = options.positionals;
   if (!source || options.positionals.length > 2)
@@ -639,62 +653,44 @@ async function pushFolder(options: Options) {
   const files = await imageFiles(directory);
   if (!files.length)
     throw new Error(`No images found in ${relative(process.cwd(), directory) || "."}`);
-  const selectedPrefix = await resolveFolderPrefix(options, positionalPrefix, context, directory, files);
-  if (selectedPrefix === null) return summary(options, 0);
-  const prefix = assetPrefix(selectedPrefix);
-  if (outputPrefix !== undefined)
-    return pushFolderImport(options, context, directory, files, prefix, outputPrefix);
-
-  // Older servers discard optional IDs: capability negotiation must precede
-  // journal/mutex creation as well as every remote mutation.
-  if (!options.dryRun) await context.client.requireFolderUploadResume();
   const projectRoot = await realpath(context.directory);
+  const captures: FolderSourceCache = new Map();
+  if (outputPrefix !== undefined) {
+    const prepared = await resolveFolderPlan(options, positionalPrefix, context, directory, files,
+      (prefix) => prepareFolderImport(options, context, directory, files, prefix, outputPrefix, captures));
+    if (!prepared) return summary(options, 0);
+    return pushFolderImport(options, context, directory, prepared);
+  }
+  folderLibraryReport = { library: [],
+    appliedMeaning: "applied confirms a completed upload; false does not rule out remote changes after a failed or lost response. Skipped files perform no upload. Keep the pending journal and rerun the same command." };
+  const prepared = await resolveFolderPlan(options, positionalPrefix, context, directory, files,
+    (prefix) => prepareLibraryFolder(options, context, projectRoot, directory, files, prefix, captures));
+  if (!prepared) return summary(options, 0);
+  const { prefix, rows: local, byKey, identityByKey, resolvedKeys, limits, journal, journalBefore } = prepared;
+  folderLibraryReport.library = local.map((file) => {
+    const pending = journal.files[file.key];
+    const existing = byKey.get(file.key);
+    const identity = identityByKey.get(file.key);
+    return { action: "push", path: file.key, source: file.source, key: file.key,
+      libraryAction: file.libraryAction, applied: false,
+      ...(file.notice ? { notice: file.notice } : {}), ...(file.uncertain ? { uncertain: true } : {}),
+      ...(pending ? { resumed: true, phase: pending.phase, assetId: pending.assetId, versionId: pending.versionId } :
+        identity ? { assetId: identity.id, ...(existing ? { versionId: existing.versionId } : {}) } : {}),
+    };
+  });
+  if (!options.json && (positionalPrefix !== undefined || !stdin.isTTY)) showFolderPlan(prepared);
   const release = options.dryRun ? null : await acquireFolderMutex(projectRoot);
   try {
     const journalPath = join(projectRoot, pendingFilename);
-    const journal = await readFolderJournal(journalPath, {
-      server: context.config.server, workspace: context.config.workspace, source: directory, prefix,
-    });
-    const saveJournal = () => writeFolderState(journalPath, journal);
-    const remote = await context.client.syncAssets(context.config.workspace, prefix);
-    const byKey = new Map(remote.assets.map((asset) => [asset.key, asset]));
-    const identities = await context.client.assetIdentities(context.config.workspace,
-      folderAssetDirectories(prefix, files.map((file) => file.relative)));
-    if (!options.dryRun && identities.some((identity) => typeof identity.hasUnfinishedUploads !== "boolean"))
-      throw new Error("Vardum returned an invalid resumable asset identity response (missing hasUnfinishedUploads)");
-    const identityByKey = new Map(identities.map((asset) => [asset.key, asset]));
-    const existingKeys = new Set([...identityByKey.keys(), ...Object.keys(journal.files)]);
-    const limits = await context.client.uploadLimits();
-    const local: Array<typeof files[number] & { key: string; checksum: string }> = [];
-    const plannedKeys = new Set<string>();
-    const resolvedKeys = new Set<string>();
-    for (const file of files) {
-      const stemKey = assetKey(prefix, file.relative);
-      if (plannedKeys.has(stemKey))
-        throw new Error(`Files normalize to the same asset key: ${stemKey}`);
-      plannedKeys.add(stemKey);
-      const key = folderAssetKey(prefix, file.relative, existingKeys);
-      if (resolvedKeys.has(key))
-        throw new Error(`Files resolve to the same asset key: ${key}`);
-      resolvedKeys.add(key);
-      const current = byKey.get(key);
-      const identity = identityByKey.get(key);
-      if (current && (!identity || identity.id !== current.id))
-        throw new Error(`${key} changed asset identity during the folder plan; rerun the command after inspecting that key on the server`);
-      const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
-      const hash = checksum(bytes);
-      const pending = journal.files[key];
-      if (pending && (pending.relative !== file.relative || pending.checksum !== hash ||
-          pending.mimeType !== file.mimeType || pending.size !== bytes.byteLength))
-        throw new Error(`${file.relative} differs from the pending upload; restore its original bytes before resuming ${pendingFilename}`);
-      if (pending && identity && pending.assetId !== identity.id)
-        throw new Error(`${key} has a different remote asset identity; keep the pending journal and resolve the conflict before retrying`);
-      local.push({ ...file, size: bytes.byteLength, key, checksum: hash });
+    if (!options.dryRun) {
+      if (JSON.stringify(await readFolderJournal(journalPath, {
+        server: context.config.server, workspace: context.config.workspace, source: directory, prefix,
+      })) !== journalBefore)
+        throw new Error("The pending folder journal changed during preflight; rerun the same command");
+      await assertFolderPlanCurrent(context.client, context.config.workspace, prepared, journal);
+      await assertFolderSourcesCurrent(prepared);
     }
-    for (const pending of Object.values(journal.files))
-      if (!resolvedKeys.has(pending.key))
-        throw new Error(`${pending.relative} is missing from the pending folder upload; restore it before resuming ${pendingFilename}`);
-
+    const saveJournal = () => writeFolderState(journalPath, journal);
     const pushLockPath = join(projectRoot, ".vardum.push.lock");
     const pushLock = await readPushLock(pushLockPath, context.config.workspace, context.config.server);
     const trackedDirectory = relative(projectRoot, directory) || ".";
@@ -709,19 +705,17 @@ async function pushFolder(options: Options) {
         previous[key] = id;
       }
     const currentAssets: Record<string, string> = Object.create(null);
+    const libraryByKey = new Map(folderLibraryReport.library.map((row) => [row.key, row]));
     const outdated = local.filter((file) => {
-      const existing = byKey.get(file.key);
-      const identity = identityByKey.get(file.key);
-      if (journal.files[file.key] || existing?.checksum !== file.checksum ||
-          existing.mimeType !== file.mimeType || existing.size !== file.size ||
-          identity?.hasUnfinishedUploads === true || identity?.status === "pending" || identity?.status === "processing") return true;
-      currentAssets[file.key] = existing.id;
+      if (file.libraryAction !== "skip") return true;
+      currentAssets[file.key] = byKey.get(file.key)!.id;
       return false;
     });
     let changed = 0;
     const processing: Array<{ file: FolderIntent; action: Action }> = [];
     for (const [index, file] of outdated.entries()) {
       const action = report("push", file.key, options, `(${index + 1}/${outdated.length})`);
+      const library = libraryByKey.get(file.key)!;
       changed += 1;
       if (options.dryRun) {
         const pending = journal.files[file.key];
@@ -745,15 +739,25 @@ async function pushFolder(options: Options) {
         };
         journal.files[file.key] = intent;
         Object.assign(action, { phase: intent.phase, assetId: intent.assetId, versionId: intent.versionId });
+        Object.assign(library, { phase: intent.phase, assetId: intent.assetId, versionId: intent.versionId });
         await saveJournal();
       }
-      await resumeFolderUpload(context.client, context.config.workspace, intent, bytes, saveJournal, action);
+      try {
+        await resumeFolderUpload(context.client, context.config.workspace, intent, bytes, saveJournal, action);
+      } finally {
+        Object.assign(library, { phase: intent.phase, assetId: intent.assetId, versionId: intent.versionId, applied: action.applied });
+      }
       currentAssets[file.key] = intent.assetId;
       processing.push({ file: intent, action });
     }
-    if (processing.some(({ file }) => file.phase !== "ready")) {
-      if (!options.json) console.log(`waiting for ${processing.filter(({ file }) => file.phase !== "ready").length} upload(s) to process…`);
-      await waitForFolderUploads(context.client, context.config.workspace, processing, saveJournal);
+    try {
+      if (processing.some(({ file }) => file.phase !== "ready")) {
+        if (!options.json) console.log(`waiting for ${processing.filter(({ file }) => file.phase !== "ready").length} upload(s) to process…`);
+        await waitForFolderUploads(context.client, context.config.workspace, processing, saveJournal);
+      }
+    } finally {
+      for (const { file, action } of processing)
+        Object.assign(libraryByKey.get(file.key)!, { phase: file.phase, assetId: file.assetId, versionId: file.versionId, applied: action.applied });
     }
 
     if (options.delete) {
@@ -815,13 +819,14 @@ function journalImportReport(journal: FolderImportJournal, dryRun: boolean): Fol
   };
 }
 
-async function pushFolderImport(
+async function prepareFolderImport(
   options: Options,
   context: Awaited<ReturnType<typeof loadContext>>,
   directory: string,
   files: Awaited<ReturnType<typeof imageFiles>>,
   prefix: string,
   outputPrefix: string,
+  captures: FolderSourceCache,
 ) {
   if (files.length > 1000) throw new Error("Folder Vard imports support at most 1,000 files");
   const outputPaths = files.map((file) => `${outputPrefix}${file.relative}`);
@@ -839,58 +844,37 @@ async function pushFolderImport(
   const journal = await readFolderJournal(journalPath, journalContext);
   folderImportReport = journalImportReport(journal, options.dryRun);
   const journalBefore = JSON.stringify(journal);
-  const remote = await context.client.syncAssets(context.config.workspace, prefix);
-  const byKey = new Map(remote.assets.map((asset) => [asset.key, asset]));
-  const identities = await context.client.assetIdentities(context.config.workspace,
-    folderAssetDirectories(prefix, files.map((file) => file.relative)));
-  if (identities.some((identity) => typeof identity.hasUnfinishedUploads !== "boolean"))
-    throw new Error("Vardum returned an invalid resumable asset identity response (missing hasUnfinishedUploads)");
-  const identityByKey = new Map(identities.map((asset) => [asset.key, asset]));
-  const existingKeys = new Set([...identityByKey.keys(), ...Object.keys(journal.files)]);
-  const limits = await context.client.uploadLimits();
-  const local: Array<typeof files[number] & FolderImportFile> = [];
-  const stems = new Set<string>();
-  const keys = new Set<string>();
-  for (const [index, file] of files.entries()) {
-    const stem = assetKey(prefix, file.relative);
-    if (stems.has(stem)) throw new Error(`Files normalize to the same asset key: ${stem}`);
-    stems.add(stem);
-    const key = folderAssetKey(prefix, file.relative, existingKeys);
-    if (keys.has(key)) throw new Error(`Files resolve to the same asset key: ${key}`);
-    keys.add(key);
-    const current = byKey.get(key);
-    const identity = identityByKey.get(key);
-    if (current && (!identity || identity.id !== current.id))
-      throw new Error(`${key} changed asset identity during the folder plan; rerun the command after inspecting that key on the server`);
-    const bytes = await readUploadFile(file.absolute, file.mimeType, limits);
-    const hash = checksum(bytes);
-    const pending = journal.files[key];
-    if (pending && (pending.relative !== file.relative || pending.checksum !== hash ||
-        pending.mimeType !== file.mimeType || pending.size !== bytes.byteLength))
-      throw new Error(`${file.relative} differs from the pending upload; restore its original bytes before resuming ${pendingFilename}`);
-    if (pending && identity && pending.assetId !== identity.id)
-      throw new Error(`${key} has a different remote asset identity; keep the pending journal and resolve the conflict before retrying`);
-    local.push({ ...file, key, size: bytes.byteLength, checksum: hash,
-      outputPath: outputPaths[index]!, assetId: pending?.assetId ?? identity?.id ?? randomUUID() });
-  }
-  for (const pending of Object.values(journal.files))
-    if (!keys.has(pending.key))
-      throw new Error(`${pending.relative} is missing from the pending folder upload; restore it before resuming ${pendingFilename}`);
+  const prepared = await prepareFolderPlan(context.client, context.config.workspace, prefix, files, journal, true, captures);
+  const { identityByKey } = prepared;
+  const local = prepared.rows.map((file, index) => ({ ...file,
+    outputPath: outputPaths[index]!, assetId: journal.files[file.key]?.assetId ?? identityByKey.get(file.key)?.id ?? randomUUID(),
+  }));
 
   const pushLockPath = join(projectRoot, ".vardum.push.lock");
   // Validate local tracking during preflight, but never retain this snapshot
   // for writes: another folder push may complete before we acquire the mutex.
   await readPushLock(pushLockPath, context.config.workspace, context.config.server);
-  const trackedDirectory = relative(projectRoot, directory) || ".";
-  const lockKey = `${trackedDirectory}:${prefix}`;
-  // This is a read-only permission/collision preflight. No mutex, journal,
-  // upload or mapping is written until the entire plan is accepted.
+  // This read-only permission/collision preflight remains server-authoritative.
   const request = local.map(({ assetId, key, outputPath, checksum, mimeType, size }) =>
     ({ assetId, key, outputPath, checksum, mimeType, size }));
   const plan = await context.client.planFolderImport(context.config, request);
+  return { ...prepared, rows: prepared.rows.map((row, index) => ({ ...row, libraryAction: plan[index]!.libraryAction })),
+    local, plan, request, projectRoot, journalPath, journalContext, journal, journalBefore, pushLockPath };
+}
+
+async function pushFolderImport(
+  options: Options,
+  context: Awaited<ReturnType<typeof loadContext>>,
+  directory: string,
+  prepared: Awaited<ReturnType<typeof prepareFolderImport>>,
+) {
+  const { prefix, local, plan, request, limits, identityByKey,
+    projectRoot, journalPath, journalContext, journal, journalBefore, pushLockPath } = prepared;
+  const trackedDirectory = relative(projectRoot, directory) || ".";
+  const lockKey = `${trackedDirectory}:${prefix}`;
   folderImportReport = {
     library: [], mappings: [],
-    appliedMeaning: folderImportReport.appliedMeaning,
+    appliedMeaning: folderImportReport!.appliedMeaning,
   };
   for (const [index, planned] of plan.entries()) {
     const file = local[index]!;
@@ -937,6 +921,14 @@ async function pushFolderImport(
   try {
     if (JSON.stringify(await readFolderJournal(journalPath, journalContext)) !== journalBefore)
       throw new Error("The pending folder journal changed during preflight; rerun the same command");
+    const confirmed = await context.client.planFolderImport(context.config, request);
+    const planSnapshot = (files: typeof plan) => files.map((file) => [file.assetId, file.key, file.outputPath,
+      file.checksum, file.mimeType, file.size, file.versionId, file.libraryAction, file.mappingAction, file.mappingId]);
+    if (JSON.stringify(planSnapshot(confirmed)) !== JSON.stringify(planSnapshot(plan)))
+      throw new Error("The folder import plan changed during confirmation; rerun the same command before uploading");
+    // Fixed-key import plans cannot observe a sibling stem/filename identity.
+    await assertFolderPlanCurrent(context.client, context.config.workspace, prepared, journal);
+    await assertFolderSourcesCurrent(prepared);
     const pushLock = await readPushLock(pushLockPath, context.config.workspace, context.config.server);
     const aliases = Object.entries(pushLock.entries).filter(([, entry]) =>
       entry.directory === trackedDirectory && assetPrefix(entry.prefix) === prefix);
@@ -1008,14 +1000,15 @@ async function update(options: Options) {
  * existing folder or creates a new one and confirms the plan. CI and pipes
  * fall back to the workspace root, so non-interactive callers never block.
  */
-async function resolveFolderPrefix(
+async function resolveFolderPlan<Plan extends FolderPlanPreview>(
   options: Options,
   positionalPrefix: string | undefined,
   context: { client: VardumClient; config: VardConfig },
   directory: string,
   files: Awaited<ReturnType<typeof imageFiles>>,
-): Promise<string | null> {
-  if (positionalPrefix !== undefined) return positionalPrefix;
+  prepare: (prefix: string) => Promise<Plan>,
+): Promise<Plan | null> {
+  if (positionalPrefix !== undefined) return prepare(assetPrefix(positionalPrefix));
   if (!options.json && stdin.isTTY) {
     const prompts = createInterface({ input: stdin, output: stdout });
     try {
@@ -1025,12 +1018,13 @@ async function resolveFolderPrefix(
         context.config.workspace,
         directory,
         files,
+        prepare,
       );
     } finally {
       prompts.close();
     }
   }
-  return "";
+  return prepare("");
 }
 
 async function pullAsset(options: Options) {
@@ -1241,7 +1235,7 @@ function report(
 function summary(options: Options, changed: number) {
   if (options.json) {
     console.log(
-      JSON.stringify({ dryRun: options.dryRun, changed, actions, ...folderImportReport }, null, 2),
+      JSON.stringify({ dryRun: options.dryRun, changed, actions, ...folderLibraryReport, ...folderImportReport }, null, 2),
     );
     return;
   }
