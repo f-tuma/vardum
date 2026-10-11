@@ -1564,6 +1564,13 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
           `${project.name}: normal pull and manifest-less frozen pull each restored 15 originals/variants with rate limiting enabled`,
         );
       }
+      await cliTest.test("derivative preservation with real legacy routes and frozen CLI", async (preservationTest) => {
+        const { checkDerivativePreservation } = await import("./derivative-preservation.fixture.js");
+        await checkDerivativePreservation(preservationTest, {
+          admin: admin!, app, objects, objectTypes, origin, root,
+          key: bulkKeys[0]!.key, run,
+        });
+      });
       await cliTest.test(
         "folder CLI normal/frozen updates, new/removed/moved members, rule deletion and explicit stale deletion",
         async () => {

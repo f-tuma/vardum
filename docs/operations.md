@@ -148,9 +148,14 @@ protected operational probes remain outside request admission.
 The storage quota accounts for **original-version reservations**, not total bucket
 or database usage. Derived cache objects, source import objects, provider version
 history, logs and backup bundles need separate storage monitoring and retention.
-Use a provider lifecycle rule scoped to `derived/` for derived-cache retention;
-never apply that rule to `originals/`. Request/rate limits multiply with the number
-of API replicas; enforce a fleet-wide edge budget when needed. Keep the same
+Do not configure automatic deletion of `derived/` objects: retaining an original
+does not guarantee byte-identical regeneration for historical frozen locks. The
+previous derived-only lifecycle recommendation is superseded by the
+[accepted preservation contract](adr/0001-derived-output-preservation.md). Review
+existing provider lifecycle policies against that contract; this source decision
+does not change live provider settings. Do not apply derived cleanup to `originals/`.
+Request/rate limits multiply with the number of API replicas; enforce a fleet-wide
+edge budget when needed. Keep the same
 `TRANSFORM_CONCURRENCY` on every replica. Its PostgreSQL session advisory locks
 require a direct connection or session pooling, not transaction-mode PgBouncer.
 Connections are released on completion/failure, and locks disappear when the

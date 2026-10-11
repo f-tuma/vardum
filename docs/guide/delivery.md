@@ -37,6 +37,12 @@ Add parameters and a signature:
 - Change any value without re-signing and you get `403`.
 - Get signed URLs from the asset page (**Copy transform URL**) or a Vard variant.
 - Rendered on first request, then served from the bucket (`derived/`).
+- If that stored variant is lost, the installed renderer regenerates it. The same
+  source version and parameters can then produce different encoded bytes; frozen
+  pull rejects a checksum mismatch, even with `--force`.
+- Keep stored variants; do not configure automatic derived-cache deletion before
+  an accepted retention/reconstruction model. See the
+  [preservation contract](../adr/0001-derived-output-preservation.md).
 - Rotating `TRANSFORM_SECRET` breaks every signed URL, including locked ones.
 - Video has no variants.
 

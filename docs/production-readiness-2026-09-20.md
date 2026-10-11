@@ -514,9 +514,14 @@ ready asset.
 
 These are deployment defaults and functional load checks, not a production SLO.
 The quota covers original reservations, not derived-cache/provider-history/log/DB
-storage. Operators must set derived-only lifecycle retention, edge-wide rate limits
-for multiple replicas, disk/memory alerts and representative codec/tenant load
-acceptance. Defaults, upgrade procedure and limits are in
+storage. The derived-only lifecycle recommendation recorded at this checkpoint
+was superseded on 2026-10-11 by the
+[accepted preservation contract](adr/0001-derived-output-preservation.md): automatic
+derivative deletion must wait for separately accepted retention/reconstruction
+proof. The historical load results above remain evidence of that run, not proof
+of byte-identical regeneration. Operators still need storage-growth monitoring,
+edge-wide rate limits for multiple replicas, disk/memory alerts and representative
+codec/tenant load acceptance. Defaults, upgrade procedure and limits are in
 [operations](operations.md#resource-budgets-and-unfinished-uploads). No new npm
 release or production deployment is part of this step.
 
