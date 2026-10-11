@@ -33,6 +33,30 @@ const json = async (path) => JSON.parse(await readFile(path, "utf8"));
 const integrity = (bytes) =>
   `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
+// Public install instructions are audited from packed bytes, not source Markdown.
+export function validatePackageReadme(readme, manifest, packages) {
+  const targets = [
+    ...readme.matchAll(/\[[^\]]*\]\(([^)]+)\)/g),
+    ...readme.matchAll(/^ *\[[^\]]+\]:\s*(\S+)/gm),
+  ].map(match => match[1]);
+  assert.ok(targets.includes(`https://www.npmjs.com/package/${manifest.name}/v/${manifest.version}`),
+    `${manifest.name} README must link to its exact public npm version`);
+  assert.ok(readme.includes(`${manifest.name}@${manifest.version}`),
+    `${manifest.name} README must include an exact installation pin`);
+  for (const [, name, version] of readme.matchAll(/(@vardum\/(?:cli|mcp|shared))@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g)) {
+    assert.equal(version, packages.find(pkg => pkg.name === name)?.version,
+      `${name} README installation pin differs from the release batch`);
+  }
+  for (const target of targets) {
+    let url;
+    try { url = new URL(target); } catch { assert.fail("Packaged README links must be public absolute URLs"); }
+    assert.equal(url.protocol, "https:", "Packaged README links must use HTTPS");
+    assert.ok(!["github.com", "raw.githubusercontent.com"].includes(url.hostname),
+      "Packaged setup must not depend on repository access");
+    assert.ok(!url.username && !url.password, "Packaged README links must not contain credentials");
+  }
+}
+
 export async function validateRelease(directory, {
   expectedPackages, expectedManifestSha256, expectedManifestBytes,
 } = {}) {
@@ -104,6 +128,12 @@ export async function validateRelease(directory, {
       .trim()
       .split("\n");
     assert.ok(files.includes("package/README.md"));
+    // Retained historical batches have fixed reviewed hashes and old README contracts.
+    // Current source/tag batches always receive the standalone-onboarding check.
+    if (!expectedPackages) {
+      const readme = (await run("tar", ["-xzOf", archive, "package/README.md"])).stdout;
+      validatePackageReadme(readme, manifest, release.packages);
+    }
     assert.ok(files.includes("package/dist/index.js"));
     assert.ok(
       files.every(

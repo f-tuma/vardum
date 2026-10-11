@@ -4,28 +4,30 @@ MCP server for [Vardum](https://vardum.com): lets an AI agent manage assets and
 Vards using a key scoped to one workspace. Workspace creation, membership,
 API-key management and domains are managed in the web app with a signed-in session.
 
-This README describes **MCP 0.4.0**, including revision-guarded Vard editing.
-Check the [0.8 client release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.8.md)
-and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md)
-for publication evidence and compatibility. Older MCP 0.3.0 uses the legacy
-editing contract; installing it does not enable revision guards.
-The published 0.1.0 artifact has a broken workspace dependency.
+This README describes [MCP **0.4.1**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.1),
+including revision-guarded Vard editing. The matching client batch uses CLI
+**0.8.1** and shared **0.4.1**. This patch makes setup self-contained without
+changing the tools or editor protocol. Older MCP 0.3.0 uses the legacy editing
+contract; installing it does not enable revision guards. The published 0.1.0
+artifact has a broken workspace dependency.
 
 ## Setup
 
 The server speaks MCP over stdio, so the client starts it. Create a workspace
-API key in **Settings // API keys** first; it is restricted to that workspace
+API key in **Settings → API keys** first; it is restricted to that workspace
 and its selected permissions. Copy the workspace ID from Settings → General
 for tool calls. Use Node.js 22 or newer.
 
-These configurations pin published **MCP 0.4.0**. Deploy the matching server
-advertising `vardEditRevision: 1` before editing Vards. See the
-[MCP guide](../../docs/guide/mcp.md) for setup and guarded editing.
+These configurations pin **MCP 0.4.1** and need no source-repository access.
+Deploy a server advertising `vardEditRevision: 1` from `GET /api/capabilities`
+before editable Vard reads or mutations; there is no legacy-edit fallback.
+Use a read key for inspection or a key with the required write permissions for
+mutation. Keep real keys in the client's private configuration, never in Git.
 
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.0
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.1
 ```
 
 Any client that reads a JSON config (Claude Desktop, Cursor, …):
@@ -35,16 +37,12 @@ Any client that reads a JSON config (Claude Desktop, Cursor, …):
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.4.0"],
+      "args": ["-y", "@vardum/mcp@0.4.1"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
 }
 ```
-
-For a source checkout, build with `pnpm --filter "@vardum/mcp..." build` and
-configure the client to run `node /absolute/path/to/vardum/apps/mcp/dist/index.js`.
-This does not establish npm availability.
 
 ## Configuration
 
@@ -85,8 +83,9 @@ Use `set_asset_visibility` with `workspaceId`, `assetId`, and an explicit boolea
 Publishing exposes every ready version and its variants. A public Vard does not
 publish its files: its anonymous manifest remains unavailable while any mapped
 asset is private. Making a file private cannot revoke downloaded or cached
-copies. These tools require the matching visibility-capable API in the
-compatibility table.
+copies. The server must implement asset visibility, enforce workspace read access to
+private version/variant URLs, and require publish permission for visibility changes.
+Installing this package does not add those backend capabilities.
 
 ## Guarded editing
 
@@ -122,7 +121,8 @@ A stale write returns a structured MCP tool error (`isError: true`) with
 instruction to reload. Keep the intended edit, read `get_vard` again, review the
 current definition, then reapply the edit with that reviewed definition's
 revision. Do not automatically repeat a stale replacement list with a new token.
-See the [guarded editor protocol](../../docs/vard-editor-concurrency.md).
+An unresolved preview never permits bypassing the revision check or writing
+expanded folder outputs as manual mappings.
 
 ## Folder rules
 
@@ -158,6 +158,20 @@ consumes the committed snapshot without live resolution. There is no background
 sync. Removing rules leaves source assets/manual mappings intact. Choose
 `--delete` on the membership-updating pull: a normal no-delete pull keeps stale
 disk files but drops their tracking, so a later `--delete` cannot remove them.
-See [CLI snapshot limitations](https://github.com/f-tuma/vardum/tree/main/apps/cli#reproducible-asset-consumption)
-and [operations](https://github.com/f-tuma/vardum/blob/main/docs/operations.md#folder-rule-upgrade)
-before upgrading or rolling back.
+The CLI snapshot records locked URLs and byte checksums, not an archive. Frozen
+restore needs those versions and URLs to remain reachable with the required read
+permission. Source-key or workspace-slug renames, deleted versions, signing-key
+rotation, expired signatures or changed transformation bytes can break an old
+snapshot; checksum failure never falls back to latest. Do not assume a rule removal
+or a successful live preview proves historical frozen restores.
+
+## Self-hosted backend
+
+The matching backend exposes `GET /api/capabilities` with `vardEditRevision: 1`
+and dedicated `/editor` endpoints. Guarded editing needs no migration beyond the
+upload/import baseline through `0015_upload_request_checksum.sql`. Folder rules
+need recursive ready-original resolution with the collision/limit rules above.
+Asset uploads need `GET /api/upload-limits`, accepted MIME validation and ready
+version processing. Images and videos have separate byte limits; video delivery
+keeps original bytes without transformation variants. Verify the actual instance
+before granting an agent write permissions.

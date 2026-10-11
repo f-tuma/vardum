@@ -1,6 +1,6 @@
-import cliPackage from "../../cli/package.json" with { type: "json" };
-
-export const CLI_SETUP_VERSION = cliPackage.version;
+// Last independently verified public release. Candidate package versions must
+// not change Copy setup before npm publication and archive verification.
+export const CLI_SETUP_VERSION = "0.8.0";
 
 // Quote each value as one POSIX shell argument, including pasted hostnames.
 function shellArgument(value: string) {

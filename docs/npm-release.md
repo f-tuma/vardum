@@ -33,6 +33,25 @@ with direct `npm publish` allowed and dist-tag management disabled. Their old
 verification; package 2FA settings were preserved. Actual Actions publication,
 not a browser login or validation-only run, completes VARD-45.
 
+## Public onboarding patch candidate (VARD-77)
+
+CLI **0.8.1**, MCP **0.4.1** and shared **0.4.1** are a source candidate,
+not a published batch at this checkpoint. Their packaged READMEs contain
+standalone setup, public npm version links and backend/retention contracts.
+The exact archive check rejects private/relative setup links and mismatched
+installation pins. Historical retained batches and the 0.6/0.2/0.2 server
+compatibility fixture remain unchanged.
+
+Keep Copy setup and active guides on verified CLI **0.8.0** / MCP **0.4.0**.
+After independent review, green PR CI and a source validation-only Actions run,
+merge the candidate and create matching tag `v0.8.1`. The final tag run packs
+and tests its own batch; publishing must download that run's exact archives.
+A branch-validation batch is separate evidence, never the tag batch. Only after
+registry bytes, independent public installs and GitHub assets match the tag
+artifact may a separate PR record publication evidence and promote active pins.
+Do not overwrite published versions or move historical tags. If publication is
+interrupted, rerun only failed jobs of the original tag run.
+
 ## October 11 client 0.8 publication evidence
 
 [Release `v0.8.0`](https://github.com/f-tuma/vardum/releases/tag/v0.8.0) identifies
@@ -57,7 +76,8 @@ upgrading clients. Publication and advertised capabilities do not certify a
 released server/runtime artifact or complete broader production acceptance.
 The client batch keeps schema **2**, minimum CLI **0.6.0**, and the unchanged
 0.6/0.2/0.2 compatibility fixture. Active onboarding now pins CLI 0.8.0 and MCP
-0.4.0; Copy setup reads the CLI manifest in the deployed gateway source.
+0.4.0; Copy setup uses a separately reviewed published-version pin in the gateway.
+Candidate package manifests do not promote that pin before publication.
 
 ## October 11 publication evidence
 
