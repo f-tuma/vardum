@@ -7,8 +7,8 @@ API-key management and domains are managed in the web app with a signed-in sessi
 This README describes **MCP 0.4.0**, including revision-guarded Vard editing.
 Check the [0.8 client release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.8.md)
 and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md)
-to confirm npm availability before installing this version. Published MCP 0.3.0
-uses the legacy editing contract; installing it does not enable revision guards.
+for publication evidence and compatibility. Older MCP 0.3.0 uses the legacy
+editing contract; installing it does not enable revision guards.
 The published 0.1.0 artifact has a broken workspace dependency.
 
 ## Setup
@@ -18,10 +18,9 @@ API key in **Settings // API keys** first; it is restricted to that workspace
 and its selected permissions. Copy the workspace ID from Settings → General
 for tool calls. Use Node.js 22 or newer.
 
-**These configurations target MCP 0.4.0**; use them once the release-status page
-confirms that exact package is available. Deploy the matching server advertising
-`vardEditRevision: 1` before editing Vards. For current published setup, see the
-[MCP guide](../../docs/guide/mcp.md).
+These configurations pin published **MCP 0.4.0**. Deploy the matching server
+advertising `vardEditRevision: 1` before editing Vards. See the
+[MCP guide](../../docs/guide/mcp.md) for setup and guarded editing.
 
 Claude Code:
 

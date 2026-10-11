@@ -2,10 +2,9 @@
 
 One file from Vardum into a repository, locked, in five steps.
 
-You need Node.js 22+ and a workspace. These steps use published **CLI 0.7.0**.
-Candidate 0.8.0 is unavailable on npm as of 2026-10-11; confirm
-[release status](../npm-release.md) before upgrading. Both use schema 2 frozen
-snapshots, with minimum compatible CLI 0.6.0.
+You need Node.js 22+ and a workspace. These steps pin published **CLI 0.8.0**.
+Frozen snapshots remain schema 2, with minimum compatible CLI 0.6.0. See
+[release status](../npm-release.md) for compatibility and evidence.
 
 ## 1. Prepare a Vard
 
@@ -20,7 +19,7 @@ In the app:
 ## 2. Connect the repository
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.7.0
+npm install --save-dev --save-exact @vardum/cli@0.8.0
 npx vardum init     # writes vardum.json
 npx vardum login    # authorizes this machine in the browser
 ```

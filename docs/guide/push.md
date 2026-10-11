@@ -7,7 +7,7 @@ key.
 | --- | --- |
 | `vardum push` | Uploads changes to files behind **Writable** mappings |
 | `vardum push-folder <dir> [prefix]` | Uploads a folder to the library, keeping relative paths |
-| `vardum push-folder ... --output <path>` | Also adds the files to the Vard (CLI 0.7.0) |
+| `vardum push-folder ... --output <path>` | Also adds the files to the Vard (since CLI 0.7.0) |
 
 - Pinned, transformed and folder-rule files are read-only: `push` skips them.
 - Every command takes `--dry-run`.
@@ -25,11 +25,11 @@ vardum push-folder ./images               # pick a folder, review, confirm
 - `--delete` removes library assets an earlier push created and that are gone
   locally. In a terminal it lists them and asks first.
 
-## Complete plan (CLI 0.8.0 candidate)
+## Complete plan (CLI 0.8.0)
 
-CLI 0.8.0 is unavailable on npm as of **2026-10-11**. Check the
-[candidate release notes](../client-release-0.8.md) and
-[release status](../npm-release.md) before upgrading from published CLI 0.7.0.
+Use published **CLI 0.8.0** for the complete folder plan. See
+[release notes and upgrade order](../client-release-0.8.md) and
+[release status](../npm-release.md).
 
 - Every source file is classified as **New**, **Update** or **Skip**, including
   when the push has no changes. Terminal confirmation shows totals and the first
@@ -44,7 +44,7 @@ CLI 0.8.0 is unavailable on npm as of **2026-10-11**. Check the
   remote identity/current version and stem/filename alternatives are checked
   again before upload; imports also recheck mappings. A change requires a new plan.
 
-## Import into the Vard (CLI 0.7.0 and candidate 0.8.0)
+## Import into the Vard
 
 ```text
 ./images/icons/logo.png
@@ -68,7 +68,7 @@ vardum pull           # then review and commit
 
 - `--output` cannot be combined with `--delete` or `--force`.
 
-## If it stops halfway (CLI 0.7.0 and candidate 0.8.0)
+## If it stops halfway
 
 - Run the **same command** again. It resumes without duplicate versions or
   mappings.

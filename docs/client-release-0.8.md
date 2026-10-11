@@ -1,25 +1,51 @@
-# Client 0.8 candidate
+# Client 0.8 release
 
-Proposed next immutable client batch, status **2026-10-11**: CLI **0.8.0**,
-shared **0.4.0** and MCP **0.4.0**. These versions are **not published**; all three
-exact registry versions returned 404 at this checkpoint. Currently published
-and verified packages remain CLI **0.7.0**, shared **0.3.0** and MCP **0.3.0**.
-Check [release status](npm-release.md) for availability. Package README install
-commands that pin 0.8/0.4 target this candidate and become usable only after
-publication is verified.
+Published and independently verified **2026-10-11** for **VARD-69**: CLI
+**0.8.0**, shared **0.4.0** and MCP **0.4.0**. Actual registry tarballs,
+independent public CLI/MCP installs with transitive shared 0.4.0, and all four
+GitHub release assets match the final tag run's tested batch. See
+[release status](npm-release.md) and the publication evidence below.
 
-The feature source is [PR #27](https://github.com/f-tuma/vardum/pull/27) at
-`31e03390d6970ebf6c0a500ec9489b62a7c39e63`. Both final reviews and [CI38124816726](https://github.com/f-tuma/vardum/actions/runs/38124816726)
+[Release `v0.8.0`](https://github.com/f-tuma/vardum/releases/tag/v0.8.0) identifies
+immutable source `a5b978432556518d895016aa398ff915a9b97224`, tree
+`a9ea341bcf5e878cc619f35a2dfdcb21bc4a7b9b`, prepared in
+[PR #40](https://github.com/f-tuma/vardum/pull/40). Its feature source is
+[PR #27](https://github.com/f-tuma/vardum/pull/27) at
+`31e03390d6970ebf6c0a500ec9489b62a7c39e63`. Both final reviews and
+[CI 38124816726](https://github.com/f-tuma/vardum/actions/runs/38124816726)
 passed; PR #27 was squash merged as `85865e476e851bcc9a3fafb5c4ddc096e8a5a671`,
 with the identical tested tree `a050fb79debce16ae33d58d297145f6e1c89a38d`.
-The release commit/tag and tested archive identities are not yet assigned. Main's CLI
-manifest and Copy setup stay on **0.7.0** until real publication and independent
-public installation verification complete.
+
+Post-publication documentation commits on main do not move that tag, change its
+source tree or replace its npm/GitHub archives. Source package README updates
+also do not alter the README bytes already packed in the published archives.
+Never repack this source under the published versions.
 
 Frozen consumption remains **schema 2**, with minimum compatible CLI **0.6.0**.
 The first-project example and server-candidate public compatibility fixture stay
 on CLI 0.6.0 / MCP and shared 0.2.0. VARD-14's schema 3 draft and provisional
 version numbers remain separate, unmerged and unpublished.
+
+## Publication evidence
+
+The [branch validation-only run](https://github.com/f-tuma/vardum/actions/runs/38126166933)
+and the final matching-tag run produced separate tested archive batches. The
+branch run could not publish. The final tag run's publisher downloaded its own
+successful validation job's exact archives and published shared → CLI → MCP
+through OIDC, then verified registry bytes, independent installs and release assets.
+
+| Evidence | Recorded identity |
+| --- | --- |
+| Final tag run | [Actions tag run](https://github.com/f-tuma/vardum/actions/runs/38127269600), verified attempt **1** |
+| Tested npm artifact | **11698490002**, downloaded ZIP **58102** bytes, SHA-256 `6da766317985ecad3678a70087a695801c5ad80e2c7f18601648d5427d97abbc` |
+| Sanitized runtime evidence artifact | **11697689675**, downloaded ZIP **10594** bytes, SHA-256 `e68e4bb190ee3ea8f1066bc605b1518347f09aa6d2fff1e36119b151ae88eb20` |
+| Package/release bytes | Three npm archives and `release.json`; registry tarballs and all four GitHub release assets compared against the tested batch |
+
+The npm artifact identifies the original tested archives; its `release.json`
+records each archive's SHA-512 integrity. Sanitized runtime evidence records the
+tag run's image/check outcomes separately from publication. It does not certify
+a production server artifact or close residual runtime findings. The retained
+0.7 batch and its original publication evidence are unchanged.
 
 ## Changes
 
@@ -87,12 +113,11 @@ deletion requires delete permission.
 
 ## Release preparation and recovery
 
-After final feature CI, merge and fresh review, prepare the new versions and
-release documentation on a candidate branch. Use `release_mode=source` and
-`validation_only=true` for the branch archive/download check. It cannot publish.
-The final matching **`v0.8.0`** tag run packs and tests a **separate batch**; its
-publisher downloads exactly that same run's tested archives. Do not substitute
-the earlier branch run's archives or repack in the publisher.
+This release used the source workflow. Branch `validation_only=true` checked
+the prepared candidate archives and their download without publishing. The final
+matching **`v0.8.0`** tag run packed and tested a **separate batch**; its publisher
+downloaded exactly that same run's tested archives. Never substitute the earlier
+branch run's archives or repack in the publisher.
 
 If final publication or registry verification fails, rerun only failed jobs in
 the original tag run:
@@ -110,10 +135,7 @@ them for this source batch. See [release procedure](npm-release.md#publish).
 ## Upgrade order
 
 1. Verify migrations and the capabilities needed on the target server.
-2. Complete final candidate validation and tag publication; verify actual npm
-   archive bytes, separate public CLI/MCP installs with transitive shared 0.4.0,
-   and all four GitHub release assets against that tag run's tested batch.
-3. **Only after publication is verified**, install the exact CLI in each project:
+2. Install the published exact CLI in each project:
 
    ```sh
    npm install --save-dev --save-exact @vardum/cli@0.8.0
@@ -122,11 +144,12 @@ them for this source batch. See [release procedure](npm-release.md#publish).
    Commit package.json and its package-manager lockfile. Keep the schema 2
    `.vardum.lock`; no snapshot migration is needed. Update MCP configuration to
    exact `@vardum/mcp@0.4.0` and use the mandatory revision/ID/literal-pin contract.
-4. Review `vardum status` and folder `--dry-run --json` before applying. Run a
+3. Review `vardum status` and folder `--dry-run --json` before applying. Run a
    separate normal pull when intentionally refreshing delivered files and the
    snapshot. CI continues to use `vardum pull --frozen`.
-5. Promote the reviewed version bump and availability docs to main after real
-   publication verification; Copy setup then advertises the available CLI 0.8.0.
+4. The reviewed version bump can now be promoted and deployed. The Vard's
+   **Setup** tab derives Copy setup's exact CLI version from the manifest;
+   deploy the matching gateway source to offer the available CLI 0.8.0.
 
 Publication does not complete a new human first-use session, the Musubi pilot,
 or server/runtime/provider/backup/restore/capacity acceptance. Keep the

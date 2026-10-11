@@ -2,13 +2,19 @@
 
 ## Current status
 
-Published and independently verified **2026-10-11** (frgtn.VARD, VARD-68/75/45):
-[CLI **0.7.0**](https://www.npmjs.com/package/@vardum/cli/v/0.7.0),
-[MCP **0.3.0**](https://www.npmjs.com/package/@vardum/mcp/v/0.3.0) and
-[shared **0.3.0**](https://www.npmjs.com/package/@vardum/shared/v/0.3.0).
-The actual registry tarballs match the original tested SHA-512 values; independent
-public CLI and MCP installs resolve shared 0.3.0 transitively and pass CLI init
-dry-run, creation, repeat and conflict checks. See [client release notes](client-release-0.7.md).
+Published and independently verified **2026-10-11** (frgtn.VARD, VARD-69):
+[CLI **0.8.0**](https://www.npmjs.com/package/@vardum/cli/v/0.8.0),
+[MCP **0.4.0**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.0) and
+[shared **0.4.0**](https://www.npmjs.com/package/@vardum/shared/v/0.4.0).
+Actual registry tarballs match the final tag run's tested SHA-512 values;
+independent public CLI/MCP installs resolve shared 0.4.0 transitively, and all
+four GitHub release assets match that batch. See [client release notes and
+publication evidence](client-release-0.8.md#publication-evidence).
+
+Published CLI 0.7.0 / MCP and shared 0.3.0 remain immutable, with their
+[October 11 publication evidence](#october-11-publication-evidence) preserved below.
+Their verified public CLI/MCP installs resolved shared 0.3.0 transitively and
+passed CLI init dry-run, creation, repeat and conflict checks.
 
 This release retains **schema 2** frozen snapshots, with minimum CLI **0.6.0**.
 The September CLI 0.6.0 / MCP/shared 0.2.0 release remains the explicitly selected
@@ -27,26 +33,31 @@ with direct `npm publish` allowed and dist-tag management disabled. Their old
 verification; package 2FA settings were preserved. Actual Actions publication,
 not a browser login or validation-only run, completes VARD-45.
 
-## Next client candidate — 0.8 batch
+## October 11 client 0.8 publication evidence
 
-As of **2026-10-11**, proposed CLI **0.8.0**, MCP **0.4.0** and shared **0.4.0**
-are **not published**: all three exact registry versions returned 404. Published
-0.7/0.3/0.3 above remain the install defaults. [PR #27](https://github.com/f-tuma/vardum/pull/27)
-was squash merged as `85865e476e851bcc9a3fafb5c4ddc096e8a5a671` after two clean
-final reviews and [CI38124816726](https://github.com/f-tuma/vardum/actions/runs/38124816726) SUCCESS. The future release
-commit/tag and archive identities must be recorded after candidate preparation.
-See [candidate changes and upgrade order](client-release-0.8.md).
+[Release `v0.8.0`](https://github.com/f-tuma/vardum/releases/tag/v0.8.0) identifies
+source `a5b978432556518d895016aa398ff915a9b97224`, tree
+`a9ea341bcf5e878cc619f35a2dfdcb21bc4a7b9b`. Its final
+[tag run](https://github.com/f-tuma/vardum/actions/runs/38127269600), verified
+attempt **1**, published the original tested artifact
+**11698490002** using source mode and OIDC. Actual registry bytes,
+independent public CLI/MCP installs and all four release assets were compared
+with that run's tested batch. Archive ZIP sizes/hashes and sanitized runtime
+evidence are recorded in [the 0.8 evidence table](client-release-0.8.md#publication-evidence).
+
+The [branch validation-only run](https://github.com/f-tuma/vardum/actions/runs/38126166933)
+and final tag run are distinct artifact batches. The publisher downloaded the
+exact tested archives from its own tag run. Post-publication documentation
+commits do not change the immutable tag, source tree or archives. Do not repack
+these published versions or route them through the retained 0.7 controller.
 
 Production advertises `folderUploadResume: 1`, `folderVardImport: 1` and
 `vardEditRevision: 1` at this checkpoint. Verify the intended instance before
-client upgrades; an advertised capability does not certify a server/runtime
-artifact or complete the broader readiness gates. This batch keeps schema **2**,
-minimum CLI **0.6.0**, and the unchanged 0.6/0.2/0.2 public compatibility fixture.
-
-Prepare the new batch on a future candidate branch and use the existing **source**
-workflow. Main's CLI manifest and Copy setup stay on **0.7.0** until actual
-publication and public installation verification finish. The immutable retained
-0.7 descriptor/controller are not a route for publishing this changed source.
+upgrading clients. Publication and advertised capabilities do not certify a
+released server/runtime artifact or complete broader production acceptance.
+The client batch keeps schema **2**, minimum CLI **0.6.0**, and the unchanged
+0.6/0.2/0.2 compatibility fixture. Active onboarding now pins CLI 0.8.0 and MCP
+0.4.0; Copy setup reads the CLI manifest in the deployed gateway source.
 
 ## October 11 publication evidence
 
@@ -138,17 +149,17 @@ Source dependencies remain `workspace:^`; pinned pnpm rewrites them to `^0.3.0`
 in these archives. The minimum schema 2 consumption CLI remains **0.6.0**.
 See [release notes and upgrade order](client-release-0.7.md).
 
-### Candidate client 0.8
+### Published client 0.8
 
-| Component | Proposed version | Compatibility notes |
+| Component | Published version | Compatibility notes |
 | --- | --- | --- |
 | `@vardum/cli` | 0.8.0, Node ≥22 | Complete folder plan and all-file library report; retained schema 2, upload resume and Vard import contracts |
 | `@vardum/mcp` | 0.4.0, Node ≥22 | Same 11 tools; editable reads and update/replacement/delete use guarded editor routes with `vardEditRevision: 1` |
 | `@vardum/shared` | 0.4.0 | Guarded-editor definition/input wire types; CLI/MCP archives require `^0.4.0` |
 | Matching backend | Migrations through `0015_upload_request_checksum.sql` | Library mutations need `folderUploadResume: 1`; imports also need `folderVardImport: 1`; guarded MCP reads/writes need `vardEditRevision: 1` |
 
-These are candidate contracts, not current npm availability. Source dependencies
-stay `workspace:^`; pinned pnpm must rewrite them to `^0.4.0` in the new archives.
+Source dependencies stay `workspace:^`; pinned pnpm rewrites them to `^0.4.0`
+in these published archives.
 The existing schema 2 lock requires no migration. Guarded editor source introduces
 no database migration beyond the upload/import baseline.
 
@@ -415,11 +426,11 @@ archives. Recover a failed publisher only with `gh run rerun ORIGINAL_TAG_RUN_ID
 actual registry bytes, independent public installs and all four GitHub release
 assets before advertising the new version.
 
-For candidate CLI 0.8/MCP 0.4, verify backend migration `0015` and all applicable
-capabilities in the [candidate upgrade order](client-release-0.8.md#upgrade-order).
-The gateway derives Copy setup from the CLI manifest. Keep main's manifest and
-active onboarding on published 0.7.0 until the new batch is actually verified;
-then promote the reviewed version/documentation changes. The existing
+For published CLI 0.8/MCP 0.4, verify backend migration `0015` and all applicable
+capabilities in the [upgrade order](client-release-0.8.md#upgrade-order).
+The gateway derives Copy setup from the CLI manifest; deploy the reviewed source
+version bump to offer CLI 0.8.0. Source documentation changes after publication
+do not alter the immutable tag or packed READMEs. The existing
 [0.7 release notes](client-release-0.7.md#upgrade-order) remain historical evidence.
 
 The equivalent archive publication commands are:

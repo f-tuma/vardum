@@ -3,13 +3,12 @@
 `@vardum/cli` puts a Vard's files into a project and keeps them locked.
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.7.0
+npm install --save-dev --save-exact @vardum/cli@0.8.0
 ```
 
-Node.js 22 or newer. This installs published **0.7.0**; pin the exact version
-in CI. Candidate **0.8.0** is unavailable on npm as of 2026-10-11. It adds the
-[complete folder plan](push.md#complete-plan-cli-080-candidate); confirm
-[release status](../npm-release.md) before upgrading.
+Node.js 22 or newer. This installs published **0.8.0**; pin the exact version
+in CI. It includes the [complete folder plan](push.md#complete-plan-cli-080).
+See [release status](../npm-release.md) for compatibility and evidence.
 
 ## Commands
 
@@ -37,7 +36,7 @@ in CI. Candidate **0.8.0** is unavailable on npm as of 2026-10-11. It adds the
 | `--force` | pull, push | Overwrite local edits / conflicts |
 | `--delete` | pull, push-folder | Remove files an earlier run created |
 | `--frozen` | pull, status | Use the lock, not the live Vard |
-| `--output <path>` | push-folder | Also map files into the Vard (0.7.0) |
+| `--output <path>` | push-folder | Also map files into the Vard (since 0.7.0) |
 
 ## Files
 
@@ -46,7 +45,7 @@ in CI. Candidate **0.8.0** is unavailable on npm as of 2026-10-11. It adds the
 | `vardum.json` | Server, workspace, Vard |
 | `.vardum.lock` | Versions, URLs, SHA-256 per file |
 | `.vardum.push.lock` | What `push-folder` uploaded; `--delete` relies on it |
-| `.vardum.push.pending.json` | Resume journal (0.7.0) |
+| `.vardum.push.pending.json` | Resume journal (since 0.7.0) |
 
 - Commit `vardum.json` and `.vardum.lock`.
 - Keep the resume journal out of git.
@@ -64,7 +63,7 @@ in CI. Candidate **0.8.0** is unavailable on npm as of 2026-10-11. It adds the
 ```
 
 - A failure still lists what already happened, each action with `applied`.
-- Candidate CLI 0.8.0 adds every library-only folder source to `library`, with
+- CLI 0.8.0 adds every library-only folder source to `library`, with
   `new`/`update`/`skip`, its exact key and known IDs. A skipped library-only row
   keeps `applied: false`, creates no mutation action and adds no change. Pending
   uploads retain journal IDs and original classification with `resumed: true`.

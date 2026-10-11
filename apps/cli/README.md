@@ -8,22 +8,21 @@ This README describes **CLI 0.8.0**, which retains schema **2** frozen snapshots
 and adds a complete folder-upload plan. Check the
 [0.8 release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.8.md)
 and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md)
-to confirm npm availability before installing this version.
+for publication evidence and the matching server contracts.
 
 ## First project
 
 For a runnable three-file example, follow [First project](../../examples/first-project/README.md).
 
-Use Node.js 22 or newer. **The installation below targets CLI 0.8.0**; use it
-when the release-status page confirms that exact package is available. For the
-currently published setup, follow [Quick start](../../docs/guide/quick-start.md).
+Use Node.js 22 or newer. The installation below pins published **CLI 0.8.0**.
+For a shorter setup, follow [Quick start](../../docs/guide/quick-start.md).
 Folder upload and import require the matching server contracts in the release
 notes. The first-project example remains an explicit CLI 0.6.0 compatibility fixture.
 Published CLI 0.5.0 has a broken workspace dependency and does not support frozen
 snapshots.
 
 1. In the web app, upload an image, create a Vard and add an output such as
-   `public/logo.svg`. Keep its CLI config tab open for the server URL, workspace
+   `public/logo.svg`. Keep its Setup tab open for the server URL, workspace
    ID and Vard ID. **Copy setup** combines the following steps into one command
    with all three values filled in (bash/zsh).
 2. In your project root, install an exact CLI version, initialize the project
@@ -36,7 +35,7 @@ snapshots.
    npx vardum pull
    ```
 
-   `init` asks for the three values from the CLI config tab and creates
+   `init` asks for the three values from the Setup tab and creates
    `vardum.json`. Copying that JSON into the project manually also works.
 
 3. Review the downloaded files. Commit `vardum.json`, `.vardum.lock`,

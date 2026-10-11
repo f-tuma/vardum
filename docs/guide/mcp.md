@@ -19,7 +19,7 @@ agent ── stdio ──> @vardum/mcp
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.3.0
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.0
 ```
 
 Claude Desktop, Cursor and other JSON configs:
@@ -29,7 +29,7 @@ Claude Desktop, Cursor and other JSON configs:
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.3.0"],
+      "args": ["-y", "@vardum/mcp@0.4.0"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
@@ -37,8 +37,8 @@ Claude Desktop, Cursor and other JSON configs:
 ```
 
 The client starts the server; there is nothing to run by hand. These examples
-use published **0.3.0**, whose Vard edits use the legacy contract without
-revision guards.
+pin published **MCP 0.4.0**. Editable Vard reads and mutations require a server
+advertising `vardEditRevision: 1`; see [release compatibility](../npm-release.md).
 
 ## Configuration
 
@@ -68,26 +68,19 @@ revision guards.
 
 | To | Call |
 | --- | --- |
-| Read config | `get_vard`: manual `items` + `folderRules` |
+| Read config | `get_vard`: `revision`, manual `items` + `folderRules` |
 | Preview the result | `get_vard` with `resolved: true` |
-| Change rules or name | `update_vard`: only the fields you send |
-| Replace manual mappings | `replace_vard_items`: rules stay |
+| Change rules or name | `update_vard`: original `expectedRevision` + the fields you send |
+| Replace manual mappings | `replace_vard_items`: original `expectedRevision` + manual list; rules stay |
 
 - Never copy resolved folder outputs into `replace_vard_items`.
-- Published MCP 0.3.0 uses legacy mutations. Follow the guarded contract below
-  when using candidate MCP 0.4.0; its replacement items require `id` and an
-  explicit nullable `versionId`.
+- Replacement items require `id` and an explicit nullable `versionId`; follow
+  the guarded editing contract below.
 
-## Guarded editing (MCP 0.4.0 candidate)
+## Guarded editing
 
-MCP **0.4.0** is unavailable on npm as of **2026-10-11**. It belongs to the
-[0.8 client candidate batch](../client-release-0.8.md); check
-[release status](../npm-release.md) before installing it. **This command targets
-that candidate version** once publication is verified:
-
-```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.0
-```
+Published MCP **0.4.0** uses the [0.8 client release](../client-release-0.8.md)
+editor contract.
 
 MCP 0.4.0 requires `vardEditRevision: 1` for editable Vard reads and mutations.
 It uses dedicated `/editor` routes and refuses unsupported servers or missing

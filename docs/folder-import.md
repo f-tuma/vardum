@@ -1,10 +1,9 @@
 # Import a folder into a Vard
 
-Folder import is available in published **CLI 0.7.0** and is absent from CLI
-0.6.0. Candidate **CLI 0.8.0** retains it and adds the complete folder plan below;
-0.8.0 is unavailable on npm as of **2026-10-11**. Verify availability and the
-target backend before upgrading; see [0.8 candidate notes](client-release-0.8.md),
-[published 0.7 upgrade order](client-release-0.7.md) and
+Use published **CLI 0.8.0** for folder import and the complete folder plan
+below. Import was introduced in CLI 0.7.0 and is absent from CLI 0.6.0.
+Verify the target backend before upgrading; see
+[release notes and upgrade order](client-release-0.8.md) and
 [npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server
@@ -44,7 +43,7 @@ file/directory overlaps and more than 1,000 outputs are rejected. An already
 invalid Vard needs repair in the editor first. This preview is not a reservation:
 concurrent edits can still make final application fail.
 
-## Complete folder plan (CLI 0.8.0 candidate)
+## Complete folder plan (CLI 0.8.0)
 
 The terminal plan summarizes **New**, **Update** and **Skip** totals and previews the first 15 source files. Use `--dry-run --json` for the complete per-file plan.
 Library-only JSON adds an all-file `library` report alongside mutation `actions`.
@@ -135,10 +134,10 @@ advertising `vardEditRevision: 1` offer dedicated [guarded editor routes](vard-e
 An import invalidates a previously read editor definition when it adds manual
 mappings, so a stale guarded save fails with 409 and keeps the imported mappings.
 Legacy clients and routes remain unguarded; published MCP 0.3.0 still uses them.
-Candidate MCP 0.4.0 uses the guarded routes and refuses legacy fallback. Read
+MCP 0.4.0 uses the guarded routes and refuses legacy fallback. Read
 `get_vard` first and pass its original revision as `expectedRevision` for update,
 replacement or deletion. Replacement items retain their existing manual `id`
 (or `null` for a new mapping) and explicitly copy literal `pinnedVersionId` to
 nullable `versionId`. A structured `vard_revision_conflict` / 409 requires a
 fresh read, review and reapplication of the intended edit. See the
-[MCP guide](guide/mcp.md#guarded-editing-mcp-040-candidate).
+[MCP guide](guide/mcp.md#guarded-editing).
