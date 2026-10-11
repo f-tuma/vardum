@@ -7,7 +7,7 @@ import { inflateRawSync } from "node:zlib";
 import { parseValidationOnly } from "./release-policy.mjs";
 import { githubClient } from "./github-release-api.mjs";
 import { expectedContract, retainedRelease, selectRetainedRelease } from "./retained-release-contract.mjs";
-import { publishRelease, run, validateRelease, waitForPublishedRelease, withInstalledRelease } from "./release-packages.mjs";
+import { publishRelease, run, validateRelease, verifyPublishedRelease, withInstalledRelease } from "./release-packages.mjs";
 import { ensureGitHubRelease, ensureTag, preflightGitHubRelease } from "./github-release.mjs";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -307,8 +307,7 @@ async function main() {
     return publishRelease(directory, release);
   }
   if (command === "verify-registry") {
-    await waitForPublishedRelease(release);
-    return withInstalledRelease(directory, async () => {}, { expectedContract: contract, publicRegistry: true });
+    return verifyPublishedRelease(directory, async () => {}, { expectedContract: contract });
   }
   return ensureGitHubRelease(client, candidate.repository, tag, candidate.commit, directory, release);
 }

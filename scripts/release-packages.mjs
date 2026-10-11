@@ -188,19 +188,124 @@ async function packRelease(directory) {
   console.log(`Validated release archives: ${directory}`);
 }
 
+const installOutputLimit = 128_000;
+const waitForInstall = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function installRetryOptions(options) {
+  assert.ok(options && typeof options === "object" && !Array.isArray(options), "Install retry options must be an object");
+  assert.ok(Object.keys(options).every(key => ["attempts", "delayMs", "budgetMs"].includes(key)), "Unknown install retry option");
+  const { attempts = 6, delayMs = 10_000, budgetMs = 180_000 } = options;
+  assert.ok(Number.isSafeInteger(attempts) && attempts > 0, "Install attempts must be a positive integer");
+  assert.ok(Number.isSafeInteger(delayMs) && delayMs >= 0, "Install delay must be a nonnegative integer");
+  assert.ok(Number.isSafeInteger(budgetMs) && budgetMs > 0, "Install budget must be a positive integer");
+  return { attempts, delayMs, budgetMs };
+}
+
+// Accept only npm's structured, single-target ETARGET from a normally exited
+// install. stderr and the process error message are never used for classification.
+function structuredInstallError(error) {
+  if (typeof error?.stdout !== "string" || error.stdout.length > installOutputLimit) return undefined;
+  let output;
+  try { output = JSON.parse(error.stdout); } catch { return undefined; }
+  if (!output || Array.isArray(output) || Object.keys(output).join() !== "error") return undefined;
+  const target = output.error;
+  if (!target || Array.isArray(target) || typeof target !== "object" || typeof target.code !== "string" ||
+      typeof target.summary !== "string" || (target.detail !== undefined && typeof target.detail !== "string") ||
+      Object.keys(target).some(key => !["code", "summary", "detail"].includes(key))) return undefined;
+  // JSON.parse silently accepts duplicate keys. Refuse that ambiguous form,
+  // including escaped spellings of keys, before trusting the npm error object.
+  const tokens = [...error.stdout.matchAll(/"(?:\\.|[^"\\])*"|[:,{}[\]]/g)].map(match => match[0]);
+  const keys = tokens.filter((token, index) => tokens[index + 1] === ":").map(token => JSON.parse(token));
+  if (new Set(keys).size !== keys.length) return undefined;
+  return target;
+}
+
+function retryableInstallSpec(error, pkg, release) {
+  if (!Number.isInteger(error?.code) || error.code <= 0 || error.killed !== false || error.signal !== null) return undefined;
+  const target = structuredInstallError(error);
+  if (!target || target.code !== "ETARGET") return undefined;
+  const missing = /^No matching version found for ([^\s]+)\.$/.exec(target.summary)?.[1];
+  if (!missing || target.summary !== `No matching version found for ${missing}.`) return undefined;
+  const allowed = new Set([`${pkg.name}@${pkg.version}`]);
+  for (const [name, spec] of Object.entries(pkg.manifest.dependencies ?? {})) {
+    const dependency = release.packages.find(entry => entry.name === name);
+    if (dependency && spec === `^${dependency.version}`) allowed.add(`${name}@${spec}`);
+  }
+  return allowed.has(missing) ? missing : undefined;
+}
+
+export function isRetryableInstallTarget(error, pkg, release) {
+  return Boolean(retryableInstallSpec(error, pkg, release));
+}
+
+const boundedDiagnostic = (value, limit) => String(value ?? "unknown").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, limit);
+function installFailure(pkg, attempt, retry, remaining, reason, cause, missing) {
+  const npmError = structuredInstallError(cause);
+  const processStatus = cause ? `process code=${boundedDiagnostic(cause.code, 32)}, killed=${cause.killed === true}, signal=${boundedDiagnostic(cause.signal, 32)}` : "no npm process started";
+  const diagnostic = npmError ? `${cause.killed === true || cause.signal ? `${processStatus}; ` : ""}` +
+    `npm ${boundedDiagnostic(npmError.code, 32)}: ${boundedDiagnostic(npmError.summary, 240)}` : processStatus;
+  return new Error(`Public npm install ${pkg.name}@${pkg.version} failed after ${attempt}/${retry.attempts} attempt(s) ` +
+    `(common budget ${retry.budgetMs}ms, remaining ${Math.max(0, Math.floor(remaining))}ms): ${reason}` +
+    `${missing ? `; missing ${missing}` : ""}; ${diagnostic}`, { cause });
+}
+
+async function installPublicConsumer(root, kind, pkg, release, retry, deadline, { execute, now, wait }) {
+  let lastError, lastMissing;
+  const failure = (attempt, reason, error = lastError, missing = lastMissing) =>
+    installFailure(pkg, attempt, retry, deadline - now(), reason, error, missing);
+  for (let attempt = 1; attempt <= retry.attempts; attempt++) {
+    if (now() >= deadline) throw failure(attempt - 1, "install budget exhausted");
+    const attemptRoot = join(root, `${kind}-attempt-${attempt}`);
+    const cwd = join(attemptRoot, "project"), home = join(attemptRoot, "home"), cache = join(attemptRoot, "cache");
+    await mkdir(cwd, { recursive: true });
+    await mkdir(home);
+    await mkdir(cache);
+    await writeFile(join(cwd, "package.json"), '{"private":true,"type":"module"}\n');
+    const config = join(attemptRoot, "user.npmrc"), globalConfig = join(attemptRoot, "global.npmrc");
+    await writeFile(config, "registry=https://registry.npmjs.org/\n@vardum:registry=https://registry.npmjs.org/\n");
+    await writeFile(globalConfig, "");
+    const env = { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home };
+    const remaining = Math.floor(deadline - now());
+    if (remaining <= 0) {
+      await rm(attemptRoot, { recursive: true, force: true });
+      throw failure(attempt - 1, "install budget exhausted");
+    }
+    try {
+      await execute("npm", ["install", "--json", "--userconfig", config, "--globalconfig", globalConfig,
+        "--cache", cache, "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock", `${pkg.name}@${pkg.version}`],
+      { cwd, env, timeout: Math.min(120_000, remaining), maxBuffer: installOutputLimit });
+      return { cwd, env };
+    } catch (error) {
+      lastError = error;
+      await rm(attemptRoot, { recursive: true, force: true });
+      lastMissing = retryableInstallSpec(error, pkg, release);
+      if (!lastMissing) throw failure(attempt, "non-retryable npm failure", error);
+      if (attempt === retry.attempts) throw failure(attempt, "ETARGET propagation did not settle", error);
+      // Do not begin a sleep or a new attempt at/past the common CLI/MCP deadline.
+      const remainingDelay = deadline - now();
+      if (remainingDelay <= retry.delayMs) throw failure(attempt, "install budget exhausted", error);
+      console.log(`Waiting for npm install propagation: ${pkg.name}@${pkg.version} (${attempt}/${retry.attempts})`);
+      await wait(retry.delayMs);
+    }
+  }
+}
+
 // Test real npm resolution: CLI and MCP install separately by name. Explicitly
 // installing the shared tarball alongside them could hide broken dependencies.
 // Only third-party packages go to npmjs; this helper never publishes anything.
 export async function withInstalledRelease(
   directory,
   action,
-  { publicRegistry = false, expectedContract } = {},
+  { publicRegistry = false, expectedContract, installRetry, execute = run,
+    now = () => performance.now(), wait = waitForInstall } = {},
 ) {
   // Server candidates reuse already-published client versions. They do not
   // repack npm artifacts (README-only changes can change archive integrity).
   const release = publicRegistry && !directory
     ? publicCompatibilityRelease()
     : await validateRelease(directory, expectedContract);
+  const retry = installRetry === undefined ? undefined : installRetryOptions(installRetry);
+  assert.ok(!retry || (publicRegistry && directory), "Install retry requires a validated public release directory");
   const root = await mkdtemp(join(tmpdir(), "vardum-consumer-"));
   const archives = new Map(
     await Promise.all(
@@ -243,38 +348,26 @@ export async function withInstalledRelease(
     });
     const env = { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: root };
     const installed = { root, publicRegistry };
+    const consumerEnvironments = {};
+    const deadline = retry ? now() + retry.budgetMs : undefined;
     for (const kind of ["cli", "mcp"]) {
       const pkg = release.packages.find(
         (entry) => entry.name === `@vardum/${kind}`,
       );
-      const cwd = join(root, kind);
-      await mkdir(cwd);
-      await writeFile(
-        join(cwd, "package.json"),
-        '{"private":true,"type":"module"}\n',
-      );
-      const config = join(cwd, ".npmrc");
-      const scopedRegistry = publicRegistry
-        ? "https://registry.npmjs.org/"
-        : `http://127.0.0.1:${registry.address().port}/`;
-      await writeFile(
-        config,
-        `registry=https://registry.npmjs.org/\n@vardum:registry=${scopedRegistry}\n`,
-      );
-      await run(
-        "npm",
-        [
-          "install",
-          "--userconfig",
-          config,
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-          "--no-package-lock",
-          `${pkg.name}@${pkg.version}`,
-        ],
-        { cwd, env, timeout: 120_000 },
-      );
+      let cwd = join(root, kind), consumerEnv = env;
+      if (retry) {
+        ({ cwd, env: consumerEnv } = await installPublicConsumer(root, kind, pkg, release, retry, deadline, { execute, now, wait }));
+      } else {
+        await mkdir(cwd);
+        await writeFile(join(cwd, "package.json"), '{"private":true,"type":"module"}\n');
+        const config = join(cwd, ".npmrc");
+        const scopedRegistry = publicRegistry ? "https://registry.npmjs.org/"
+          : `http://127.0.0.1:${registry.address().port}/`;
+        await writeFile(config, `registry=https://registry.npmjs.org/\n@vardum:registry=${scopedRegistry}\n`);
+        await execute("npm", ["install", "--userconfig", config, "--ignore-scripts", "--no-audit", "--no-fund",
+          "--no-package-lock", `${pkg.name}@${pkg.version}`], { cwd, env, timeout: 120_000 });
+      }
+      consumerEnvironments[kind] = consumerEnv;
       const installedManifest = await json(join(cwd, "node_modules", pkg.name, "package.json"));
       assert.equal(installedManifest.version, pkg.version);
       const shared = release.packages.find((entry) => entry.name === "@vardum/shared");
@@ -285,18 +378,18 @@ export async function withInstalledRelease(
         kind === "cli" ? "vardum" : "vardum-mcp",
       );
       await access(binary, constants.X_OK);
-      const result = await run(
+      const result = await execute(
         process.execPath,
         [binary, kind === "cli" ? "version" : "--version"],
-        { cwd, env },
+        { cwd, env: consumerEnv },
       );
       assert.equal(result.stdout.trim(), pkg.version);
       installed[kind] = { cwd, binary, version: pkg.version };
     }
     const init = (...args) =>
-      run(process.execPath, [installed.cli.binary, "init", ...args, "--json"], {
+      execute(process.execPath, [installed.cli.binary, "init", ...args, "--json"], {
         cwd: installed.cli.cwd,
-        env,
+        env: consumerEnvironments.cli,
         timeout: 15_000,
       });
     const initValues = [
@@ -398,6 +491,15 @@ export async function waitForPublishedRelease(
   throw new Error("Not all release archives are available on npm yet");
 }
 
+// Both source and retained publication verify exact registry bytes before public
+// installs. Compatibility smoke calls withInstalledRelease directly and stays single-attempt.
+export async function verifyPublishedRelease(directory, action, { expectedContract, registryOptions, consumerOptions = {} } = {}) {
+  const retry = installRetryOptions(consumerOptions.installRetry === undefined ? {} : consumerOptions.installRetry);
+  const release = await validateRelease(directory, expectedContract);
+  await waitForPublishedRelease(release, registryOptions);
+  return withInstalledRelease(directory, action, { ...consumerOptions, expectedContract, publicRegistry: true, installRetry: retry });
+}
+
 // Preflight every package before the first write, including interrupted retries.
 export async function publishRelease(directory, release, {
   validationOnly = false, readState = registryState,
@@ -438,10 +540,7 @@ async function main() {
   // Preflight the whole batch. Identical archives permit retrying an interrupted
   // release; a published version with different bytes is never silently skipped.
   if (command === "verify-registry") {
-    await waitForPublishedRelease(release);
-    return withInstalledRelease(directory, async () => {}, {
-      publicRegistry: true,
-    });
+    return verifyPublishedRelease(directory, async () => {});
   }
   return publishRelease(directory, release, { validationOnly: command === "preflight" });
 }

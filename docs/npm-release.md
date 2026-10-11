@@ -141,6 +141,20 @@ archives; already-published matching versions were skipped. Future verification
 waits up to 18 checks, 10 seconds apart, for missing versions. Registry errors
 and conflicting integrity values fail immediately.
 
+Current-source and retained `verify-registry` also bound the subsequent read-only
+public installation check: at most six attempts per independent CLI/MCP consumer,
+10 seconds between attempts, and one 180-second monotonic install budget shared
+by both consumers. Each npm process gets at most 120 seconds, clipped to the
+remaining budget; each attempt uses a fresh project, HOME, user/global config and
+cache, with no inherited npm credentials. Only a normally exited `npm install
+--json` failure whose structured code is exactly `ETARGET` and whose single
+missing spec matches that consumer's exact release pin or actual validated
+same-batch dependency range is retried. Registry integrity/byte conflicts,
+transport/auth errors, timeouts, ambiguous errors, and installed version, binary
+or init failures stop immediately. Local fixture and public compatibility smoke
+installs retain their single attempt. This never republishes, repacks or changes
+release archives, versions, tags or historical run evidence.
+
 Older CLI 0.5.0 / MCP 0.1.0 have unsupported `workspace:^` dependencies and remain
 immutable. Install the published compatible versions below.
 
