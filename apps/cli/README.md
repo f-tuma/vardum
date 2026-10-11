@@ -12,10 +12,10 @@ and [release status and compatibility](https://github.com/f-tuma/vardum/blob/mai
 
 For a runnable three-file example, follow [First project](../../examples/first-project/README.md).
 
-Use Node.js 22 or newer. The installation below pins **0.7.0**; verify its
-availability in your registry before installing, or build from source as described
-below. Folder upload and import require the matching server contracts in the
-release notes.
+Use Node.js 22 or newer. The installation below pins published **0.7.0**.
+Folder upload and import require the matching server contracts in the release
+notes. The first-project example remains an explicit CLI 0.6.0 compatibility
+fixture; [Quick start](../../docs/guide/quick-start.md) uses the current release.
 Published CLI 0.5.0 has a broken workspace dependency and does not support frozen
 snapshots.
 
@@ -254,8 +254,9 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 **Minimum compatible CLI: 0.6.0**, with the matching server from the
 [compatibility table](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md#compatibility).
 Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. CLI 0.6.0 is published; a source
-version bump or passing candidate checks does not publish its successor.
+cannot safely maintain schema 2 snapshots. Published CLI 0.7.0 consumes the
+existing schema 2 snapshots without migration. Keep the exact tested CLI pinned;
+a source version bump or passing tests do not publish future versions.
 
 1. Run **`vardum pull`** to intentionally resolve the current Vard and refresh
    its files and snapshot. Use `--delete` explicitly if obsolete tracked outputs

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { runtimeCharsetProbeSource } from "./runtime-charset-evidence.mjs";
 
 const scanner = "aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa";
 const [project, destination] = process.argv.slice(2);
@@ -47,6 +48,7 @@ try {
   assert.equal(recorded.images.api.id, recorded.images.worker.id, "API and worker must use the same runtime image");
   run(process.execPath, ["scripts/smoke-gateway-config.mjs", recorded.images.gateway.id, recorded.images.api.id, join(output, "gateway-config")]);
   const runtimeProbe = String.raw`
+    ${runtimeCharsetProbeSource}
     import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
     import { createHash } from "node:crypto";
     import { createSecureContext, rootCertificates } from "node:tls";
@@ -86,7 +88,7 @@ try {
       for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) visiblePixels++;
       svgText = { ...info, visiblePixels, sha256: fingerprint(data) };
     } catch (error) { svgText = { error: error.message }; }
-    console.log(JSON.stringify({ versions: process.versions, sharp: sharp.versions, uid: process.getuid(), process: privileges("/proc/self/status"), initProcess: privileges("/proc/1/status"), inheritedTools: Object.fromEntries(tools.map(path => [path, existsSync(path)])), productionStorePresent, developmentPackages, trust: { systemCABundleBytes: ca.length, systemCACertificates: (ca.toString().match(/-----BEGIN CERTIFICATE-----/g) ?? []).length, systemCABundleSha256: fingerprint(ca), nodeBundledCACertificates: rootCertificates.length }, timezone: { utc: timezone("UTC"), prague: timezone("Europe/Prague"), filesPresent: ["/usr/share/zoneinfo/UTC", "/usr/share/zoneinfo/Europe/Prague"].every(existsSync) }, fontInventory, svgText, resolver: { searchCount: search.length, longestSearchDomain: Math.max(0, ...search.map(s => s.length)), localDomainSet: process.env.LOCALDOMAIN !== undefined, longestLocalDomain: Math.max(0, ...localDomain.map(s => s.length)) } }));
+    console.log(JSON.stringify({ charset: observeRuntimeCharsetEvidence(), versions: process.versions, sharp: sharp.versions, uid: process.getuid(), process: privileges("/proc/self/status"), initProcess: privileges("/proc/1/status"), inheritedTools: Object.fromEntries(tools.map(path => [path, existsSync(path)])), productionStorePresent, developmentPackages, trust: { systemCABundleBytes: ca.length, systemCACertificates: (ca.toString().match(/-----BEGIN CERTIFICATE-----/g) ?? []).length, systemCABundleSha256: fingerprint(ca), nodeBundledCACertificates: rootCertificates.length }, timezone: { utc: timezone("UTC"), prague: timezone("Europe/Prague"), filesPresent: ["/usr/share/zoneinfo/UTC", "/usr/share/zoneinfo/Europe/Prague"].every(existsSync) }, fontInventory, svgText, resolver: { searchCount: search.length, longestSearchDomain: Math.max(0, ...search.map(s => s.length)), localDomainSet: process.env.LOCALDOMAIN !== undefined, longestLocalDomain: Math.max(0, ...localDomain.map(s => s.length)) } }));
   `;
   for (const service of ["api", "worker"]) {
     const runtime = JSON.parse(docker("exec", containers[service], "node", "--input-type=module", "-e", runtimeProbe));

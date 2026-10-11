@@ -1,11 +1,13 @@
-# Client 0.7 release candidate
+# Client 0.7 release
 
-Prepared **2026-10-10** for **VARD-68**. This candidate contains CLI **0.7.0**,
-shared **0.3.0** and MCP **0.3.0**. Public npm lookups for all three versions
-returned HTTP 404 on that date. They are not published; a final archive preflight
-must still check availability before publication. The last verified public
-baseline remains CLI **0.6.0**, shared **0.2.0** and MCP **0.2.0**; see
-[release evidence and procedure](npm-release.md).
+Published and independently verified **2026-10-11** for **VARD-68**: CLI **0.7.0**,
+shared **0.3.0** and MCP **0.3.0**. [Release `v0.7.0`](https://github.com/f-tuma/vardum/releases/tag/v0.7.0)
+uses original source `20495967d0d256b12247720f8bbedbce568b54e1` and archives from
+origin run **38065972599 attempt 1**, artifact **11674484014**. The separate main
+controller `89371efa56a79091c5e5ed5609edd72252860731` published those exact bytes
+through [Actions 38119764030, attempt 2](https://github.com/f-tuma/vardum/actions/runs/38119764030).
+Actual registry tarballs, public CLI/MCP installs with transitive shared resolution,
+and all four GitHub release assets were verified. See [publication evidence](npm-release.md#october-11-publication-evidence).
 
 Frozen asset consumption continues to use **schema 2**, with minimum compatible
 CLI **0.6.0**. Schema 3 from VARD-14's
@@ -53,22 +55,28 @@ The client refuses unsupported operations on older servers. Passing source tests
 merging a PR or publishing client packages does not establish backend deployment
 or complete the broader [server/runtime acceptance](production-readiness-2026-09-20.md#current-status).
 
-## Rollout order
+## Upgrade order
 
-1. Deploy and verify the matching backend with migration 0015 while its CLI
-   manifest still pins **0.6.0**. Confirm both capabilities on the target server.
-2. Validate the release commit with the pinned Node/pnpm versions and the release
-   workflow. Pack once, test the archives, retain their `release.json` hashes and
-   run the final public-registry preflight. Confirm package-side trusted publishing
-   for the current repository before publication.
-3. Publish the tested archives under tag **`v0.7.0`**, in shared → CLI → MCP order.
-   Verify their public registry integrity and independent CLI/MCP installations.
-4. Deploy the version bump and upgrade project clients only after that verification.
-   If merging the release PR can automatically deploy the gateway, publish from
-   the tested tag before merging it. The gateway reads `apps/cli/package.json` to
-   generate Copy setup; an early version-bump deployment would advertise an
-   unavailable `@vardum/cli@0.7.0` install.
+1. Apply backend migrations through **0015** and verify both capabilities on the
+   target server. Existing CLI 0.6 projects can continue their schema 2 pull flow.
+2. In the project root, install the published exact version:
 
-Update availability guidance with the published tag, commit and workflow evidence
-after verification. Until then, the first-project example and onboarding smoke
-continue to pin the verified public baseline.
+   ```sh
+   npm install --save-dev --save-exact @vardum/cli@0.7.0
+   ```
+
+   Commit package.json and the package-manager lockfile. Do not delete the existing
+   `.vardum.lock`; CLI 0.7 consumes schema 2 without a snapshot migration.
+3. Check `vardum status` and review folder import with `--dry-run --json` before
+   applying it. Upload/import updates the library and optional mappings; a separate
+   normal `vardum pull` refreshes project files and the snapshot. CI keeps using
+   `vardum pull --frozen` for the committed snapshot.
+4. Deploy the reviewed source version bump after its CI passes. Copy setup reads
+   the CLI manifest and can now advertise the available 0.7.0 package.
+
+The first-project example and server-candidate smoke intentionally retain their
+CLI 0.6.0 public compatibility fixture and lockfile. New projects can follow the
+[quick start](guide/quick-start.md) with 0.7.0. Changes to source README files after
+publication do not change the immutable published tarballs; retries must use the
+[retained archive procedure](npm-release.md#publish-the-retained-candidate-through-actions).
+Do not repack these versions or move the source tag.

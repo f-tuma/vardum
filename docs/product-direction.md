@@ -137,10 +137,12 @@ implementation accepts images and videos. Choose the first additional formats
 from real workflows rather than promising previews or transformations for every
 file.
 
-Implementation status reviewed 2026-10-03 (frgtn.VARD/VARD-20): published CLI
-0.6.0, MCP 0.2.0 and shared 0.2.0 provide the schema 2 client baseline. Schema 3
-and the next client versions are unmerged, unpublished VARD-14 work; the provisional
-VARD-6 server candidate and runtime/security acceptance remain open. See
+Client status reviewed 2026-10-11 (frgtn.VARD/VARD-68): published CLI 0.7.0,
+MCP 0.3.0 and shared 0.3.0 retain schema 2 and add resumable folder uploads and
+optional Vard imports. Schema 3 remains separate unmerged, unpublished VARD-14
+work; guarded editor/folder planning changes and a subsequent client release are
+separate tasks. The provisional VARD-6 server candidate and runtime/security
+acceptance remain open. See
 [current readiness status](production-readiness-2026-09-20.md#current-status) and
 [release compatibility](npm-release.md#compatibility).
 

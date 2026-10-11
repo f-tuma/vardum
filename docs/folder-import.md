@@ -1,8 +1,8 @@
 # Import a folder into a Vard
 
-This feature is part of the **CLI 0.7.0 release candidate** and is not included
-in the published CLI 0.6.0. Candidate publication is not yet verified; see
-[release notes and rollout order](client-release-0.7.md) and
+This feature is available in published **CLI 0.7.0** and is absent from CLI 0.6.0.
+Verify the matching backend capabilities before using it; see
+[release notes and upgrade order](client-release-0.7.md) and
 [npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server

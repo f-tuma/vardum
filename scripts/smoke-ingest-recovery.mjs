@@ -1,3 +1,4 @@
+import { candidateComposeArgs } from "./server-candidate.mjs";
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -21,13 +22,15 @@ export async function checkRustfsRecovery({
       "docker",
       [
         "compose",
+        "--env-file",
+        "/dev/null",
         "-p",
         project,
         "--profile",
         "rustfs",
         "-f",
-        "compose.production.yml",
-        ...args,
+        process.env.SMOKE_COMPOSE_FILE ?? "compose.production.yml",
+        ...candidateComposeArgs(args),
       ],
       { timeout: 120_000, maxBuffer: 1024 * 1024 },
     );

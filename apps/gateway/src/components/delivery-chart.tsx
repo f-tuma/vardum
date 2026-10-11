@@ -39,6 +39,9 @@ function formatValue(value: number, metric: Metric) {
   return metric === "bytes" ? formatBytes(value) : compact.format(value);
 }
 
+/** Bars are stacks of 8px cells (6px block, 2px gap): h-48 holds 24, h-28 holds 14. */
+const CELLS = { default: 24, sm: 14 } as const;
+
 function cacheRatio(day: Pick<Day, "cacheHits" | "cacheMisses">) {
   const total = day.cacheHits + day.cacheMisses;
   return total ? `${Math.round((day.cacheHits / total) * 100)}%` : null;
@@ -68,6 +71,7 @@ export function DeliveryChart({
     cacheMisses: days.reduce((sum, day) => sum + day.cacheMisses, 0),
   });
   const labelled = new Set([0, 7, 14, 21, days.length - 1]);
+  const cells = CELLS[size];
 
   function moveFocus(event: KeyboardEvent, index: number) {
     const next =
@@ -90,7 +94,7 @@ export function DeliveryChart({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <span className="text-2xl font-semibold tabular-nums">
+          <span className="font-mono text-2xl font-medium tabular-nums">
             {metric === "bytes"
               ? formatBytes(summary.bytes30d)
               : summary.requests30d.toLocaleString()}
@@ -120,7 +124,7 @@ export function DeliveryChart({
       <div className="flex gap-2">
         <div
           aria-hidden="true"
-          className="flex w-14 shrink-0 flex-col justify-between text-right text-xs text-muted-foreground tabular-nums"
+          className="flex w-14 shrink-0 flex-col justify-between text-right font-mono text-xs text-muted-foreground tabular-nums"
         >
           <span>{formatValue(maximum, metric)}</span>
           <span>{formatValue(maximum / 2, metric)}</span>
@@ -131,8 +135,8 @@ export function DeliveryChart({
             data-size={size}
             className="group/chart relative data-[size=default]:h-48 data-[size=sm]:h-28"
           >
-            <div aria-hidden="true" className="absolute inset-x-0 top-0 border-t border-dashed" />
-            <div aria-hidden="true" className="absolute inset-x-0 top-1/2 border-t border-dashed" />
+            <div aria-hidden="true" className="absolute inset-x-0 top-0 border-t border-dotted" />
+            <div aria-hidden="true" className="absolute inset-x-0 top-1/2 border-t border-dotted" />
             <div aria-hidden="true" className="absolute inset-x-0 bottom-0 border-t" />
             {empty && (
               <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
@@ -148,8 +152,10 @@ export function DeliveryChart({
                 const total = value(day);
                 const transformedShare =
                   metric === "requests" && day.requests ? day.transformed / day.requests : 0;
-                const height = total ? Math.max(1.5, (total / maximum) * 100) : 0;
-                const transformedHeight = height * transformedShare;
+                // Whole cells only, and at least one for any non-zero day.
+                const filled = total ? Math.max(1, Math.ceil((total / maximum) * cells)) : 0;
+                const height = (filled / cells) * 100;
+                const transformedHeight = (Math.round(filled * transformedShare) / cells) * 100;
                 return (
                   <Tooltip key={day.date}>
                     <TooltipTrigger
@@ -161,7 +167,7 @@ export function DeliveryChart({
                           type="button"
                           tabIndex={index === focusIndex ? 0 : -1}
                           aria-label={`${longDate.format(utcDate(day))}: ${day.requests.toLocaleString()} responses, ${formatBytes(day.bytes)}`}
-                          className="group/bar flex-1 rounded-sm px-px outline-none hover:bg-muted/60 focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                          className="group/bar flex-1 rounded-xs px-px outline-none hover:bg-muted/60 focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                           onFocus={() => setFocusIndex(index)}
                           onKeyDown={(event) => moveFocus(event, index)}
                         />
@@ -171,7 +177,7 @@ export function DeliveryChart({
                         viewBox="0 0 10 100"
                         preserveAspectRatio="none"
                         aria-hidden="true"
-                        className="size-full transition-opacity group-hover/chart:opacity-40 group-hover/bar:opacity-100 group-focus-visible/bar:opacity-100"
+                        className="size-full mask-cells transition-opacity group-hover/chart:opacity-40 group-hover/bar:opacity-100 group-focus-visible/bar:opacity-100"
                       >
                         <rect
                           x={1}
@@ -199,7 +205,7 @@ export function DeliveryChart({
               })}
             </fieldset>
           </div>
-          <div aria-hidden="true" className="flex text-xs text-muted-foreground">
+          <div aria-hidden="true" className="flex font-mono text-xs text-muted-foreground">
             {days.map((day, index) => (
               <span key={day.date} className="flex flex-1 justify-center overflow-visible whitespace-nowrap">
                 {labelled.has(index) ? shortDate.format(utcDate(day)) : ""}
@@ -212,11 +218,11 @@ export function DeliveryChart({
       {metric === "requests" && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm bg-chart-1" />
+            <span className="size-2.5 bg-chart-1" />
             Original files
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm bg-chart-2" />
+            <span className="size-2.5 bg-chart-2" />
             Transformed ({summary.transformed30d.toLocaleString()})
           </span>
           {ratio && <span>Transform cache hits {ratio}</span>}
@@ -242,8 +248,8 @@ function DayDetails({ day }: { day: Day }) {
           {rows.map(([label, value, swatch]) => (
             <div key={label} className="flex items-center justify-between gap-4">
               <dt className="flex items-center gap-1.5 opacity-70">
-                {swatch === "original" && <span className="size-2 rounded-sm bg-chart-1" />}
-                {swatch === "transformed" && <span className="size-2 rounded-sm bg-chart-2" />}
+                {swatch === "original" && <span className="size-2 bg-chart-1" />}
+                {swatch === "transformed" && <span className="size-2 bg-chart-2" />}
                 {label}
               </dt>
               <dd className="font-medium tabular-nums">{value}</dd>

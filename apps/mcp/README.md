@@ -16,8 +16,7 @@ This README describes **MCP 0.3.0**. The 11-tool surface is unchanged. Check the
 and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
 The published 0.1.0 artifact has a broken workspace dependency.
 
-The configurations below pin **0.3.0**. Verify its availability in your registry
-before installing, or build from source with
+The configurations below pin published **0.3.0**. To run from source instead, use
 `pnpm --filter "@vardum/mcp..." build` and configure the client to run
 `node /absolute/path/to/vardum/apps/mcp/dist/index.js`.
 
