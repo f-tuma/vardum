@@ -1468,6 +1468,32 @@ test("an import revalidates its confirmed authoritative plan before any journal 
   }
 });
 
+test("an import rejects filename/stem identities appearing during confirmation before any write", async (t) => {
+  for (const originalKey of [null, "images/logo", "images/logo.png"]) {
+    const f = await folderFixture(t);
+    if (originalKey) readyFolderAsset(f, originalKey);
+    const lockBefore = await readFile(f.lockPath);
+    const concurrentKey = originalKey === "images/logo.png" ? "images/logo" : "images/logo.png";
+    f.state.beforeImportPlanResponse = async () => {
+      f.state.beforeImportPlanResponse = null;
+      // An unready sibling is absent from syncAssets and from fixed-key import plans.
+      f.state.unready.push({ id: randomUUID(), key: concurrentKey, displayName: "Concurrent asset" });
+    };
+    const result = await f.push("--output", "outputs");
+    assert.equal(result.code, 1, originalKey ?? "new key");
+    assert.match(result.data.error, /Both images\/logo and images\/logo.png exist|changed.*folder plan/);
+    assert.equal(f.state.importPlans.length, 2);
+    assert.deepEqual(f.mutations(), []);
+    assert.equal(f.state.uploads.length, 0);
+    assert.equal(f.state.created.length, 0);
+    assert.equal(f.state.imports.length, 0);
+    assert.ok([...result.data.library, ...result.data.mappings].every((row: any) => row.applied === false));
+    assert.deepEqual(await readFile(f.lockPath), lockBefore);
+    for (const name of [".vardum.push.lock", ".vardum.push.pending.json", ".vardum.push.mutex"])
+      await assert.rejects(readFile(join(f.project, name)), /ENOENT/);
+  }
+});
+
 test("an import reports the adopted active version consistently when its storage upload fails", async (t) => {
   const f = await folderFixture(t);
   const assetId = randomUUID();

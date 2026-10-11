@@ -926,6 +926,8 @@ async function pushFolderImport(
       file.checksum, file.mimeType, file.size, file.versionId, file.libraryAction, file.mappingAction, file.mappingId]);
     if (JSON.stringify(planSnapshot(confirmed)) !== JSON.stringify(planSnapshot(plan)))
       throw new Error("The folder import plan changed during confirmation; rerun the same command before uploading");
+    // Fixed-key import plans cannot observe a sibling stem/filename identity.
+    await assertFolderPlanCurrent(context.client, context.config.workspace, prepared, journal);
     await assertFolderSourcesCurrent(prepared);
     const pushLock = await readPushLock(pushLockPath, context.config.workspace, context.config.server);
     const aliases = Object.entries(pushLock.entries).filter(([, entry]) =>
