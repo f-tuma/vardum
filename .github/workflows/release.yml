@@ -1,6 +1,6 @@
 name: Release
 
-# Source releases publish from a matching tag. Retained publication is prepared but disabled.
+# Source releases require a matching tag; retained publication requires explicit manual main dispatch.
 on:
     push:
         tags: ["v*"]

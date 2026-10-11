@@ -28,8 +28,8 @@ export const retainedRelease = Object.freeze({
     Object.freeze({ name: "@vardum/mcp", version: "0.3.0", file: "vardum-mcp-0.3.0.tgz", bytes: 10098,
       integrity: "sha512-C85l10BwZlNnloGKnkZOvdAQwgwLdNIHucAdroTdy+vWQhitrBEpejR8ysVzAR2HD+PK9L8oEr/TIhOKr53KYQ==" }),
   ]),
-  // No policy exception or npm-owner confirmation has been approved (VARD-45).
-  publication: Object.freeze({ enabled: false, controllerRef: "refs/heads/main", environment: "npm" }),
+  // Explicit retained publication was requested; actual npm OIDC acceptance is checked by Actions.
+  publication: Object.freeze({ enabled: true, controllerRef: "refs/heads/main", environment: "npm" }),
 });
 
 export function selectRetainedRelease(selection) {
