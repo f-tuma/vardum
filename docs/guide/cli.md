@@ -3,10 +3,10 @@
 `@vardum/cli` puts a Vard's files into a project and keeps them locked.
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.8.0
+npm install --save-dev --save-exact @vardum/cli@0.8.1
 ```
 
-Node.js 22 or newer. This installs published **0.8.0**; pin the exact version
+Node.js 22 or newer. This installs published **0.8.1**; pin the exact version
 in CI. It includes the [complete folder plan](push.md#complete-plan-cli-080).
 See [release status](../npm-release.md) for compatibility and evidence.
 

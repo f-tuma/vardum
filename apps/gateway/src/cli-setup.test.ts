@@ -40,7 +40,7 @@ if (process.env.FAIL_INIT && process.argv.includes("init")) process.exit(1);
       "install",
       "--save-dev",
       "--save-exact",
-      "@vardum/cli@0.8.0",
+      "@vardum/cli@0.8.1",
     ],
     [
       "--no-install",
