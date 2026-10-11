@@ -2,15 +2,16 @@
 
 ## Current status
 
-Client release status updated **2026-10-11** for **VARD-68/69**. The broader review
+Client release status updated **2026-10-11** for **VARD-68/69/77**. The broader review
 below was recorded **2026-10-03** for planner project **frgtn.VARD**, issue **VARD-20**.
 **Release acceptance remains open.** This summary supersedes the current-status
 claims in the dated audit below; it does not change the historical measurements.
 
 | Area | Verified status and remaining limit |
 | --- | --- |
-| Public npm packages | CLI **0.8.0**, MCP **0.4.0** and shared **0.4.0** are published. Actual registry bytes, independent public CLI/MCP installs with transitive shared and all four GitHub release assets are verified. Schema **2** remains the frozen-snapshot contract, with minimum CLI **0.6.0**. The first-project/server compatibility fixture stays on 0.6/0.2/0.2; see [0.8 release evidence](client-release-0.8.md#publication-evidence). |
-| Client 0.8 release | Release `v0.8.0` identifies source `a5b978432556518d895016aa398ff915a9b97224`, tree `a9ea341bcf5e878cc619f35a2dfdcb21bc4a7b9b`. Source publication verified the exact tested archives from the final tag run; branch validation archives were a separate batch. Main onboarding pins CLI 0.8.0/MCP 0.4.0; Copy setup requires the matching gateway deployment. Production advertises `folderUploadResume: 1`, `folderVardImport: 1` and `vardEditRevision: 1`; capability observation and client publication remain separate from server/runtime artifact acceptance. Post-publication documentation commits do not change the tag or archives. See [release notes and evidence](client-release-0.8.md). |
+| Public npm packages | CLI **0.8.1**, MCP **0.4.1** and shared **0.4.1** are published. Actual registry bytes, independent public CLI/MCP installs with transitive shared and all four GitHub release assets are verified. Schema **2** remains the frozen-snapshot contract, with minimum CLI **0.6.0**. The first-project/server compatibility fixture stays on 0.6/0.2/0.2; see [0.8.1 release evidence](client-release-0.8.1.md#publication-evidence). |
+| Client 0.8.1 onboarding patch | Release `v0.8.1` identifies source `2e5c62a1da587d1dfc1f8f7508142715971c1075`, tree `99b42aebdbd657de873f343e3605802af87f31dc`. Tag run 38162972385 attempt 1 validated and published its own exact tested batch, then hit npm install propagation `ETARGET`. Failed-job retry attempt 2 reused original artifact 11710699527 and passed verification; branch validation archives remain a separate batch. Active onboarding and gateway source Copy setup pin CLI 0.8.1; MCP guidance pins 0.4.1. Production Copy setup requires the matching gateway deployment. See [release notes and evidence](client-release-0.8.1.md). |
+| Historical client 0.8 release | Release `v0.8.0` identifies source `a5b978432556518d895016aa398ff915a9b97224`, tree `a9ea341bcf5e878cc619f35a2dfdcb21bc4a7b9b`. Source publication verified the exact tested archives from the final tag run; branch validation archives were a separate batch. At that checkpoint onboarding pinned CLI 0.8.0/MCP 0.4.0. Production advertises `folderUploadResume: 1`, `folderVardImport: 1` and `vardEditRevision: 1`; capability observation and client publication remain separate from server/runtime artifact acceptance. Post-publication documentation commits do not change the tag or archives. See [original release notes and evidence](client-release-0.8.md). |
 | Earlier merged-source evidence | PRs #3–#12 were merged after their hosted CI checks: operational recovery/monitoring/backup/budgets, dependency fixes, [UI acceptance](https://github.com/f-tuma/vardum/pull/8), [first-project example](https://github.com/f-tuma/vardum/pull/9), [capability guidance](https://github.com/f-tuma/vardum/pull/10), [RustFS uploads](https://github.com/f-tuma/vardum/pull/11) and [Actions runtime](https://github.com/f-tuma/vardum/pull/12). These source checks are not a production deployment. |
 | Server/runtime release | VARD-6's `server-v0.7` remains a provisional candidate, without a final clean released artifact. VARD-51/52's [runtime patch](https://github.com/f-tuma/vardum/pull/14) passed [hosted validation](https://github.com/f-tuma/vardum/actions/runs/37140690476), including stack/routing/restore and patched native codecs. VARD-53's residual OS/native findings and clean artifact acceptance still hold the release. |
 | Client 0.7 release | [Retained Actions run 38119764030, attempt 2](https://github.com/f-tuma/vardum/actions/runs/38119764030) passed actual OIDC publication and verification of the original `20495967` source archives. Resumable uploads and Vard imports require matching deployed capabilities and migration `0015`. Publication does not establish deployment or complete the Musubi pilot; see [upgrade order](client-release-0.7.md#upgrade-order). |
@@ -20,6 +21,35 @@ claims in the dated audit below; it does not change the historical measurements.
 
 Track the release gates in frgtn.VARD: VARD-6, VARD-14, VARD-51/52/53 and the post-publication VARD-68 integration.
 The dated evidence links identify tested releases and workflow runs.
+
+## October 11 public onboarding patch proof (VARD-77)
+
+[Tag run 38162972385](https://github.com/f-tuma/vardum/actions/runs/38162972385)
+retained its original npm artifact **11710699527** from attempt **1**. The
+original downloaded ZIP is **58,768 bytes**, SHA-256
+`a2ec0a844b656ff363f43c199124578fdfa1c58b01d7be3e6eba957dfcbdf5e8`.
+Attempt 1's validation passed; all three OIDC publications succeeded before an
+independent public CLI install failed with npm `ETARGET` during propagation.
+Only the failed publisher was rerun. Attempt **2** downloaded that same artifact,
+skipped all three byte-identical published versions, passed registry/independent
+install verification and created the GitHub release. Anonymous registry archives
+and all four release assets were independently compared with the original batch.
+
+Independent public installs on Node **22.23.3** / npm **12.2.0** resolved shared
+**0.4.1** transitively for CLI **0.8.1** and MCP **0.4.1**. Their binaries reported
+the exact versions. CLI init dry-run created no config; create wrote one;
+identical repeat changed none; conflict and missing non-interactive flags failed
+without changing the existing config. See the [full publication record](client-release-0.8.1.md#publication-evidence).
+
+The original sanitized runtime artifact **11711716298**, ZIP **10,592 bytes**,
+SHA-256 `f6a8eefedf47355cddf5eb03f7ef57560e7790191e93b22ec6dd231c6421c019`,
+records workflow checks separately. It reports `offlineReplay: false` and
+`releaseCertification: not-provided`; individual deployed SVG, AVIF and runtime
+DB-role checks are not recorded. It does not certify a clean server/runtime
+release or close the existing acceptance gates. VARD-96 separately tracks
+bounded install-propagation retry work. Package publication and source pin
+promotion do not prove the deployed Copy setup version, a human first-use
+session or the Musubi pilot.
 
 ## Initial audit — 2026-09-20
 

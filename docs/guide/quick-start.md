@@ -2,7 +2,7 @@
 
 One file from Vardum into a repository, locked, in five steps.
 
-You need Node.js 22+ and a workspace. These steps pin published **CLI 0.8.0**.
+You need Node.js 22+ and a workspace. These steps pin published **CLI 0.8.1**.
 Frozen snapshots remain schema 2, with minimum compatible CLI 0.6.0. See
 [release status](../npm-release.md) for compatibility and evidence.
 
@@ -14,12 +14,13 @@ In the app:
 2. Create a Vard.
 3. Map the asset to `public/logo.svg`.
 4. Copy the server URL, workspace ID and Vard ID. **Copy setup** gives you all
-   of step 2 as one command.
+   of step 2 as one command. Its version depends on the gateway deployment;
+   the manual command below pins CLI 0.8.1.
 
 ## 2. Connect the repository
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.8.0
+npm install --save-dev --save-exact @vardum/cli@0.8.1
 npx vardum init     # writes vardum.json
 npx vardum login    # authorizes this machine in the browser
 ```

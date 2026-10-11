@@ -1,6 +1,6 @@
 // Last independently verified public release. Candidate package versions must
 // not change Copy setup before npm publication and archive verification.
-export const CLI_SETUP_VERSION = "0.8.0";
+export const CLI_SETUP_VERSION = "0.8.1";
 
 // Quote each value as one POSIX shell argument, including pasted hostnames.
 function shellArgument(value: string) {
