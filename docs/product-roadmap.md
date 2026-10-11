@@ -59,6 +59,10 @@ does not close those gates or broaden an operator's existing risk acceptance.
 
 ### 2. Deliver one useful recipe with a preservation contract
 
+See the [app/web recipe design proposal](template-recipe-model.md) for observed
+Musubi inputs and the staged model. This design does not satisfy the pilot gate
+or implement Templates.
+
 1. **VARD-82:** define original and derivative retention, renderer identity and
    byte-reproduction guarantees. An ADR and failure proof can proceed while
    the pilot waits for external input. Do not introduce automatic derived-cache
