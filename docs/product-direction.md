@@ -2,6 +2,9 @@
 
 Status: agreed direction, not a statement of shipped capabilities.
 
+See the [prioritized product roadmap](product-roadmap.md) for the October 11
+decision, current work order, conditional backlog and delivery checks.
+
 > Manage assets once. Deliver the right variants to connected projects, on each
 > project's release schedule.
 
@@ -47,6 +50,13 @@ rarely changed images may not need Varda.
 - **Usage:** a known project or destination that consumes assets, optionally with
   a URL to inspect. It is not proof that every use has been discovered.
 
+A consumer can intentionally follow public current-version URLs or consume
+locked project files. Live artwork changes and independently released frozen
+outputs serve different needs; proposed PR updates are an opt-in future mode.
+The reproducibility criteria below apply to locked consumption, not a promise
+that live URLs preserve historical artwork. Musubi marketing uses live delivery,
+while its mobile project uses locked files.
+
 Vards must support both explicit file mappings and automatic folder inclusion.
 New folder contents become candidates for the next intentional project update;
 they must not silently change an already locked build.
@@ -74,15 +84,20 @@ Required behavior:
 
 Acceptance scenario:
 
-1. Connect a real source set to the app and website, including both a selected
-   file mapping and a folder inclusion rule.
-2. Build both projects and record their resolved assets in version control.
-3. Replace source artwork and add a file to the included folder.
-4. Rebuild the old commits: neither the artwork nor file set changes.
-5. Intentionally update the website. Review and commit the changed asset set;
-   the application remains unchanged until its own update.
-6. Rebuild an older release with its original assets, provided those versions
-   have not been explicitly deleted.
+1. Connect a real source set to the mobile project through selected file
+   mappings and a folder inclusion rule. Connect the marketing website through
+   intentional public current-version URLs.
+2. Build both projects. Commit the mobile project's resolved assets and snapshot;
+   record the website's stable references without promising frozen web artwork.
+3. Replace agreed source artwork and add a file to the included folder.
+4. Rebuild the old mobile commit: its artwork and file set remain unchanged.
+   Verify that the website's live URLs resolve to the new artwork without a web
+   deployment, recording cache behavior and when the visible change occurs.
+5. Intentionally update the mobile snapshot. Review and commit the changed asset
+   set; an installed application changes only through its own release process.
+6. Rebuild an older mobile release with its original assets, subject to retained
+   versions and the documented delivery, signing and renderer constraints.
+   A historical website commit intentionally follows current artwork instead.
 
 Initial onboarding may require consolidating duplicate files or changing inline
 SVGs to a shared project reference. Varda does not automatically refactor consuming
@@ -137,11 +152,13 @@ implementation accepts images and videos. Choose the first additional formats
 from real workflows rather than promising previews or transformations for every
 file.
 
-Client status reviewed 2026-10-11 (frgtn.VARD/VARD-68): published CLI 0.7.0,
-MCP 0.3.0 and shared 0.3.0 retain schema 2 and add resumable folder uploads and
-optional Vard imports. Schema 3 remains separate unmerged, unpublished VARD-14
-work; guarded editor/folder planning changes and a subsequent client release are
-separate tasks. The provisional VARD-6 server candidate and runtime/security
+Client status reviewed 2026-10-11 (frgtn.VARD/VARD-69): published CLI 0.8.0,
+MCP 0.4.0 and shared 0.4.0 retain schema 2, upload resume and optional Vard imports,
+and add complete folder plans and guarded MCP Vard editing. See the
+[verified client release](client-release-0.8.md). Schema 3 remains separate
+unmerged, unpublished VARD-14 work. Public package guidance has a separate
+VARD-77 follow-up; a repository documentation change does not update published
+npm README content. The provisional VARD-6 server candidate and runtime/security
 acceptance remain open. See
 [current readiness status](production-readiness-2026-09-20.md#current-status) and
 [release compatibility](npm-release.md#compatibility).
