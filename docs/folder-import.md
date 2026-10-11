@@ -1,8 +1,10 @@
 # Import a folder into a Vard
 
-This feature is available in published **CLI 0.7.0** and is absent from CLI 0.6.0.
-Verify the matching backend capabilities before using it; see
-[release notes and upgrade order](client-release-0.7.md) and
+Folder import is available in published **CLI 0.7.0** and is absent from CLI
+0.6.0. Candidate **CLI 0.8.0** retains it and adds the complete folder plan below;
+0.8.0 is unavailable on npm as of **2026-10-11**. Verify availability and the
+target backend before upgrading; see [0.8 candidate notes](client-release-0.8.md),
+[published 0.7 upgrade order](client-release-0.7.md) and
 [npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server
@@ -42,16 +44,25 @@ file/directory overlaps and more than 1,000 outputs are rejected. An already
 invalid Vard needs repair in the editor first. This preview is not a reservation:
 concurrent edits can still make final application fail.
 
-The all-file library report described in the following two paragraphs is
-unreleased source work for the next client release (VARD-69); it is not included
-in the published CLI 0.7.0. Library-only previews gain an all-file `library`
-report, separate from the existing mutation `actions`. Each row shows the
-source-relative `source`, exact resulting `key`, and `libraryAction` (`new`,
-`update`, or `skip`). Skipped rows do not add an action or a change and retain
-`applied: false`, because no upload was performed. Pending uploads retain their
-original new/update classification with `resumed: true`, phase and exact IDs.
-The interactive confirmation uses the same checksum plan as JSON. Upload activity
-unavailable on an older server is marked `uncertain: true` in its read-only preview.
+## Complete folder plan (CLI 0.8.0 candidate)
+
+The terminal plan summarizes **New**, **Update** and **Skip** totals and previews the first 15 source files. Use `--dry-run --json` for the complete per-file plan.
+Library-only JSON adds an all-file `library` report alongside mutation `actions`.
+Each row shows source-relative `source`, exact resulting `key`, `libraryAction`
+(`new`, `update`, `skip`) and `applied`. Existing rows report the actual asset ID
+and current ready version ID when available. New dry-run rows do not reserve
+upload IDs. Skipped rows add no mutation action or change and keep
+`applied: false`: no upload occurred. Pending uploads retain their original
+new/update classification with `resumed: true`, phase and exact journal IDs.
+This reporting is absent from the published CLI 0.7.0 library-only command.
+
+The terminal confirmation uses the same captured checksum plan as JSON. Before
+upload, the CLI revalidates source metadata, the pending journal, remote identity
+and current version, including both stem and filename keys. Vard imports also
+recheck the mapping plan. Changed files or a competing filename/stem identity
+stop execution before upload and require a fresh plan. Unknown unfinished-upload
+activity on an older server is marked `uncertain: true` in a read-only library
+preview; mutations require the resume capability and complete identity metadata.
 
 An existing extensionless manual key is reused directly. An existing matching
 filename key is reported as preserved with its original identity. If both keys
@@ -124,4 +135,10 @@ advertising `vardEditRevision: 1` offer dedicated [guarded editor routes](vard-e
 An import invalidates a previously read editor definition when it adds manual
 mappings, so a stale guarded save fails with 409 and keeps the imported mappings.
 Legacy clients and routes remain unguarded; published MCP 0.3.0 still uses them.
-Revision-aware MCP editing is unreleased source for the next client release.
+Candidate MCP 0.4.0 uses the guarded routes and refuses legacy fallback. Read
+`get_vard` first and pass its original revision as `expectedRevision` for update,
+replacement or deletion. Replacement items retain their existing manual `id`
+(or `null` for a new mapping) and explicitly copy literal `pinnedVersionId` to
+nullable `versionId`. A structured `vard_revision_conflict` / 409 requires a
+fresh read, review and reapplication of the intended edit. See the
+[MCP guide](guide/mcp.md#guarded-editing-mcp-040-candidate).

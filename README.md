@@ -11,7 +11,10 @@ See [current readiness status](docs/production-readiness-2026-09-20.md#current-s
 The same document preserves the initial September 20 audit and dated remediation
 evidence. [Published CLI 0.7.0, shared 0.3.0 and MCP 0.3.0](docs/client-release-0.7.md)
 retain schema 2. Registry bytes, independent public installs and the GitHub release
-are verified; the separate schema 3 draft remains unmerged and unpublished.
+are verified. The proposed [CLI 0.8.0 / MCP and shared 0.4.0 batch](docs/client-release-0.8.md)
+is a separate candidate, unavailable on npm as of October 11; main and its Copy
+setup version remain on CLI 0.7.0 until the new publication is verified. The
+separate schema 3 draft remains unmerged and unpublished.
 
 ## Development
 
@@ -224,8 +227,10 @@ membership-updating pull** to remove stale tracked local files. A normal pull
 without deletion drops stale tracking but leaves those files on disk; a later
 `--delete` cannot discover them, so deliberate manual cleanup is required.
 
-This requires the matching folder-aware API/gateway and MCP 0.2.0 or newer (current release 0.3.0);
-see [release status](docs/npm-release.md), [MCP rule operations](apps/mcp/README.md#folder-rules) and
+This requires the matching folder-aware API/gateway. Published MCP 0.3.0 uses
+legacy edits; candidate MCP 0.4.0 requires `vardEditRevision: 1` and the original
+revision for updates, replacements and deletion. See [release status](docs/npm-release.md),
+[MCP rule operations](apps/mcp/README.md#folder-rules) and
 [migration/rollback guidance](docs/operations.md#folder-rule-upgrade).
 
 ## Asset visibility
@@ -287,8 +292,12 @@ Prepare archives with the repository's pinned pnpm, then test and publish those
 same archives. `npm pack` from a source workspace is blocked because it leaves
 `workspace:` dependencies unresolved. The `Release` workflow requires a tag
 matching the CLI version, runs unit/integration/production tests, installs the
-candidate CLI and MCP independently, then publishes shared → CLI → MCP. It checks
-registry integrity and fresh installs again after publication.
+candidate CLI and MCP independently, then publishes shared → CLI → MCP from
+the exact tested archives downloaded from that same run. A branch validation-only
+run and a final tag run produce distinct tested artifact batches. If publication
+fails, rerun only failed jobs in the original tag run so its validation archive
+is reused; a new dispatch or full rerun repacks. It checks registry bytes and
+fresh installs again after publication.
 
 See [the release procedure and compatibility table](docs/npm-release.md) for
 published versions, candidate gates, exact commands, partial-release recovery

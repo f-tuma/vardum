@@ -4,18 +4,21 @@ The CLI materializes a workspace **Vard** into a project. Create a Vard in the
 web UI, select its assets and output paths, then run `vardum init` in the target
 repository to create `vardum.json`.
 
-This README describes **CLI 0.7.0**, which retains schema **2** frozen snapshots.
-Check the [release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.7.md)
-and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
+This README describes **CLI 0.8.0**, which retains schema **2** frozen snapshots
+and adds a complete folder-upload plan. Check the
+[0.8 release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.8.md)
+and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md)
+to confirm npm availability before installing this version.
 
 ## First project
 
 For a runnable three-file example, follow [First project](../../examples/first-project/README.md).
 
-Use Node.js 22 or newer. The installation below pins published **0.7.0**.
+Use Node.js 22 or newer. **The installation below targets CLI 0.8.0**; use it
+when the release-status page confirms that exact package is available. For the
+currently published setup, follow [Quick start](../../docs/guide/quick-start.md).
 Folder upload and import require the matching server contracts in the release
-notes. The first-project example remains an explicit CLI 0.6.0 compatibility
-fixture; [Quick start](../../docs/guide/quick-start.md) uses the current release.
+notes. The first-project example remains an explicit CLI 0.6.0 compatibility fixture.
 Published CLI 0.5.0 has a broken workspace dependency and does not support frozen
 snapshots.
 
@@ -27,7 +30,7 @@ snapshots.
    and authorize your machine:
 
    ```sh
-   npm install --save-dev --save-exact @vardum/cli@0.7.0
+   npm install --save-dev --save-exact @vardum/cli@0.8.0
    npx vardum init
    npx vardum login
    npx vardum pull
@@ -96,13 +99,14 @@ reports locally edited files as conflicts rather than refusing to run.
 `whoami` prints which project, workspace and key are in play without touching
 the network, which is usually the answer to "why does this not work".
 Every command accepts `--json`, which replaces the human output with a single
-`{ dryRun, changed, actions }` object and reports failures on stderr as
+`{ dryRun, changed, actions }` object, with extra folder reports described below,
+and reports failures on stderr as
 `{ "error": ..., "actions": [...] }` — a run that dies halfway still says which
 changes landed, each with `applied: true|false`, so CI can read the result
 instead of parsing sentences.
 
-In CLI 0.7.0, folder upload actions also include `phase`, `assetId`
-and `versionId` once an upload intent is recorded. `applied: true` means that
+Folder upload actions include `phase`, `assetId` and `versionId` once an upload
+intent is recorded. `applied: true` means that
 the exact version is ready and its checksum and metadata have been verified.
 An action with `applied: false` may have created an asset, reserved a version,
 uploaded bytes or started processing; its phase identifies the last known step.
@@ -119,12 +123,33 @@ unattended, so CI is unchanged.
 Only Vard items marked **Writable** in the UI can be updated by `vardum push`.
 Pinned, transformed and folder-generated outputs are always read-only. `push-folder` accepts every
 format the workspace accepts (images and video, see `@vardum/shared`) and preserves
-relative paths below the chosen workspace prefix. Without a prefix argument it
-opens a picker with the workspace's folders, shows the file-by-file plan, and
+relative paths below the chosen workspace prefix. Without a prefix argument in
+a terminal, it opens a picker with the workspace's folders, shows the plan, and
 waits for confirmation; uploads then run with a `(3/50)` counter and processing
-is awaited once at the end rather than per file.
+is awaited once at the end rather than per file. With `--json` or no terminal,
+an omitted prefix selects workspace root without prompting.
 
-In CLI 0.7.0, automatic folder keys and display names strip the final
+CLI 0.8.0 classifies every source file as **New**, **Update** or **Skip**,
+including a push that has no changes. Terminal confirmation shows totals and
+the first 15 rows; JSON contains the complete per-file plan. Library-only JSON adds a
+`library` array alongside mutation `actions`. Each row includes `source`, the
+exact resulting `key`, `libraryAction` (`new`, `update`, `skip`) and `applied`.
+Existing rows include the actual asset ID and current ready version ID when
+available. Pending rows retain their journal IDs, phase and original new/update
+classification with `resumed: true`; new dry-run rows do not reserve upload IDs.
+Skipped rows create no upload, mutation action or change and keep
+`applied: false`. A failed or lost response can still follow a remote mutation
+for an upload row with `applied: false`; retain the journal and retry.
+
+The terminal confirmation and JSON use the same captured checksum plan. Before
+the first upload, the CLI revalidates the local source metadata, pending journal,
+remote asset identities, current versions and filename/stem alternatives. A
+change during confirmation stops the command and requires a fresh plan. Vard
+imports also recheck their mapping preflight. A read-only library preview on an
+older server marks unknown unfinished-upload activity as `uncertain: true`;
+mutation still requires the resume capability and its complete identity metadata.
+
+CLI 0.8.0 retains automatic folder keys and display names that strip the final
 supported media suffix: `icons/logo.v2.png` becomes key `icons/logo.v2` and name
 `logo.v2`. The uploaded version retains `logo.v2.png`. Prefixes with or without
 a trailing slash are equivalent. Files such as `logo.png` and `logo.webp` that
@@ -134,7 +159,7 @@ counterpart exist, resolve the ambiguity before pushing. Folder rules preserve
 existing media suffixes and append the original format's extension to keys
 without a media suffix; output collisions are rejected.
 
-In CLI 0.7.0, `push` and `push-folder` fetch `/api/upload-limits` before
+`push` and `push-folder` fetch `/api/upload-limits` before
 reading file contents, including during `--dry-run` and for unchanged files.
 The command fails if that endpoint is unavailable or returns invalid ceilings,
 or if a file is empty, not regular, too large for its MIME type, or changes
@@ -143,7 +168,7 @@ being skipped. Folder push checks the bytes again against its plan before
 creating a new asset. These changes are absent from the immutable published
 CLI 0.6.0 package.
 
-CLI 0.7.0 supports resumable `push-folder` uploads. This behavior
+CLI 0.8.0 retains resumable `push-folder` uploads introduced in 0.7.0. This behavior
 requires a matching server that advertises `folderUploadResume: 1` through
 `GET /api/capabilities`; the CLI refuses mutations on an older server. It is
 not included in the published CLI 0.6.0 package. Deploy the matching backend
@@ -174,7 +199,7 @@ command while keeping the pending journal. Add the pending journal, mutex and
 project's `.gitignore`. `push-folder --dry-run` creates no journal, mutex,
 tracking file or version-check cache and performs no remote mutations.
 
-CLI 0.7.0 also supports an opt-in import into the **configured Vard**:
+CLI 0.8.0 retains the opt-in import into the **configured Vard** introduced in 0.7.0:
 
 ```sh
 vardum push-folder ./source-images brand --output assets/brand/ --dry-run
@@ -254,8 +279,8 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 **Minimum compatible CLI: 0.6.0**, with the matching server from the
 [compatibility table](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md#compatibility).
 Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. Published CLI 0.7.0 consumes the
-existing schema 2 snapshots without migration. Keep the exact tested CLI pinned;
+cannot safely maintain schema 2 snapshots. CLI 0.8.0 consumes existing schema 2
+snapshots without migration, as published CLI 0.7.0 does. Keep the exact tested CLI pinned;
 a source version bump or passing tests do not publish future versions.
 
 1. Run **`vardum pull`** to intentionally resolve the current Vard and refresh

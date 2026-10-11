@@ -6,7 +6,10 @@
 npm install --save-dev --save-exact @vardum/cli@0.7.0
 ```
 
-Node.js 22 or newer. Pin the exact version in CI.
+Node.js 22 or newer. This installs published **0.7.0**; pin the exact version
+in CI. Candidate **0.8.0** is unavailable on npm as of 2026-10-11. It adds the
+[complete folder plan](push.md#complete-plan-cli-080-candidate); confirm
+[release status](../npm-release.md) before upgrading.
 
 ## Commands
 
@@ -61,5 +64,11 @@ Node.js 22 or newer. Pin the exact version in CI.
 ```
 
 - A failure still lists what already happened, each action with `applied`.
+- Candidate CLI 0.8.0 adds every library-only folder source to `library`, with
+  `new`/`update`/`skip`, its exact key and known IDs. A skipped library-only row
+  keeps `applied: false`, creates no mutation action and adds no change. Pending
+  uploads retain journal IDs and original classification with `resumed: true`.
+- A failed/lost response can follow a remote mutation even when `applied` is
+  false; preserve the pending journal and rerun the same folder command.
 
 Full reference: [CLI README](../../apps/cli/README.md).

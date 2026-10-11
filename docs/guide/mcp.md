@@ -74,32 +74,59 @@ revision guards.
 | Replace manual mappings | `replace_vard_items`: rules stay |
 
 - Never copy resolved folder outputs into `replace_vard_items`.
-- Pin with `versionId`; omit it to follow latest.
+- Published MCP 0.3.0 uses legacy mutations. Follow the guarded contract below
+  when using candidate MCP 0.4.0; its replacement items require `id` and an
+  explicit nullable `versionId`.
+
+## Guarded editing (MCP 0.4.0 candidate)
+
+MCP **0.4.0** is unavailable on npm as of **2026-10-11**. It belongs to the
+[0.8 client candidate batch](../client-release-0.8.md); check
+[release status](../npm-release.md) before installing it. **This command targets
+that candidate version** once publication is verified:
+
+```sh
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.0
+```
+
+MCP 0.4.0 requires `vardEditRevision: 1` for editable Vard reads and mutations.
+It uses dedicated `/editor` routes and refuses unsupported servers or missing
+endpoints without a legacy fallback. The separate `resolved: true` preview
+has no editor revision.
+
+Read `get_vard` first and retain the full manual-only definition and `revision`.
+Pass that **original** token as `expectedRevision` for update, replacement or
+deletion. For example, after reading the definition:
 
 ```json
 {
   "workspaceId": "your-workspace-id",
   "vardId": "your-vard-id",
+  "expectedRevision": "v1:<copy the original revision from get_vard>",
   "folderRules": [{ "sourcePrefix": "brand/", "outputPrefix": "assets/brand/" }]
 }
 ```
 
-## Guarded editing — unreleased source
+Replace the illustrative token with the unchanged revision from your read.
+Keep the returned definition and revision after a successful write for the next
+edit. Updates preserve omitted fields; `folderRules: []` removes rules.
 
-The next MCP release uses a separate editor protocol to prevent stale edits
-from replacing newer mappings. It needs a server advertising
-`vardEditRevision: 1`; published 0.3.0 does not implement this protocol.
+Whole-list replacements must retain existing manual `id` values, or use `null`
+for a new mapping. Each item explicitly supplies `versionId`: copy literal
+`pinnedVersionId` from `get_vard`, including an unavailable saved pin or `null`
+to follow latest. Do not infer the pin from a resolved delivery version. Pinned
+items are read-only; the old `pinned` boolean and missing `id`/`versionId` are
+rejected. Include only manual mappings; omitting one removes it. Also supply
+`assetId`, `outputPath`, `writable` and nullable `transformation` for each item.
 
-Read `get_vard` first and retain its `revision`. Pass that original token as
-`expectedRevision` for update, replacement or deletion. Whole-list replacements
-must retain existing manual `id` values and copy each literal `pinnedVersionId`
-into an explicit `versionId`, including `null` to follow latest. Do not infer a
-saved pin from a resolved delivery version.
-
-A conflict stops the write. Reload, review the latest definition and reapply
-the intended change; never automatically retry the stale list with a new token.
-See the [source tool reference](../../apps/mcp/README.md#guarded-editing--unreleased-source)
-and [editor protocol](../vard-editor-concurrency.md) for inputs and deployment.
+A conflict returns a structured tool error (`isError: true`) with `status: 409`,
+`code: "vard_revision_conflict"`, `currentRevision` and a reload instruction.
+Keep the intended edit, read `get_vard` again, review the latest definition and
+reapply it. Never automatically retry the stale list with a fresh token.
+Updates/replacements require API read + update permission; deletion requires
+delete permission. The revision is an opaque equality token, not a counter.
+See the [tool reference](../../apps/mcp/README.md#guarded-editing)
+and [editor protocol](../vard-editor-concurrency.md).
 
 ## Not available to agents
 
