@@ -21,7 +21,7 @@ CI: vardum pull --frozen
 ## Setup
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.7.0
+npm install --save-dev --save-exact @vardum/cli@0.8.0
 npx vardum init       # vardum.json: server, workspace, Vard
 npx vardum login      # stores a key for this machine
 ```
@@ -29,6 +29,10 @@ npx vardum login      # stores a key for this machine
 - `login` keeps the key in `$XDG_CONFIG_HOME/vardum/credentials.json` (mode
   `0600`), named `cli@<machine>` in Settings. `logout` revokes it.
 - `VARDUM_API_KEY` overrides the stored key. Use it in CI.
+
+The setup above uses published **CLI 0.8.0**. It retains schema 2 and needs no
+snapshot migration. See [release status](../npm-release.md) before changing the
+pinned package. The first-project/server compatibility fixture remains on CLI 0.6.0.
 
 ## Pull
 

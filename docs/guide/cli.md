@@ -3,10 +3,12 @@
 `@vardum/cli` puts a Vard's files into a project and keeps them locked.
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.7.0
+npm install --save-dev --save-exact @vardum/cli@0.8.0
 ```
 
-Node.js 22 or newer. Pin the exact version in CI.
+Node.js 22 or newer. This installs published **0.8.0**; pin the exact version
+in CI. It includes the [complete folder plan](push.md#complete-plan-cli-080).
+See [release status](../npm-release.md) for compatibility and evidence.
 
 ## Commands
 
@@ -34,7 +36,7 @@ Node.js 22 or newer. Pin the exact version in CI.
 | `--force` | pull, push | Overwrite local edits / conflicts |
 | `--delete` | pull, push-folder | Remove files an earlier run created |
 | `--frozen` | pull, status | Use the lock, not the live Vard |
-| `--output <path>` | push-folder | Also map files into the Vard (0.7.0) |
+| `--output <path>` | push-folder | Also map files into the Vard (since 0.7.0) |
 
 ## Files
 
@@ -43,7 +45,7 @@ Node.js 22 or newer. Pin the exact version in CI.
 | `vardum.json` | Server, workspace, Vard |
 | `.vardum.lock` | Versions, URLs, SHA-256 per file |
 | `.vardum.push.lock` | What `push-folder` uploaded; `--delete` relies on it |
-| `.vardum.push.pending.json` | Resume journal (0.7.0) |
+| `.vardum.push.pending.json` | Resume journal (since 0.7.0) |
 
 - Commit `vardum.json` and `.vardum.lock`.
 - Keep the resume journal out of git.
@@ -61,5 +63,11 @@ Node.js 22 or newer. Pin the exact version in CI.
 ```
 
 - A failure still lists what already happened, each action with `applied`.
+- CLI 0.8.0 adds every library-only folder source to `library`, with
+  `new`/`update`/`skip`, its exact key and known IDs. A skipped library-only row
+  keeps `applied: false`, creates no mutation action and adds no change. Pending
+  uploads retain journal IDs and original classification with `resumed: true`.
+- A failed/lost response can follow a remote mutation even when `applied` is
+  false; preserve the pending journal and rerun the same folder command.
 
 Full reference: [CLI README](../../apps/cli/README.md).

@@ -7,7 +7,7 @@ key.
 | --- | --- |
 | `vardum push` | Uploads changes to files behind **Writable** mappings |
 | `vardum push-folder <dir> [prefix]` | Uploads a folder to the library, keeping relative paths |
-| `vardum push-folder ... --output <path>` | Also adds the files to the Vard (CLI 0.7.0) |
+| `vardum push-folder ... --output <path>` | Also adds the files to the Vard (since CLI 0.7.0) |
 
 - Pinned, transformed and folder-rule files are read-only: `push` skips them.
 - Every command takes `--dry-run`.
@@ -19,12 +19,32 @@ vardum push-folder ./images brand/        # into the library under brand/
 vardum push-folder ./images               # pick a folder, review, confirm
 ```
 
-- Without a prefix you get a folder picker, the plan, and a confirmation.
+- In a terminal without a prefix, you get a folder picker, the plan and a
+  confirmation. With `--json` or no terminal, an omitted prefix selects root.
 - Processing is awaited once at the end, with a `(3/50)` counter while it runs.
 - `--delete` removes library assets an earlier push created and that are gone
   locally. In a terminal it lists them and asks first.
 
-## Import into the Vard (CLI 0.7.0)
+## Complete plan (CLI 0.8.0)
+
+Use published **CLI 0.8.0** for the complete folder plan. See
+[release notes and upgrade order](../client-release-0.8.md) and
+[release status](../npm-release.md).
+
+- Every source file is classified as **New**, **Update** or **Skip**, including
+  when the push has no changes. Terminal confirmation shows totals and the first
+  15 rows; JSON contains the complete per-file plan. Library-only JSON adds
+  `library` beside `actions`.
+- Rows report `source`, exact `key`, `libraryAction` and `applied`, with actual
+  existing asset/current ready version IDs when available. Pending rows retain
+  exact journal IDs, phase and original classification with `resumed: true`.
+- A skipped library-only row creates no upload or mutation action, adds no change
+  and keeps `applied: false`. New dry-run rows do not reserve upload IDs.
+- Confirmation uses the same captured checksum plan. Source metadata, journal,
+  remote identity/current version and stem/filename alternatives are checked
+  again before upload; imports also recheck mappings. A change requires a new plan.
+
+## Import into the Vard
 
 ```text
 ./images/icons/logo.png
@@ -48,7 +68,7 @@ vardum pull           # then review and commit
 
 - `--output` cannot be combined with `--delete` or `--force`.
 
-## If it stops halfway (CLI 0.7.0)
+## If it stops halfway
 
 - Run the **same command** again. It resumes without duplicate versions or
   mappings.
@@ -68,8 +88,9 @@ vardum pull           # then review and commit
 
 ## Requirements
 
-- Resume and import need a server that supports them; the CLI checks
-  `GET /api/capabilities` and refuses otherwise.
+- Resumable library mutations require `folderUploadResume: 1`. Imports also
+  require `folderVardImport: 1`, including dry-runs. The CLI checks
+  `GET /api/capabilities` and refuses unsupported operations.
 - CLI 0.6.0 has `push` and `push-folder` without resume or `--output`.
 
 Full reference: [CLI README](../../apps/cli/README.md) and

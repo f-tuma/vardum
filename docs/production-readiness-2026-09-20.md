@@ -2,14 +2,15 @@
 
 ## Current status
 
-Client release status updated **2026-10-11** for **VARD-68**. The broader review
+Client release status updated **2026-10-11** for **VARD-68/69**. The broader review
 below was recorded **2026-10-03** for planner project **frgtn.VARD**, issue **VARD-20**.
 **Release acceptance remains open.** This summary supersedes the current-status
 claims in the dated audit below; it does not change the historical measurements.
 
 | Area | Verified status and remaining limit |
 | --- | --- |
-| Public npm packages | CLI **0.7.0**, MCP **0.3.0** and shared **0.3.0** are published. Actual registry bytes, independent public CLI/MCP installs with transitive shared and all four GitHub release assets are verified. Schema **2** remains the frozen-snapshot contract. The earlier first-project/server compatibility fixture stays on 0.6/0.2/0.2; see [release evidence](npm-release.md#october-11-publication-evidence). |
+| Public npm packages | CLI **0.8.0**, MCP **0.4.0** and shared **0.4.0** are published. Actual registry bytes, independent public CLI/MCP installs with transitive shared and all four GitHub release assets are verified. Schema **2** remains the frozen-snapshot contract, with minimum CLI **0.6.0**. The first-project/server compatibility fixture stays on 0.6/0.2/0.2; see [0.8 release evidence](client-release-0.8.md#publication-evidence). |
+| Client 0.8 release | Release `v0.8.0` identifies source `a5b978432556518d895016aa398ff915a9b97224`, tree `a9ea341bcf5e878cc619f35a2dfdcb21bc4a7b9b`. Source publication verified the exact tested archives from the final tag run; branch validation archives were a separate batch. Main onboarding pins CLI 0.8.0/MCP 0.4.0; Copy setup requires the matching gateway deployment. Production advertises `folderUploadResume: 1`, `folderVardImport: 1` and `vardEditRevision: 1`; capability observation and client publication remain separate from server/runtime artifact acceptance. Post-publication documentation commits do not change the tag or archives. See [release notes and evidence](client-release-0.8.md). |
 | Earlier merged-source evidence | PRs #3–#12 were merged after their hosted CI checks: operational recovery/monitoring/backup/budgets, dependency fixes, [UI acceptance](https://github.com/f-tuma/vardum/pull/8), [first-project example](https://github.com/f-tuma/vardum/pull/9), [capability guidance](https://github.com/f-tuma/vardum/pull/10), [RustFS uploads](https://github.com/f-tuma/vardum/pull/11) and [Actions runtime](https://github.com/f-tuma/vardum/pull/12). These source checks are not a production deployment. |
 | Server/runtime release | VARD-6's `server-v0.7` remains a provisional candidate, without a final clean released artifact. VARD-51/52's [runtime patch](https://github.com/f-tuma/vardum/pull/14) passed [hosted validation](https://github.com/f-tuma/vardum/actions/runs/37140690476), including stack/routing/restore and patched native codecs. VARD-53's residual OS/native findings and clean artifact acceptance still hold the release. |
 | Client 0.7 release | [Retained Actions run 38119764030, attempt 2](https://github.com/f-tuma/vardum/actions/runs/38119764030) passed actual OIDC publication and verification of the original `20495967` source archives. Resumable uploads and Vard imports require matching deployed capabilities and migration `0015`. Publication does not establish deployment or complete the Musubi pilot; see [upgrade order](client-release-0.7.md#upgrade-order). |
