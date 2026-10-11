@@ -784,10 +784,13 @@ function OutputGrid({
             <button
               type="button"
               className="flex w-full flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors outline-none hover:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              aria-label={`Settings for ${item.outputPath}`}
               onClick={() => onOpenItem(item.id)}
             >
-              <span className="aspect-4/3 bg-muted bg-cells">
-                <AssetThumb url={saved?.downloadUrl} mimeType={saved?.mimeType} />
+              <span className="relative aspect-4/3 w-full shrink-0 overflow-hidden bg-muted bg-cells">
+                <span className="absolute inset-0">
+                  <AssetThumb url={saved?.downloadUrl} mimeType={saved?.mimeType} />
+                </span>
               </span>
               <span className="flex flex-col gap-1 p-2.5">
                 <span className="truncate font-mono text-xs">
@@ -1699,8 +1702,10 @@ function PickerAsset({
         className="flex w-full flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors outline-none hover:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
         onClick={() => onPick({ id: asset.id, key: asset.key, mimeType: asset.mimeType ?? "" })}
       >
-        <span className="relative aspect-4/3 bg-muted bg-cells">
-          <AssetThumb url={assetPreviewUrl(workspaceSlug, asset)} mimeType={asset.mimeType} />
+        <span className="relative aspect-4/3 w-full shrink-0 overflow-hidden bg-muted bg-cells">
+          <span className="absolute inset-0">
+            <AssetThumb url={assetPreviewUrl(workspaceSlug, asset)} mimeType={asset.mimeType} />
+          </span>
           {added && (
             <span className="absolute top-2 left-2">
               <Badge variant="secondary">Added</Badge>
