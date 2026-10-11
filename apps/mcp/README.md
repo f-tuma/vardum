@@ -11,18 +11,22 @@ run by hand. Create a workspace API key in **Settings // API keys** first; the
 key is restricted to that workspace and its selected read/write permissions.
 Copy the workspace ID from Settings → General for tool calls.
 
-This README targets published MCP **0.2.0**; see [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
+This README describes **MCP 0.3.0**. The 11-tool surface is unchanged. Check the
+[release notes](https://github.com/f-tuma/vardum/blob/main/docs/client-release-0.7.md)
+and [release status and compatibility](https://github.com/f-tuma/vardum/blob/main/docs/npm-release.md).
 The published 0.1.0 artifact has a broken workspace dependency.
 
-The revision-guarded editor behavior and inputs documented below are source for the
-**next client release**, which is required to use them. They are separate from the
-pending CLI 0.7.0 / shared 0.3.0 / MCP 0.3.0 candidate. Package versions and the
-published 0.2.0 setup examples remain unchanged here.
+The configurations below pin published **0.3.0**, which uses the legacy Vard
+editing contract. Revision-guarded editing is currently **unreleased source for
+the next client release**; installing 0.3.0 does not enable it. To test that source,
+use `pnpm --filter "@vardum/mcp..." build` and configure the client to run
+`node /absolute/path/to/vardum/apps/mcp/dist/index.js`. Deploy the matching
+revision-capable server first. See the [guarded editor protocol](../../docs/vard-editor-concurrency.md).
 
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.2.0
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.3.0
 ```
 
 Any client that reads a JSON config (Claude Desktop, Cursor, …):
@@ -32,7 +36,7 @@ Any client that reads a JSON config (Claude Desktop, Cursor, …):
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.2.0"],
+      "args": ["-y", "@vardum/mcp@0.3.0"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
@@ -67,6 +71,70 @@ an asset key as an owner does not make it an administration credential.
 assets in pages of 100 by default (`limit`: 1–500); pass `nextCursor` as `cursor`
 until it is null. Pending/failed versions are not listed.
 
+Images and video are accepted; video is stored and delivered as-is, and cannot
+be resized or transformed into variants.
+
+## Asset visibility
+
+New assets are private. `list_assets` reports `isPublic` for each ready asset.
+Use `set_asset_visibility` with `workspaceId`, `assetId`, and an explicit boolean
+`isPublic` to publish or make an asset private. The API requires asset publish
+permission; read-only keys cannot change visibility.
+
+Publishing exposes every ready version and its variants. A public Vard does not
+publish its files: its anonymous manifest remains unavailable while any mapped
+asset is private. Making a file private cannot revoke downloaded or cached
+copies. These tools require the matching visibility-capable API in the compatibility table.
+
+## Folder rules
+
+MCP 0.3.0 retains the folder-rule behavior introduced in 0.2.0 and requires the
+matching folder-aware API. `get_vard` with `workspaceId` and `vardId` returns
+editable configuration: `items` contains **manual mappings only**, and
+`folderRules` contains saved rules. Published 0.3.0 uses legacy mutation routes
+without revision guards.
+For a separate current live preview use `get_vard` with `resolved: true`; this is
+not a committed frozen snapshot or an editable definition. It can fail on collisions or limits without blocking
+configuration inspection or repair.
+
+`create_vard` accepts `name`, optional `isPublic` (defaults private), and optional
+`folderRules` (defaults empty); it does not require a slug. `update_vard` changes
+only supplied fields. For example, call it with:
+
+```json
+{
+  "workspaceId": "your-workspace-id",
+  "vardId": "your-vard-id",
+  "folderRules": [{ "sourcePrefix": "brand/", "outputPrefix": "assets/brand/" }]
+}
+```
+
+This preserves the Vard's name, public flag and manual mappings. Send
+`folderRules: []` to remove all rules. `replace_vard_items` replaces only manual
+mappings and does not change rules: **never copy resolved folder outputs into it**.
+The API remains authoritative for workspace permissions and validation; tools
+forward validation, authorization and resolution errors.
+
+Rules include ready current originals recursively: `brand/icons/logo.svg` becomes
+`assets/brand/icons/logo.svg`. Generated outputs are read-only, unpinned and
+untransformed; pending files are excluded until ready. Empty prefixes mean workspace
+or project root. Empty/nonexistent folders are valid. Prefixes must be safe literal
+relative directories ending in `/` (or empty), at most 255 characters; no globs or
+excludes. Maximum 64 rules and 1,000 total manual + generated outputs, with paths
+up to 500 characters. Explicit + rule and rule + rule collisions fail, including
+case/Unicode equivalents and file/directory overlaps; no precedence or truncation.
+A new private folder member makes the entire anonymous public manifest unavailable.
+
+Normal `vardum pull` intentionally adopts membership changes; `--frozen` consumes
+the committed snapshot without live resolution. There is no background sync.
+Removing rules leaves source assets/manual mappings intact. Choose `--delete` on
+the membership-updating pull: a normal no-delete pull keeps stale disk files but
+drops their tracking, so a later `--delete` cannot remove them; deliberate manual
+cleanup is then required. See [CLI snapshot limitations](https://github.com/f-tuma/vardum/tree/main/apps/cli#reproducible-asset-consumption)
+and [operations](https://github.com/f-tuma/vardum/blob/main/docs/operations.md#folder-rule-upgrade) before upgrading or rolling back.
+
+## Guarded editing — unreleased source
+
 `get_vard` returns a revision and manual mappings with stable IDs and literal
 `pinnedVersionId`. `update_vard`, `replace_vard_items`, and `delete_vard` require
 the caller's original `expectedRevision`. `replace_vard_items` also requires each
@@ -91,66 +159,10 @@ A stale write returns a structured MCP tool error with `status: 409`,
 current definition, and reapply the intended edit. The tool does not fetch a fresh
 token or retry a stale replacement list automatically.
 
-Images and video are accepted; video is stored and delivered as-is, and cannot
-be resized or transformed into variants.
-
-## Asset visibility
-
-New assets are private. `list_assets` reports `isPublic` for each ready asset.
-Use `set_asset_visibility` with `workspaceId`, `assetId`, and an explicit boolean
-`isPublic` to publish or make an asset private. The API requires asset publish
-permission; read-only keys cannot change visibility.
-
-Publishing exposes every ready version and its variants. A public Vard does not
-publish its files: its anonymous manifest remains unavailable while any mapped
-asset is private. Making a file private cannot revoke downloaded or cached
-copies. These tools require the matching visibility-capable API in the compatibility table.
-
-## Folder rules
-
-Use the next MCP client release with a server advertising `vardEditRevision: 1`.
-`get_vard` with `workspaceId` and `vardId` returns editable configuration and its
-revision: `items` contains **manual mappings only**, and `folderRules` contains
-saved rules. This uses the dedicated editor endpoint.
-For a separate current live preview use `get_vard` with `resolved: true`; this is
-not a committed frozen snapshot or an editable definition and does not supply an
-editor revision. It can fail on collisions or limits without blocking
-configuration inspection or repair.
-
-`create_vard` accepts `name`, optional `isPublic` (defaults private), and optional
-`folderRules` (defaults empty); it does not require a slug. `update_vard` changes
-only supplied fields. For example, call it with:
-
-```json
-{
-  "workspaceId": "your-workspace-id",
-  "vardId": "your-vard-id",
-  "expectedRevision": "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "folderRules": [{ "sourcePrefix": "brand/", "outputPrefix": "assets/brand/" }]
-}
-```
-
-Use the revision from the preceding `get_vard`; the token above is illustrative.
-This preserves the Vard's name, public flag and manual item IDs. Send
-`folderRules: []` to remove all rules. `replace_vard_items` replaces only manual
-mappings and does not change rules: **never copy resolved folder outputs into it**.
-The API remains authoritative for workspace permissions and validation; tools
-forward validation, authorization and resolution errors.
-
-Rules include ready current originals recursively: `brand/icons/logo.svg` becomes
-`assets/brand/icons/logo.svg`. Generated outputs are read-only, unpinned and
-untransformed; pending files are excluded until ready. Empty prefixes mean workspace
-or project root. Empty/nonexistent folders are valid. Prefixes must be safe literal
-relative directories ending in `/` (or empty), at most 255 characters; no globs or
-excludes. Maximum 64 rules and 1,000 total manual + generated outputs, with paths
-up to 500 characters. Explicit + rule and rule + rule collisions fail, including
-case/Unicode equivalents and file/directory overlaps; no precedence or truncation.
-A new private folder member makes the entire anonymous public manifest unavailable.
-
-Normal `vardum pull` intentionally adopts membership changes; `--frozen` consumes
-the committed snapshot without live resolution. There is no background sync.
-Removing rules leaves source assets/manual mappings intact. Choose `--delete` on
-the membership-updating pull: a normal no-delete pull keeps stale disk files but
-drops their tracking, so a later `--delete` cannot remove them; deliberate manual
-cleanup is then required. See [CLI snapshot limitations](https://github.com/f-tuma/vardum/tree/main/apps/cli#reproducible-asset-consumption)
-and [operations](https://github.com/f-tuma/vardum/blob/main/docs/operations.md#folder-rule-upgrade) before upgrading or rolling back.
+The source `get_vard` uses the dedicated editor endpoint for configuration.
+A `resolved: true` preview remains separate and supplies no editor revision.
+For a folder-rule update, use the same fields as the published example above
+and additionally pass `expectedRevision` from your preceding `get_vard`.
+Keep the returned full definition and revision for subsequent changes.
+This source contract must be released under a new client version before
+using it through npm; the published 0.3.0 archive remains unchanged.

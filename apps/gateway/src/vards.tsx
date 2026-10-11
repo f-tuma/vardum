@@ -769,8 +769,11 @@ function OutputGrid({
             onClick={() => onOpenFolder(folder.prefix)}
           >
             <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-primary" />
-            <span className="min-w-0 flex-1 truncate font-medium">{folder.name}</span>
-            <span className="text-xs text-muted-foreground tabular-nums">{folder.count}</span>
+            <span className="min-w-0 flex-1 truncate font-mono">
+              {folder.name}
+              <span className="text-muted-foreground">/</span>
+            </span>
+            <span className="font-mono text-xs text-muted-foreground tabular-nums">{folder.count}</span>
           </button>
         </li>
       ))}
@@ -783,7 +786,7 @@ function OutputGrid({
               className="flex w-full flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors outline-none hover:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               onClick={() => onOpenItem(item.id)}
             >
-              <span className="aspect-4/3 bg-muted">
+              <span className="aspect-4/3 bg-muted bg-cells">
                 <AssetThumb url={saved?.downloadUrl} mimeType={saved?.mimeType} />
               </span>
               <span className="flex flex-col gap-1 p-2.5">
@@ -1129,7 +1132,7 @@ function SetupGuide({ workspaceId, vardId }: { workspaceId: string; vardId: stri
       <ol className="flex flex-col gap-6">
         {steps.map((step, index) => (
           <li key={step.title} className="flex gap-4">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-sm border font-mono text-xs text-muted-foreground">
               {index + 1}
             </span>
             <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -1393,7 +1396,7 @@ function VardItemDialog({
               </DialogDescription>
             </DialogHeader>
 
-            <div className="flex h-40 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+            <div className="flex h-40 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells">
               <AssetThumb
                 url={preview.url}
                 mimeType={preview.mimeType}
@@ -1639,7 +1642,10 @@ function AssetPicker({
                 onClick={() => setPrefix(folder.prefix)}
               >
                 <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1 truncate font-medium">{folder.name}</span>
+                <span className="min-w-0 flex-1 truncate font-mono">
+              {folder.name}
+              <span className="text-muted-foreground">/</span>
+            </span>
               </button>
             </li>
           ))}
@@ -1693,7 +1699,7 @@ function PickerAsset({
         className="flex w-full flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors outline-none hover:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
         onClick={() => onPick({ id: asset.id, key: asset.key, mimeType: asset.mimeType ?? "" })}
       >
-        <span className="relative aspect-4/3 bg-muted">
+        <span className="relative aspect-4/3 bg-muted bg-cells">
           <AssetThumb url={assetPreviewUrl(workspaceSlug, asset)} mimeType={asset.mimeType} />
           {added && (
             <span className="absolute top-2 left-2">

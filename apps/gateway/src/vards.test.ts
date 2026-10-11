@@ -87,7 +87,13 @@ async function render(t: TestContext, options: {
 }
 async function settle() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); }); }
 function button(text: string, scope: ParentNode = document): HTMLButtonElement {
-  const found = [...scope.querySelectorAll("button")].find((element) => element.textContent?.trim() === text);
+  const found = [...scope.querySelectorAll("button")].find((element) => {
+    // Decorative braille spinner frames are text nodes, but are aria-hidden.
+    // Keep the pending-state assertions bound to the button's semantic label.
+    const label = element.cloneNode(true) as HTMLElement;
+    for (const hidden of label.querySelectorAll('[aria-hidden="true"]')) hidden.remove();
+    return label.textContent?.trim() === text;
+  });
   assert.ok(found, `Button ${text} must be rendered`); return found;
 }
 function field(label: string, scope: ParentNode = document): HTMLInputElement {

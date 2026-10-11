@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtures, verifyFirstProject } from "../examples/first-project/verify.mjs";
-import { run } from "./release-packages.mjs";
+import { publicCompatibilityClients, run } from "./release-packages.mjs";
 import { loginCli } from "./smoke-installed-packages.mjs";
 
 const example = fileURLToPath(new URL("../examples/first-project/", import.meta.url));
-const version = "0.6.0";
+const version = publicCompatibilityClients["@vardum/cli"];
 const registry = "https://registry.npmjs.org/";
 const sourceFiles = ["README.md", ".gitignore", "package.json", "package-lock.json", "verify.mjs"];
 
