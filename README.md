@@ -7,10 +7,11 @@ core workflow, first milestone, and planned templates and usage monitoring.
 That document describes intended behavior, not a list of shipped features.
 
 See [current readiness status](docs/production-readiness-2026-09-20.md#current-status)
-(reviewed 2026-10-03) for published clients and open server/runtime acceptance.
+(client status updated 2026-10-11) for published clients and open server/runtime acceptance.
 The same document preserves the initial September 20 audit and dated remediation
-evidence. Published CLI 0.6.0 uses schema 2; schema 3 and the next client/server
-candidates remain unreleased.
+evidence. [Published CLI 0.7.0, shared 0.3.0 and MCP 0.3.0](docs/client-release-0.7.md)
+retain schema 2. Registry bytes, independent public installs and the GitHub release
+are verified; the separate schema 3 draft remains unmerged and unpublished.
 
 ## Development
 
@@ -181,7 +182,7 @@ or request a delivery transformation. Commit the generated `vardum.json`, then
 use `vardum pull` to explicitly refresh assets and the `.vardum.lock` snapshot.
 Commit both files; CI uses `vardum pull --frozen` with CLI 0.6.0 or newer
 to consume the locked file set without fetching the current Vard.
-CLI 0.6.0 is available on npm; see [release status](docs/npm-release.md).
+CLI 0.7.0 is available on npm and is recommended for new projects; see [release status](docs/npm-release.md).
 Older CLI builds cannot safely maintain snapshots.
 Locked delivery still depends on version retention, valid signing and server
 availability. `vardum update` updates the CLI, not assets.
@@ -223,7 +224,7 @@ membership-updating pull** to remove stale tracked local files. A normal pull
 without deletion drops stale tracking but leaves those files on disk; a later
 `--delete` cannot discover them, so deliberate manual cleanup is required.
 
-This requires the matching folder-aware API/gateway and published MCP 0.2.0;
+This requires the matching folder-aware API/gateway and MCP 0.2.0 or newer (current release 0.3.0);
 see [release status](docs/npm-release.md), [MCP rule operations](apps/mcp/README.md#folder-rules) and
 [migration/rollback guidance](docs/operations.md#folder-rule-upgrade).
 

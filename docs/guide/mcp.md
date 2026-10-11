@@ -19,7 +19,7 @@ agent ── stdio ──> @vardum/mcp
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.2.0
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.3.0
 ```
 
 Claude Desktop, Cursor and other JSON configs:
@@ -29,7 +29,7 @@ Claude Desktop, Cursor and other JSON configs:
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.2.0"],
+      "args": ["-y", "@vardum/mcp@0.3.0"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }

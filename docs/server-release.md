@@ -18,12 +18,14 @@ versions, for the deployed lifecycle and clean-stack restore drill. First-projec
 onboarding uses the same explicit CLI baseline.
 
 Frozen snapshots retain **schema 2**, with minimum CLI **0.6.0**. CLI **0.7.0**,
-MCP **0.3.0** and shared **0.3.0** are a separate unpublished release candidate;
-its tested archives and owner-trust gate are not changed by this procedure.
+MCP **0.3.0** and shared **0.3.0** were independently published and verified on
+October 11; see [npm evidence](npm-release.md#october-11-publication-evidence).
+This procedure still selects the historical 0.6/0.2/0.2 compatibility clients;
+the publication does not change that explicit contract or certify a server bundle.
 The new resumable folder upload/import operations require that client release
 and the matching server capabilities (`folderUploadResume: 1`, and
 `folderVardImport: 1` for Vard imports). Public baseline compatibility acceptance
-does not prove those new CLI operations. Candidate smoke skips source-only folder
+does not prove those new CLI operations. Candidate smoke skips newer-client folder
 import assertions for the actual public consumer selection; ordinary source CI
 continues exercising its packed CLI. The same explicit feature-check guard is the
 integration boundary for future guarded MCP editor assertions: public MCP 0.2.0
@@ -279,9 +281,9 @@ promotion.
 
 The historical npm release at `v0.6.0` was published and verified under
 `frgtn-dot-dev`; [the npm procedure](npm-release.md) preserves that evidence.
-The current repository owner is `f-tuma`. Its corresponding trusted-publisher
-configuration remains **unverified**, pending the human npm login/settings check
-tracked by VARD-45. Historical success does not prove the new owner's trust.
+The current repository owner is `f-tuma`. All three corresponding trusted
+publishers were verified by actual OIDC publication on October 11 (VARD-45),
+with package 2FA preserved; see [current npm evidence](npm-release.md#october-11-publication-evidence).
 Server artifact preparation only reads published clients and does not depend on
 future npm publishing trust.
 

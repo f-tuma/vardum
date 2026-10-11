@@ -1,6 +1,6 @@
 {
   "name": "@vardum/cli",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Developer-first CLI for syncing Vardum Vards into a project",
   "license": "MIT",
   "type": "module",
@@ -33,11 +33,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frgtn-dot-dev/vardum.git",
+    "url": "git+https://github.com/f-tuma/vardum.git",
     "directory": "apps/cli"
   },
-  "homepage": "https://github.com/frgtn-dot-dev/vardum/tree/main/apps/cli#readme",
+  "homepage": "https://github.com/f-tuma/vardum/tree/main/apps/cli#readme",
   "bugs": {
-    "url": "https://github.com/frgtn-dot-dev/vardum/issues"
+    "url": "https://github.com/f-tuma/vardum/issues"
   }
 }

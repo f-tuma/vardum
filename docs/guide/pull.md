@@ -21,7 +21,7 @@ CI: vardum pull --frozen
 ## Setup
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.6.0
+npm install --save-dev --save-exact @vardum/cli@0.7.0
 npx vardum init       # vardum.json: server, workspace, Vard
 npx vardum login      # stores a key for this machine
 ```

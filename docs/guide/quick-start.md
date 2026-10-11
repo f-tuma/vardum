@@ -17,7 +17,7 @@ In the app:
 ## 2. Connect the repository
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.6.0
+npm install --save-dev --save-exact @vardum/cli@0.7.0
 npx vardum init     # writes vardum.json
 npx vardum login    # authorizes this machine in the browser
 ```

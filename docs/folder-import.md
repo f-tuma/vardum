@@ -1,9 +1,14 @@
 # Import a folder into a Vard
 
-This feature is in source and is not included in the published CLI 0.6.0.
+This feature is available in published **CLI 0.7.0** and is absent from CLI 0.6.0.
+Verify the matching backend capabilities before using it; see
+[release notes and upgrade order](client-release-0.7.md) and
+[npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server
-before upgrading project clients.
+with migrations through `0015_upload_request_checksum.sql` before upgrading
+project clients. The consumption flow continues to use schema **2** frozen
+snapshots.
 
 Run the command from a project containing `vardum.json`. It uses the server,
 workspace and Vard in that configuration. With a write key, preview the import:

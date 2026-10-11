@@ -2,20 +2,22 @@
 
 ## Current status
 
-Reviewed **2026-10-03** for planner project **frgtn.VARD**, issue **VARD-20**.
+Client release status updated **2026-10-11** for **VARD-68**. The broader review
+below was recorded **2026-10-03** for planner project **frgtn.VARD**, issue **VARD-20**.
 **Release acceptance remains open.** This summary supersedes the current-status
 claims in the dated audit below; it does not change the historical measurements.
 
 | Area | Verified status and remaining limit |
 | --- | --- |
-| Public npm packages | CLI **0.6.0**, MCP **0.2.0** and shared **0.2.0** are published. Registry SHA-512 values, independent installations and the public-npm first-project flow in a disposable Linux stack were verified. Schema **2** is the available frozen-snapshot contract; see [release evidence and compatibility](npm-release.md). |
-| Merged source | PRs #3–#12 are merged after their hosted CI checks: operational recovery/monitoring/backup/budgets, dependency fixes, [UI acceptance](https://github.com/f-tuma/vardum/pull/8), [first-project example](https://github.com/f-tuma/vardum/pull/9), [capability guidance](https://github.com/f-tuma/vardum/pull/10), [RustFS uploads](https://github.com/f-tuma/vardum/pull/11) and [Actions runtime](https://github.com/f-tuma/vardum/pull/12). These source checks are not a production deployment. |
+| Public npm packages | CLI **0.7.0**, MCP **0.3.0** and shared **0.3.0** are published. Actual registry bytes, independent public CLI/MCP installs with transitive shared and all four GitHub release assets are verified. Schema **2** remains the frozen-snapshot contract. The earlier first-project/server compatibility fixture stays on 0.6/0.2/0.2; see [release evidence](npm-release.md#october-11-publication-evidence). |
+| Earlier merged-source evidence | PRs #3–#12 were merged after their hosted CI checks: operational recovery/monitoring/backup/budgets, dependency fixes, [UI acceptance](https://github.com/f-tuma/vardum/pull/8), [first-project example](https://github.com/f-tuma/vardum/pull/9), [capability guidance](https://github.com/f-tuma/vardum/pull/10), [RustFS uploads](https://github.com/f-tuma/vardum/pull/11) and [Actions runtime](https://github.com/f-tuma/vardum/pull/12). These source checks are not a production deployment. |
 | Server/runtime release | VARD-6's `server-v0.7` remains a provisional candidate, without a final clean released artifact. VARD-51/52's [runtime patch](https://github.com/f-tuma/vardum/pull/14) passed [hosted validation](https://github.com/f-tuma/vardum/actions/runs/37140690476), including stack/routing/restore and patched native codecs. VARD-53's residual OS/native findings and clean artifact acceptance still hold the release. |
-| Next client contract | VARD-14's [draft PR #13](https://github.com/f-tuma/vardum/pull/13) has [passing CI](https://github.com/f-tuma/vardum/actions/runs/37134655120), but CLI **0.7.0**, shared **0.3.0**, MCP **0.3.0** and schema **3** are unmerged and unpublished. Server/runtime integration and release acceptance remain required. |
-| Publisher identity | September 20 OIDC publication under `frgtn-dot-dev/vardum` is historical evidence (VARD-40). The current private repository is `f-tuma/vardum`; its package-side npm trust is unverified while VARD-45 awaits npm-owner login. [Validation-only run 37129022120](https://github.com/f-tuma/vardum/actions/runs/37129022120) passed validation and artifact download; publication was skipped. |
+| Client 0.7 release | [Retained Actions run 38119764030, attempt 2](https://github.com/f-tuma/vardum/actions/runs/38119764030) passed actual OIDC publication and verification of the original `20495967` source archives. Resumable uploads and Vard imports require matching deployed capabilities and migration `0015`. Publication does not establish deployment or complete the Musubi pilot; see [upgrade order](client-release-0.7.md#upgrade-order). |
+| Deferred snapshot contract | VARD-14's [draft PR #13](https://github.com/f-tuma/vardum/pull/13) has [passing CI](https://github.com/f-tuma/vardum/actions/runs/37134655120), but schema **3** remains unmerged and unpublished. Its provisional client version numbers are separate from VARD-68 and must be reconsidered for a future release. Server/runtime integration and release acceptance remain required. |
+| Publisher identity | VARD-45/75 are complete: all three publishers use `f-tuma/vardum`, `release.yml`, environment `npm`, direct publish allowed and dist-tag management disabled. Old connections were replaced with explicit owner approval/security key, package 2FA preserved. Actual October 11 OIDC publication succeeded, without a static npm token. |
 | External acceptance | Provider HTTPS/DNS/CORS, production SMTP, external alert delivery, off-host backups, representative restore/capacity, the two-project Musubi workflow and a new human first-use session remain unproven. Automated checks used a simulated browser grant. |
 
-Track the release gates in frgtn.VARD: VARD-6, VARD-14, VARD-45 and VARD-51/52/53.
+Track the release gates in frgtn.VARD: VARD-6, VARD-14, VARD-51/52/53 and the post-publication VARD-68 integration.
 The dated evidence links identify tested releases and workflow runs.
 
 ## Initial audit — 2026-09-20
