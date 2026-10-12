@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { validateCandidate } from "./server-candidate.mjs";
+import { validateApiRuntimeSelection, validateCandidate } from "./server-candidate.mjs";
 import { readEvidenceSnapshot } from "./evidence-snapshot.mjs";
 
 export const evidenceFiles = Object.freeze(["candidate-summary.json", "acceptance-summary.json", "checksums.txt"]);
@@ -94,6 +94,7 @@ export async function writeServerEvidence({ candidateDirectory, runtimeDirectory
     Object.assign(candidate, { status: "verified", serverVersion: manifest.serverVersion, platform: manifest.platform,
       source: { commit: manifest.source.commit, tree: manifest.source.tree, dirty: manifest.source.dirty, context: manifest.source.context },
       sourceClientVersions: manifest.sourceClientVersions, clientVersions: manifest.clientVersions,
+      apiRuntime: validateApiRuntimeSelection(manifest.apiRuntime),
       clientFeatureCoverage: { schema: 2, folderVardImport: "not-covered-by-public-baseline", vardEditRevision: "not-covered-by-public-baseline" },
       manifestSha256: digest(bytes), archiveSha256: manifest.archive.sha256, files: manifest.files,
       migrations: manifest.migrations,

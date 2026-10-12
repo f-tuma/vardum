@@ -61,12 +61,21 @@ function policy(input) {
     noNewPrivileges: list(input.securityOpt, 64).some(value => typeof value === "string" && /^no-new-privileges(?::true)?$/.test(value)),
     ...optional(input, ["readOnly"], bool) };
 }
+function runtimeVersions(input) {
+  object(input);
+  return Object.fromEntries(runtimeNames.filter(name => input[name] !== undefined).map(name => {
+    // Node26 reports empty version strings for these optional components.
+    // Preserve the observation; it is not proof of component/caller absence.
+    const emptyOptional = ["nghttp3", "ngtcp2"].includes(name) && input[name] === "";
+    return [name, emptyOptional ? "" : version(input[name])];
+  }));
+}
 function runtimeInventory(input) {
   object(input);
   const fonts = list(input.fontInventory, 10_000);
   const result = {
     charset: projectRuntimeCharsetEvidence(input.charset),
-    versions: optional(object(input.versions), runtimeNames, version), nativeVersions: optional(object(input.sharp), nativeNames, version),
+    versions: runtimeVersions(input.versions), nativeVersions: optional(object(input.sharp), nativeNames, version),
     uid: bounded(input.uid), process: privileges(input.process), initProcess: privileges(input.initProcess),
     inheritedTools: optional(object(input.inheritedTools), tools, bool), productionStorePresent: bool(input.productionStorePresent),
     developmentPackageCount: list(input.developmentPackages, 10_000).length,

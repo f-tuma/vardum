@@ -303,6 +303,45 @@ for (const [name, nativeKey] of [["api-os.txt", "api"], ["gateway-os.txt", "gate
   } finally { await f.close(); }
 });
 
+test("Node26 empty optional HTTP3 version observations retain complete safe native inventories", async () => {
+  const f = await fixture();
+  try {
+    await successfulReports(f);
+    for (const name of ["api-runtime.json", "worker-runtime.json"]) {
+      const value = inventory();
+      value.versions = { ...value.versions, node: "26.11.0", openssl: "3.5.9", nghttp3: "", ngtcp2: "" };
+      await f.save(name, value);
+    }
+    const summary = await f.project();
+    assert.equal(summary.evidenceCompleteness, "complete");
+    for (const name of ["api-runtime.json", "worker-runtime.json"]) {
+      assert.equal(summary.reports[name].status, "projected");
+      assert.equal(summary.reports[name].data.versions.node, "26.11.0");
+      assert.equal(summary.reports[name].data.versions.openssl, "3.5.9");
+      assert.equal(summary.reports[name].data.versions.nghttp3, "");
+      assert.equal(summary.reports[name].data.versions.ngtcp2, "");
+      assert.equal(summary.reports[name].data.nativeVersions.sharp, "0.35.5");
+    }
+    await noSecrets(f);
+  } finally { await f.close(); }
+});
+
+for (const [field, value] of [["node", ""], ["openssl", ""], ["zlib", ""], ["nghttp3", secret], ["ngtcp2", `https://${secret}.invalid`]]) {
+  test(`known optional empty observations do not relax ${field} validation`, async () => {
+    const f = await fixture();
+    try {
+      await successfulReports(f);
+      const raw = inventory(); raw.versions[field] = value;
+      await f.save("api-runtime.json", raw);
+      const summary = await f.project();
+      assert.equal(summary.evidenceCompleteness, "partial");
+      assert.equal(summary.reports["api-runtime.json"].status, "missing-invalid-or-unsafe");
+      assert.equal(summary.reports["worker-runtime.json"].status, "projected");
+      await noSecrets(f);
+    } finally { await f.close(); }
+  });
+}
+
 test("older runtime inventories retain source bindings and report unknown charset evidence", async () => {
   const f = await fixture();
   try {

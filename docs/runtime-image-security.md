@@ -168,6 +168,23 @@ Keep versions, date, findings and exact candidate identity with release evidence
 External-provider, deployment, capacity and human first-use acceptance remain
 separate requirements.
 
+## Node26 candidate preparation — 12 October 2026
+
+An explicitly selected, pinned Node26 **test candidate** can be prepared using
+the [portable candidate procedure](server-release.md#opt-in-node26-compatibility-candidate).
+Default production builds retain the pinned Node22 runtime. The Node26 vendor
+base contains 26.11.0/OpenSSL 3.5.9 and its actual Node ELF is checked against the
+signed official release archive; a version label alone is insufficient.
+The selection is not a production lifecycle decision: 26 is currently Current.
+
+Run the full unchanged-image compatibility/restore/TLS suite and retain the
+unfiltered fresh scan locally. Passing probes do not dispose of scanner or
+vendor findings. Existing historical assessments below must not be copied onto
+the new image automatically. System zlib1g CVE-2026-85091 remains open, Node's
+bundled zlib is distinct, and Sharp's bundled zlib-ng requires its own assessment.
+Reconcile the 14 OpenSSL advisories and actual component/caller boundaries before
+any formal runtime or release acceptance. Provider and deployment remain separate.
+
 ## Assessment checkpoint: 3 October 2026
 
 The first full patched-codec acceptance used API/worker image
