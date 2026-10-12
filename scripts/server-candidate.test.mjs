@@ -117,6 +117,21 @@ test("explicit Node26 selection is fixed, observed and sanitized; legacy selecti
   } finally { await f.close(); }
 });
 
+test("manual workflow passes hostile runtime input as data and fails before candidate mutation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vardum-workflow-runtime-"));
+  try {
+    const workflow = await readFile(new URL("../.github/workflows/server-candidate.yml", import.meta.url), "utf8");
+    assert.match(workflow, /API_RUNTIME_PROFILE: \$\{\{ inputs\.api_runtime \}\}/);
+    const line = workflow.split("\n").find(line => line.includes("run: node scripts/server-candidate.mjs prepare"));
+    assert.ok(line.includes('--api-runtime "$API_RUNTIME_PROFILE"'));
+    assert.equal(line.includes("${{"), false);
+    const marker = join(root, "unexpected-shell-write");
+    await assert.rejects(run("bash", ["-c", line.trim().slice(5)], { cwd: new URL("../", import.meta.url),
+      env: { ...process.env, API_RUNTIME_PROFILE: `node26"; touch "${marker}"; #` }, timeout: 10_000 }), /Unknown API runtime/);
+    assert.deepEqual(await readdir(root), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("unknown runtime profile fails before any subprocess or output mutation", async () => {
   const root = await mkdtemp(join(tmpdir(), "vardum-runtime-profile-"));
   try {
