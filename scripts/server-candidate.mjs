@@ -398,7 +398,12 @@ export async function prepareCandidate(directory, { execute = run, allowDirty = 
     const tag = `vardum-candidate-${role}:${suffix}`;
     assert.equal(await missingImage(tag, execute), null, "Refuse to overwrite candidate image tag");
     if (role === "api" || role.startsWith("gateway")) {
-      await execute("docker", ["build", "--platform", platform, "--tag", tag,
+      // A fresh config subject avoids subject-linked referrers left by earlier
+      // builds in a containerd store. Local labels are isolation metadata, not
+      // authenticated provenance; vendor graph verification stays unchanged.
+      await execute("docker", ["build", "--platform", platform, "--provenance=false",
+        "--label", `org.opencontainers.image.revision=${commit}`,
+        "--label", `io.vardum.candidate.namespace=${suffix}`, "--tag", tag,
         "--file", `docker/${role === "api" ? "api" : "gateway"}.Dockerfile`,
         ...(role.startsWith("gateway") ? ["--target", role === "gateway-dokploy" ? "dokploy" : "runtime",
           "--build-arg", `VITE_UPLOAD_ORIGINS=${uploadOrigins}`] : ["--build-arg", `API_RUNTIME_IMAGE=${runtimeProfile.baseImage}`]), "."],

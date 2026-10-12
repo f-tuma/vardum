@@ -92,6 +92,12 @@ test("default candidate retains the exact Node22 production base and explicit se
     assert.match(dockerfile, /FROM node:22\.23\.3-bookworm-slim@sha256:43ac6c60/);
     assert.match(dockerfile, /FROM \$\{API_RUNTIME_IMAGE\} AS runtime/);
     assert.ok(f.builds[0].includes(`API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}`));
+    for (const args of f.builds) {
+      assert.ok(args.includes("--provenance=false"));
+      assert.ok(args.includes(`org.opencontainers.image.revision=${commit}`));
+      assert.ok(args.includes(`io.vardum.candidate.namespace=${m.images[0].tag.split(":")[1]}`));
+    }
+
     assert.equal(f.builds.slice(1).some(args => args.some(arg => arg.startsWith("API_RUNTIME_IMAGE="))), false);
   } finally { await f.close(); }
 });
@@ -491,6 +497,20 @@ async function repackOci(f, manifest, built) {
   await run("tar", ["-cf", join(f.directory, "images.tar"), "-C", built.root, "oci-layout", "index.json", "manifest.json", "blobs"]);
   await updateArchive(f, manifest);
 }
+
+test("an extra unnamed OCI root is still rejected before Docker load", async () => {
+  const f = await fixture();
+  try {
+    const m = JSON.parse(await readFile(join(f.directory, "candidate.json"), "utf8"));
+    const built = await ociArchive(f, m.images, join(f.directory, "images.tar"), { producerIsClassic: true });
+    const extra = structuredClone(built.index.manifests[0]);
+    delete extra.annotations;
+    built.index.manifests.push(extra);
+    await repackOci(f, m, built);
+    await assert.rejects(loadCandidate(f.directory, { execute: f.execute }), /Unexpected OCI saved image tags/);
+    assert.deepEqual(f.mutations, []);
+  } finally { await f.close(); }
+});
 
 async function changeLeaf(built, action) {
   const descriptor = built.index.manifests[0];

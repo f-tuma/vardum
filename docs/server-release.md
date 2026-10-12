@@ -64,6 +64,16 @@ production Dokploy Compose uses the distinct saved `gateway-dokploy` image with
 its baked marketing template. PostgreSQL 17, RustFS 1.0.1 and the bucket-init
 AWS CLI image are included in the same `docker save` archive, with their actual
 image IDs. Unique candidate tags preserve existing application/smoke tags.
+The three locally built roles explicitly disable unsigned local BuildKit
+provenance and add source-revision and unique preparation-namespace config labels.
+The fresh config subjects prevent Docker's containerd store from attaching stale
+referrer artifacts belonging to earlier builds of the same layers. Labels are
+exporter isolation metadata, not authenticated provenance. Vendor image graphs,
+signed base references and strict rejection of extra saved roots stay unchanged.
+Each preparation intentionally has distinct local app config identities; its
+saved images and archive remain unchanged throughout acceptance. No shared image
+store pruning or archive-index rewriting is part of preparation.
+
 The manifest records commit, Git tree, platform, image tags/IDs and config IDs, archive SHA-256,
 every deployment-file checksum, all migration SHA-256 values, exact source client
 versions and the separate public compatibility versions. Migration verification
