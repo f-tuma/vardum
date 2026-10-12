@@ -1,3 +1,5 @@
+ARG API_RUNTIME_IMAGE=gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c
+
 FROM node:22.23.3-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS build
 
 RUN corepack enable
@@ -13,7 +15,7 @@ RUN pnpm --filter "@vardum/api..." build \
   && pnpm --filter @vardum/api deploy --legacy --prod /output \
   && cp -R apps/api/dist apps/api/drizzle /output/
 
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c AS runtime
+FROM ${API_RUNTIME_IMAGE} AS runtime
 
 # The vendor's Node entrypoint would duplicate the existing Compose/CMD node.
 ENTRYPOINT []

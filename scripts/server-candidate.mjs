@@ -319,7 +319,50 @@ export function normalizeUploadOrigins(value) {
   }))].join(",");
 }
 
-export async function prepareCandidate(directory, { execute = run, allowDirty = false, uploadOrigins = "http://localhost:19000" } = {}) {
+// Candidate profiles are an explicit test choice, never a deployment default.
+// Node26 is Current; this selection does not authorize a production transition.
+const apiRuntimeProfiles = Object.freeze({
+  node22: Object.freeze({ name: "node22", baseImage: "gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c" }),
+  node26: Object.freeze({ name: "node26", baseImage: "gcr.io/distroless/nodejs26-debian13:nonroot@sha256:a3bb283a564754266646d6029c5b6aa4f760b9415dae1398db8d7f8142ee1375" }),
+});
+const node26Observation = Object.freeze({ node: "26.11.0", openssl: "3.5.9", uid: 65532,
+  platform: "linux/amd64", nodeSha256: "c445d85bb8886e15bbc85973134274fb190088233b174841b9999dbabfeef9f8" });
+export function candidateApiRuntime(name = "node22") {
+  assert.ok(typeof name === "string" && Object.hasOwn(apiRuntimeProfiles, name), "Unknown API runtime candidate profile");
+  return { ...apiRuntimeProfiles[name] };
+}
+export function validateApiRuntimeSelection(value) {
+  // Older saved bundles do not declare a profile. Do not infer one from tags.
+  if (value === undefined) return null;
+  assert.ok(value && typeof value === "object" && !Array.isArray(value), "Invalid API runtime selection");
+  const profile = candidateApiRuntime(value.profile?.name);
+  // Require the fixed profile and only its safe observed fields. Labels alone
+  // are not runtime proof; preparation and running acceptance probe the image.
+  const expected = { profile, observation: profile.name === "node26" ? { ...node26Observation } : null };
+  assert.deepEqual(value, expected, "API runtime selection or observation does not match the verified profile");
+  return expected;
+}
+export async function probeCandidateApiRuntime(imageId, profile, execute = run) {
+  assert.match(imageId, /^sha256:[a-f0-9]{64}$/, "API runtime probe requires an immutable host image ID");
+  assert.deepEqual(profile, candidateApiRuntime(profile.name), "Unknown API runtime probe profile");
+  if (profile.name !== "node26") return null;
+  const source = `
+    const { readFileSync } = require("node:fs");
+    const { createHash } = require("node:crypto");
+    console.log(JSON.stringify({ node: process.versions.node, openssl: process.versions.openssl,
+      uid: process.getuid(), platform: process.platform + "/" + (process.arch === "x64" ? "amd64" : process.arch),
+      nodeSha256: createHash("sha256").update(readFileSync(process.execPath)).digest("hex") }));
+  `;
+  const result = await execute("docker", ["run", "--rm", "--platform", platform, "--network", "none", "--read-only",
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "32", "--memory", "256m",
+    "--entrypoint", "node", imageId, "-e", source], { timeout: 30_000, maxBuffer: 16_384 });
+  const observation = JSON.parse(result.stdout);
+  assert.deepEqual(observation, node26Observation, "Observed API runtime does not match the verified Node26 candidate");
+  return observation;
+}
+
+export async function prepareCandidate(directory, { execute = run, allowDirty = false, uploadOrigins = "http://localhost:19000", apiRuntime = "node22" } = {}) {
+  const runtimeProfile = candidateApiRuntime(apiRuntime);
   directory = resolve(directory);
   const git = async (...args) => (await execute("git", args, { cwd: repo })).stdout.trim();
   const commit = await git("rev-parse", "HEAD");
@@ -350,6 +393,7 @@ export async function prepareCandidate(directory, { execute = run, allowDirty = 
   }
   const suffix = `${serverVersion}-${commit.slice(0, 12)}-${randomBytes(6).toString("hex")}`;
   const images = {};
+  let runtimeObservation = null;
   for (const role of roles) {
     const tag = `vardum-candidate-${role}:${suffix}`;
     assert.equal(await missingImage(tag, execute), null, "Refuse to overwrite candidate image tag");
@@ -357,7 +401,7 @@ export async function prepareCandidate(directory, { execute = run, allowDirty = 
       await execute("docker", ["build", "--platform", platform, "--tag", tag,
         "--file", `docker/${role === "api" ? "api" : "gateway"}.Dockerfile`,
         ...(role.startsWith("gateway") ? ["--target", role === "gateway-dokploy" ? "dokploy" : "runtime",
-          "--build-arg", `VITE_UPLOAD_ORIGINS=${uploadOrigins}`] : []), "."],
+          "--build-arg", `VITE_UPLOAD_ORIGINS=${uploadOrigins}`] : ["--build-arg", `API_RUNTIME_IMAGE=${runtimeProfile.baseImage}`]), "."],
       { cwd: buildRepo, timeout: 30 * 60_000, maxBuffer: 16 * 1024 * 1024 });
     } else {
       if (!await missingImage(sources[role], execute))
@@ -369,6 +413,7 @@ export async function prepareCandidate(directory, { execute = run, allowDirty = 
     const image = await inspectImage(tag, execute);
     images[role] = { role, tag, id: image.Id, platform, ...(sources[role] ? { source: sources[role] } : {}) };
     await checkImage(image, images[role], execute);
+    if (role === "api") runtimeObservation = await probeCandidateApiRuntime(image.Id, runtimeProfile, execute);
   }
   const composeImages = { ...images, migrate: images.api, worker: images.api };
   for (const file of payload) {
@@ -404,6 +449,7 @@ export async function prepareCandidate(directory, { execute = run, allowDirty = 
   const manifest = {
     schema: 1, serverVersion, platform, source: { commit, tree, dirty, context: dirty ? "dirty-working-tree" : "tracked-commit" },
     sourceClientVersions, clientVersions: clients, uploadOrigins,
+    apiRuntime: { profile: runtimeProfile, observation: runtimeObservation },
     images: roles.map((role) => images[role]), migrations,
     archive: { file: archive, sha256: files[archive] }, files,
   };
@@ -435,6 +481,7 @@ export async function validateCandidate(directory, { execute = run, expectedComm
   assert.equal(manifest.schema, 1);
   assert.equal(manifest.serverVersion, serverVersion, "Wrong server candidate version");
   assert.equal(manifest.platform, platform, "Only linux/amd64 is certified");
+  validateApiRuntimeSelection(manifest.apiRuntime);
   assert.match(manifest.source?.commit ?? "", /^[a-f0-9]{40}$/);
   assert.match(manifest.source?.tree ?? "", /^[a-f0-9]{40}$/);
   assert.equal(typeof manifest.source?.dirty, "boolean");
@@ -942,6 +989,12 @@ export async function assertRunningCandidate(directory, project, { execute = run
     if (service !== "migrate") assert.equal(container.State.Running, true, `${service} must be running`);
     else assert.equal(container.State.ExitCode, 0, "Candidate migration must succeed");
   }
+  const selection = validateApiRuntimeSelection(manifest.apiRuntime);
+  if (selection?.profile.name === "node26") {
+    const api = manifest.images.find((image) => image.role === "api");
+    const loadedId = await checkImage(await inspectImage(api.tag, execute), api, execute);
+    await probeCandidateApiRuntime(loadedId, selection.profile, execute);
+  }
   console.log(`Exact candidate image IDs passed for ${project}`);
 }
 
@@ -949,13 +1002,15 @@ async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     "allow-dirty": { type: "boolean", default: false },
     "upload-origins": { type: "string", default: "http://localhost:19000" },
+    "api-runtime": { type: "string" },
     "expected-commit": { type: "string" }, "require-clean": { type: "boolean", default: false }, project: { type: "string" },
     role: { type: "string" },
   } });
   const [command, directory] = positionals;
-  assert.ok(positionals.length === 2 && ["prepare", "check", "load", "running", "image"].includes(command), "Usage: node scripts/server-candidate.mjs prepare|check|load|running|image DIRECTORY [--expected-commit SHA] [--upload-origins ORIGINS] [--project disposable-project] [--role ROLE]");
+  assert.ok(positionals.length === 2 && ["prepare", "check", "load", "running", "image"].includes(command), "Usage: node scripts/server-candidate.mjs prepare|check|load|running|image DIRECTORY [--expected-commit SHA] [--upload-origins ORIGINS] [--api-runtime node22|node26] [--project disposable-project] [--role ROLE]");
+  assert.ok(values["api-runtime"] === undefined || command === "prepare", "--api-runtime is only valid for preparation; saved selection cannot be overridden");
   let manifest;
-  if (command === "prepare") manifest = await prepareCandidate(directory, { allowDirty: values["allow-dirty"], uploadOrigins: values["upload-origins"] });
+  if (command === "prepare") manifest = await prepareCandidate(directory, { allowDirty: values["allow-dirty"], uploadOrigins: values["upload-origins"], apiRuntime: values["api-runtime"] });
   else if (command === "running") return assertRunningCandidate(directory, values.project, { expectedCommit: values["expected-commit"] });
   else if (command === "image") return console.log(await candidateImageId(directory, values.role, { expectedCommit: values["expected-commit"], allowDirty: values["allow-dirty"] }));
   else manifest = await (command === "load" ? loadCandidate : validateCandidate)(directory, { expectedCommit: values["expected-commit"], allowDirty: values["allow-dirty"], requireClean: values["require-clean"] });

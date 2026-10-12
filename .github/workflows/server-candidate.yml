@@ -4,6 +4,13 @@ name: Server candidate validation
 # Normal CI runs the candidate verifier/projection fixtures through scripts/*.test.mjs.
 on:
     workflow_dispatch:
+        inputs:
+            api_runtime:
+                description: API runtime candidate (Node26 is Current; testing only)
+                type: choice
+                required: true
+                default: node22
+                options: [node22, node26]
 
 permissions:
     contents: read
@@ -38,7 +45,7 @@ jobs:
             - name: Validate operational alert rules
               run: docker run --rm -v "$PWD/docker/monitoring:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996 test rules alerts.test.yml
             - name: Prepare each server runtime once and save the portable bundle locally
-              run: node scripts/server-candidate.mjs prepare artifacts/server
+              run: node scripts/server-candidate.mjs prepare artifacts/server --api-runtime "${{ inputs.api_runtime }}"
             - name: Check clean candidate source identity
               run: node scripts/server-candidate.mjs check artifacts/server --require-clean --expected-commit "$GITHUB_SHA"
             - name: Accept the exact saved images with public compatibility clients and restore

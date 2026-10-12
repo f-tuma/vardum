@@ -88,6 +88,57 @@ certification. The validation workflow prepares only clean artifacts. Rebuild
 and rerun full acceptance after the final reviewed commit; do not relabel a dirty
 bundle or replace its manifest.
 
+## Opt-in Node26 compatibility candidate
+
+The default production runtime and Node22 build stage stay unchanged. To prepare
+the separately approved **test candidate**, pass `--api-runtime node26` only to
+`prepare`; `node22` is the default. Arbitrary image references are not accepted,
+and check/load/running cannot override a saved selection. The manual validation
+workflow offers the same choice with a Node22 default and read-only permissions.
+It does not publish or deploy either candidate.
+
+The Node26 profile pins the authenticated Distroless nonroot index
+`sha256:a3bb283a564754266646d6029c5b6aa4f760b9415dae1398db8d7f8142ee1375`.
+Its actual runtime is **Node 26.11.0 / OpenSSL 3.5.9**; the official release index
+lists newer 26.11.1. Node26 is **Current**, rather than LTS. Before saving and
+during running-image acceptance, a bounded network-disabled probe requires that
+actual version pair, UID 65532, Linux/amd64 and the release-verified Node ELF hash
+`c445d85bb8886e15bbc85973134274fb190088233b174841b9999dbabfeef9f8`.
+The selection and observations appear in `candidate.json` and the sanitized
+candidate summary. Legacy bundles without this field remain selection-unspecified;
+validation never invents a runtime identity from their tags. Profile metadata is
+not author authentication, advisory disposition or release approval.
+
+```sh
+node scripts/server-candidate.mjs prepare "$CANDIDATE" --api-runtime node26
+node scripts/server-candidate.mjs check "$CANDIDATE" --require-clean --expected-commit "$(git rev-parse HEAD)"
+SMOKE_SERVER_CANDIDATE="$CANDIDATE" SMOKE_IMAGE_REPORT_DIR="$REPORTS" bash scripts/smoke-production.sh
+node scripts/server-candidate.mjs check "$CANDIDATE" --require-clean --expected-commit "$(git rev-parse HEAD)"
+node scripts/server-candidate-evidence.mjs "$CANDIDATE" "$REPORTS" "$SERVER_SUMMARY" --expected-commit "$(git rev-parse HEAD)" --acceptance-status success
+node scripts/runtime-evidence.mjs "$REPORTS" "$RUNTIME_SUMMARY" --expected-commit "$(git rev-parse HEAD)" --acceptance-status success --job-status success
+```
+
+Choose distinct, new local directories with space for full archives and the
+scanner database. Keep them unchanged for acceptance and local replay. The second
+projection retains detailed native/TLS evidence; the server projection retains
+candidate identity and aggregate compatibility results. Raw image archives,
+scanner databases, environments and logs must not be added to workflow uploads.
+
+The existing suite covers the public 0.6/0.2/0.2 client baseline, native codecs,
+RLS, 42 actual TLS cases and unchanged-image clean-stack restore. It preserves
+older frozen snapshots created within that same candidate lifecycle; it does
+not establish a historical Node22-to-Node26 upgrade or newer published-client
+editor/import protocol coverage. Inspect each actual result before claiming PASS.
+Reconcile all fresh findings and the 14 OpenSSL advisory records separately.
+Debian system zlib CVE-2026-85091 remains unresolved; Sharp's zlib-ng is a separate
+component. This optional preparation cannot mark VARD-55/74 or formal VARD-6 Done,
+authorize production adoption, or replace external-provider acceptance.
+
+See [runtime security](runtime-image-security.md),
+[Node lifecycle](https://nodejs.org/en/about/previous-releases), the
+[official security advisory](https://openssl-library.org/news/secadv/20260929.txt)
+and the [Distroless catalog](https://github.com/GoogleContainerTools/distroless#what-images-are-available).
+
 ## Accept the exact artifact
 
 Keep the tested directory intact and retain full image exports/scanner database

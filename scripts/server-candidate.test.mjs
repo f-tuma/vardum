@@ -8,11 +8,11 @@ import { gzipSync } from "node:zlib";
 import { evidenceFiles, writeServerEvidence } from "./server-candidate-evidence.mjs";
 import { runInstalledConsumerCheck } from "./smoke-installed-packages.mjs";
 import { publicCompatibilityClients, publicCompatibilityRelease, run, smokeClientOptions } from "./release-packages.mjs";
-import { assertRunningCandidate, candidateImageId, candidateComposeArgs, createGraphBudget, loadCandidate, normalizeUploadOrigins, prepareCandidate, validateCandidate, walkSavedGraph } from "./server-candidate.mjs";
+import { assertRunningCandidate, candidateApiRuntime, probeCandidateApiRuntime, validateApiRuntimeSelection, candidateImageId, candidateComposeArgs, createGraphBudget, loadCandidate, normalizeUploadOrigins, prepareCandidate, validateCandidate, walkSavedGraph } from "./server-candidate.mjs";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const commit = "a".repeat(40);
-async function fixture({ sourceVersions } = {}) {
+async function fixture({ sourceVersions, apiRuntime } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vardum-candidate-test-"));
   const directory = join(root, "bundle");
   const store = new Map();
@@ -45,6 +45,8 @@ async function fixture({ sourceVersions } = {}) {
       return result;
     }
     if (args[0] === "version") return { stdout: "linux/amd64" };
+    if (args[0] === "run") return { stdout: JSON.stringify({ node: "26.11.0", openssl: "3.5.9", uid: 65532,
+      platform: "linux/amd64", nodeSha256: "c445d85bb8886e15bbc85973134274fb190088233b174841b9999dbabfeef9f8" }) };
     if (args[0] === "image") {
       const saved = store.get(args[2]);
       if (!saved) throw Object.assign(new Error("missing"), { code: 1, stderr: "No such image" });
@@ -67,7 +69,7 @@ async function fixture({ sourceVersions } = {}) {
     }
     return { stdout: "" };
   };
-  await prepareCandidate(directory, { execute });
+  await prepareCandidate(directory, { execute, apiRuntime });
   const builds = mutations.filter((args) => args[0] === "build");
   mutations.length = 0;
   const manifestPath = join(directory, "candidate.json");
@@ -78,6 +80,90 @@ async function fixture({ sourceVersions } = {}) {
   };
   return { directory, root, execute, mutations, builds, store, archives, alter, close: () => rm(root, { recursive: true, force: true }) };
 }
+
+test("default candidate retains the exact Node22 production base and explicit selection", async () => {
+  const f = await fixture();
+  try {
+    const m = await validateCandidate(f.directory, { execute: f.execute, expectedCommit: commit });
+    assert.equal(m.apiRuntime.profile.name, "node22");
+    assert.equal(m.apiRuntime.observation, null);
+    const dockerfile = await readFile(new URL("../docker/api.Dockerfile", import.meta.url), "utf8");
+    assert.ok(dockerfile.startsWith(`ARG API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}\n`));
+    assert.match(dockerfile, /FROM node:22\.23\.3-bookworm-slim@sha256:43ac6c60/);
+    assert.match(dockerfile, /FROM \$\{API_RUNTIME_IMAGE\} AS runtime/);
+    assert.ok(f.builds[0].includes(`API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}`));
+    assert.equal(f.builds.slice(1).some(args => args.some(arg => arg.startsWith("API_RUNTIME_IMAGE="))), false);
+  } finally { await f.close(); }
+});
+
+test("explicit Node26 selection is fixed, observed and sanitized; legacy selection stays unspecified", async () => {
+  const f = await fixture({ apiRuntime: "node26" });
+  try {
+    const m = await validateCandidate(f.directory, { execute: f.execute, expectedCommit: commit });
+    assert.equal(m.apiRuntime.profile.name, "node26");
+    assert.equal(m.apiRuntime.observation.node, "26.11.0");
+    assert.equal(m.apiRuntime.observation.openssl, "3.5.9");
+    assert.ok(f.builds[0].includes(`API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}`));
+    const evidence = await writeServerEvidence({ candidateDirectory: f.directory, runtimeDirectory: join(f.root, "absent"),
+      outputDirectory: join(f.root, "summary"), expectedCommit: commit, execute: f.execute });
+    assert.deepEqual(evidence.candidate.apiRuntime, m.apiRuntime);
+    assert.equal(evidence.candidate.releaseCertification, "pending");
+    await f.alter(m => { delete m.apiRuntime; });
+    const legacy = await writeServerEvidence({ candidateDirectory: f.directory, runtimeDirectory: join(f.root, "absent"),
+      outputDirectory: join(f.root, "legacy-summary"), expectedCommit: commit, execute: f.execute });
+    assert.equal(legacy.candidate.status, "verified");
+    assert.equal(legacy.candidate.apiRuntime, null);
+    assert.equal(validateApiRuntimeSelection(undefined), null);
+  } finally { await f.close(); }
+});
+
+test("unknown runtime profile fails before any subprocess or output mutation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vardum-runtime-profile-"));
+  try {
+    const calls = [];
+    const path = join(root, "candidate");
+    await assert.rejects(prepareCandidate(path, { apiRuntime: "evil.invalid/unsafe:latest",
+      execute: async (...args) => { calls.push(args); throw new Error("must not execute"); } }), /Unknown API runtime/);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(await readdir(root), []);
+    for (const value of [null, "constructor", "__proto__", "node24", "NODE26"]) assert.throws(() => candidateApiRuntime(value), /Unknown API runtime/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const field of ["node", "openssl", "uid", "platform", "nodeSha256"]) test(`actual Node26 ${field} mismatch fails bounded runtime probe`, async () => {
+  const observation = { node: "26.11.0", openssl: "3.5.9", uid: 65532, platform: "linux/amd64",
+    nodeSha256: "c445d85bb8886e15bbc85973134274fb190088233b174841b9999dbabfeef9f8" };
+  observation[field] = field === "uid" ? 0 : "mismatched";
+  let calls = 0;
+  await assert.rejects(probeCandidateApiRuntime(`sha256:${"a".repeat(64)}`, candidateApiRuntime("node26"), async (command, args, options) => {
+    calls++;
+    assert.equal(command, "docker");
+    assert.deepEqual(args.slice(0, 9), ["run", "--rm", "--platform", "linux/amd64", "--network", "none", "--read-only", "--cap-drop", "ALL"]);
+    assert.ok(args.includes("no-new-privileges"));
+    assert.equal(args.some(arg => /--(?:mount|volume|user)/.test(arg)), false);
+    assert.equal(options.timeout, 30_000);
+    return { stdout: JSON.stringify(observation) };
+  }), /Observed API runtime/);
+  assert.equal(calls, 1);
+});
+
+for (const [name, change] of [
+  ["arbitrary image", m => { m.apiRuntime.profile.baseImage = "evil.invalid/node:latest"; }],
+  ["wrong observed version", m => { m.apiRuntime.observation.node = "26.11.1"; }],
+  ["extra private field", m => { m.apiRuntime.observation.private = "secret"; }],
+  ["null selection", m => { m.apiRuntime = null; }],
+]) test(`tampered runtime ${name} fails before Docker load and invalidates projection`, async () => {
+  const f = await fixture({ apiRuntime: "node26" });
+  try {
+    await f.alter(change);
+    await assert.rejects(loadCandidate(f.directory, { execute: f.execute, expectedCommit: commit }), /runtime|Runtime/);
+    assert.deepEqual(f.mutations, []);
+    const evidence = await writeServerEvidence({ candidateDirectory: f.directory, runtimeDirectory: join(f.root, "absent"),
+      outputDirectory: join(f.root, "summary"), expectedCommit: commit, execute: f.execute });
+    assert.equal(evidence.candidate.status, "invalid-or-incomplete");
+    assert.equal(JSON.stringify(evidence.candidate).includes("secret"), false);
+  } finally { await f.close(); }
+});
 
 test("candidate uses exact saved images, keeps independent clients and never builds on load", async () => {
   const f = await fixture();
