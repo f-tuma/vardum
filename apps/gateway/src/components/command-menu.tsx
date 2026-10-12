@@ -7,6 +7,7 @@ import {
   FileIcon,
   FolderIcon,
   ImagesIcon,
+  Link2Icon,
   LayoutDashboardIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -153,6 +154,11 @@ function CommandMenuContent({
       label: "Vards",
       icon: BoxesIcon,
       go: () => navigate({ to: "/workspaces/$workspaceId/vards", params: { workspaceId } }),
+    },
+    {
+      label: "Usage",
+      icon: Link2Icon,
+      go: () => navigate({ to: "/workspaces/$workspaceId/usage", params: { workspaceId } }),
     },
     {
       label: "Activity",

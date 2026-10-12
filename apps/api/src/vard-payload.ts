@@ -24,8 +24,12 @@ export async function buildVardPayloadInTransaction(
   transaction: Transaction,
   workspaceId: string,
   vardId: string,
-  { anonymous = false, resolveFolders = true, includePinnedVersionId = false }:
-    { anonymous?: boolean; resolveFolders?: boolean; includePinnedVersionId?: boolean } = {},
+  { anonymous = false, resolveFolders = true, includePinnedVersionId = false, selectedTargets }: {
+    anonymous?: boolean;
+    resolveFolders?: boolean;
+    includePinnedVersionId?: boolean;
+    selectedTargets?: ReadonlyArray<{ assetId: string; outputPath: string }>;
+  } = {},
 ) {
   const [record] = await transaction
     .select({
@@ -110,9 +114,22 @@ export async function buildVardPayloadInTransaction(
       a.outputPath < b.outputPath ? -1 : a.outputPath > b.outputPath ? 1 : 0,
     );
   }
+  // Validate the whole output namespace before projection. An unrelated
+  // collision/overflow still invalidates selected inventory outputs, while
+  // unselected versions and delivery payloads need no hydration.
+  const selections = selectedTargets
+    ? new Set(selectedTargets.map((target) =>
+        JSON.stringify([target.assetId, target.outputPath]),
+      ))
+    : null;
+  const selectedItems = selections
+    ? items.filter((item) =>
+        selections.has(JSON.stringify([item.assetId, item.outputPath])),
+      )
+    : items;
   const versionIds = [
     ...new Set(
-      items
+      selectedItems
         .map((item) => item.pinnedVersionId ?? item.currentVersionId)
         .filter((id): id is string => Boolean(id)),
     ),
@@ -145,7 +162,7 @@ export async function buildVardPayloadInTransaction(
     isPublic: record.isPublic,
     updatedAt: record.updatedAt,
     ...(resolveFolders ? {} : { folderRules: record.folderRules }),
-    items: items.map((item) => {
+    items: selectedItems.map((item) => {
       const versionId = item.pinnedVersionId ?? item.currentVersionId;
       const version = versionId ? byId.get(versionId) : undefined;
       const transformation = item.transformation ?? null;

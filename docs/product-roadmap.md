@@ -87,6 +87,9 @@ Team recipe sharing (VARD-27) follows actual use of the basic recipes.
 
 - **VARD-28:** record explicitly known consumers, destinations and update modes.
   Delivery analytics are not a complete inventory of asset use.
+  See [known usage](known-usage.md) for explicit registration, current-source
+  resolution and manual checks. Inventory does not require the future recipe
+  model and can proceed independently while external pilot evidence is pending.
 - **VARD-85:** after VARD-28, show before/after output differences, membership and
   parameter changes. Keep private previews authorized and report unavailable
   history, local conflicts and deletion choices.

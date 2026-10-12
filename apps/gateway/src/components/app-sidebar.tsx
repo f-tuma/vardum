@@ -6,6 +6,7 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   ImagesIcon,
+  Link2Icon,
   LayoutDashboardIcon,
   LogOutIcon,
   MonitorIcon,
@@ -105,6 +106,12 @@ export function AppSidebar({
                   icon={BoxesIcon}
                   active={pathname.startsWith(`/workspaces/${workspace.id}/vards`)}
                   link={<Link to="/workspaces/$workspaceId/vards" params={{ workspaceId: workspace.id }} />}
+                />
+                <NavItem
+                  label="Usage"
+                  icon={Link2Icon}
+                  active={pathname.startsWith(`/workspaces/${workspace.id}/usage`)}
+                  link={<Link to="/workspaces/$workspaceId/usage" params={{ workspaceId: workspace.id }} />}
                 />
                 <NavItem
                   label="Activity"

@@ -36,6 +36,7 @@ import { NameSlugFields } from "./name-slug-fields";
 import { OrganizationSettings } from "./organization-settings";
 import { OrganizationVerification } from "./organization-verification";
 import { VardEditor, VardsPage } from "./vards";
+import { UsagePage } from "./usage";
 import { WorkspaceOverview } from "./workspace-overview";
 import { WorkspaceSettings } from "./workspace-settings";
 
@@ -44,6 +45,7 @@ type View =
   | "assets"
   | "vards"
   | "activity"
+  | "usage"
   | "settings"
   | "organization"
   | "account";
@@ -261,6 +263,8 @@ function WorkspaceApp({
         ) : (
           <VardsPage key={selected.id} workspace={workspace} />
         )
+      ) : view === "usage" ? (
+        <UsagePage key={selected.id} workspace={workspace} />
       ) : view === "activity" ? (
         <AuditLog key={selected.id} workspace={workspace} />
       ) : view === "settings" ? (

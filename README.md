@@ -18,6 +18,10 @@ production needs the matching gateway deployment. The
 [0.7 release record](docs/client-release-0.7.md) and the 0.6/0.2/0.2 compatibility
 fixture remain available. The separate schema 3 draft remains unmerged and unpublished.
 
+The workspace [Usage page](docs/known-usage.md) records explicitly known projects,
+destinations and manual checks separately from current source versions. It does
+not crawl websites or automatically update connected repositories.
+
 ## Development
 
 Requires Node.js 22+, pnpm, and Docker.

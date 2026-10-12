@@ -15,6 +15,7 @@
     "test:private-delivery": "node --import tsx --test integration/private-delivery.test.ts",
     "test:asset-pagination": "node --import tsx --test integration/asset-pagination.test.ts",
     "test:organization-verification": "node --import tsx --test integration/organization-verification.test.ts",
+    "test:known-usages": "node --import tsx --test integration/known-usages.test.ts",
     "test:runtime-database": "node --import tsx --test integration/runtime-database.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

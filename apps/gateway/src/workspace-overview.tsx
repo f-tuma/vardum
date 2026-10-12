@@ -51,6 +51,10 @@ export const activityLabels: Record<string, string> = {
   "vard.updated": "Vard updated",
   "vard.items_updated": "Vard outputs updated",
   "vard.deleted": "Vard deleted",
+  "known_usage.created": "Consumer registered",
+  "known_usage.updated": "Consumer updated",
+  "known_usage.deleted": "Consumer deleted",
+  "known_usage.check_reported": "Manual usage check recorded",
   "workspace.created": "Workspace created",
   "workspace.updated": "Workspace updated",
   "workspace.member_role_updated": "Member role updated",
@@ -115,6 +119,7 @@ const targetLabels: Record<string, string> = {
   asset: "Asset",
   asset_version: "Version",
   vard: "Vard",
+  known_usage: "Usage consumer",
   folder: "Folder",
   api_key: "API key",
   custom_domain: "Custom domain",
@@ -359,6 +364,8 @@ export function activityLink(
         search={{ from: "" }}
       />
     );
+  if (event.targetType === "known_usage")
+    return <Link to="/workspaces/$workspaceId/usage" params={{ workspaceId }} />;
   if (event.targetType === "vard")
     return (
       <Link

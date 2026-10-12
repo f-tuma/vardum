@@ -80,6 +80,7 @@ export async function provisionRuntimeRole(database: Pool, password: string) {
       REVOKE ALL ON ALL SEQUENCES IN SCHEMA public, pgboss FROM varda_app;
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO varda_app;
       GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO varda_app;
+      REVOKE UPDATE, DELETE ON known_usage_check FROM varda_app;
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO varda_app;
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO varda_app;
       REVOKE ALL ON ALL TABLES IN SCHEMA pgboss FROM PUBLIC;
@@ -102,6 +103,16 @@ export async function provisionRuntimeRole(database: Pool, password: string) {
     }
     await client.query("SET LOCAL ROLE varda_app");
     await assertRuntimeDatabaseRole(client);
+    // Effective privileges include PUBLIC and any inherited access. Do not
+    // rewrite unrelated grants: refuse provisioning if append-only still fails.
+    const checks = await client.query<{ mutable: boolean }>(`
+      SELECT has_any_column_privilege(current_user, 'public.known_usage_check', 'UPDATE')
+        OR has_table_privilege(current_user, 'public.known_usage_check', 'DELETE') AS mutable
+    `);
+    if (checks.rows.length !== 1 || checks.rows[0]!.mutable !== false)
+      throw new Error(
+        "Runtime role requires append-only known usage checks; review effective UPDATE/DELETE grants before migration",
+      );
     await client.query("RESET ROLE");
     await client.query("COMMIT");
   } catch (error) {

@@ -1,3 +1,9 @@
+import type {
+  Destination,
+  StoredBinding,
+  Source,
+  EvidenceScope,
+} from "../known-usage-model.js";
 import type { VardFolderRule } from "@vardum/shared";
 import { sql } from "drizzle-orm";
 import {
@@ -411,6 +417,88 @@ export const auditEvent = pgTable(
       table.createdAt,
     ),
     index("audit_event_target_idx").on(table.targetType, table.targetId),
+    tenantPolicy(table.workspaceId),
+  ],
+).enableRLS();
+
+// Private declared usage inventory. Source identities deliberately have no FK:
+// deleting an asset/Vard must preserve recognizable declarations and reports.
+export const knownUsage = pgTable(
+  "known_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind").notNull(),
+    destinations: jsonb("destinations").$type<Destination[]>().notNull(),
+    bindings: jsonb("bindings").$type<StoredBinding[]>().notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    updatedBy: text("updated_by").notNull(),
+  },
+  (table) => [
+    unique("known_usage_workspace_id_unique").on(table.workspaceId, table.id),
+    index("known_usage_workspace_page_idx").on(table.workspaceId, table.id),
+    check("known_usage_revision_check", sql`${table.revision} > 0`),
+    check(
+      "known_usage_kind_check",
+      sql`${table.kind} in ('first_party', 'selected_external')`,
+    ),
+    check(
+      "known_usage_bounds_check",
+      sql`length(${table.name}) between 1 and 120 and jsonb_array_length(${table.destinations}) between 1 and 20 and jsonb_array_length(${table.bindings}) <= 100`,
+    ),
+    tenantPolicy(table.workspaceId),
+  ],
+).enableRLS();
+
+// Append-only API and runtime grants; snapshots do not reference mutable sources.
+export const knownUsageCheck = pgTable(
+  "known_usage_check",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    consumerId: uuid("consumer_id").notNull(),
+    bindingId: uuid("binding_id").notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    actor: text("actor").notNull(),
+    source: jsonb("source").$type<Source>().notNull(),
+    scope: jsonb("scope").$type<EvidenceScope>().notNull(),
+    commitRef: text("commit_ref"),
+    releaseRef: text("release_ref"),
+    note: text("note"),
+  },
+  (table) => [
+    foreignKey({
+      name: "known_usage_check_consumer_fk",
+      columns: [table.workspaceId, table.consumerId],
+      foreignColumns: [knownUsage.workspaceId, knownUsage.id],
+    }).onDelete("cascade"),
+    index("known_usage_check_latest_idx").on(
+      table.workspaceId,
+      table.consumerId,
+      table.bindingId,
+      table.recordedAt,
+      table.id,
+    ),
+    index("known_usage_check_page_idx").on(
+      table.workspaceId,
+      table.consumerId,
+      table.bindingId,
+      table.id,
+    ),
     tenantPolicy(table.workspaceId),
   ],
 ).enableRLS();
