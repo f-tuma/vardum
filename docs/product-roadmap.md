@@ -90,9 +90,13 @@ Team recipe sharing (VARD-27) follows actual use of the basic recipes.
   See [known usage](known-usage.md) for explicit registration, current-source
   resolution and manual checks. Inventory does not require the future recipe
   model and can proceed independently while external pilot evidence is pending.
-- **VARD-85:** after VARD-28, show before/after output differences, membership and
-  parameter changes. Keep private previews authorized and report unavailable
-  history, local conflicts and deletion choices.
+- **VARD-85:** after VARD-28, the Musubi pilot and basic recipes, show before/after
+  output differences, membership and parameter changes. Keep private previews
+  authorized and report unavailable history, local conflicts and deletion choices.
+  The [change-review design proposal](asset-change-review.md) prepares comparison
+  of actual schema 2 snapshots with captured resolved outputs; it does not
+  implement review or clear those gates. Production locked recipe review also
+  requires VARD-26.
 - **VARD-86:** after repeated demand and change-review acceptance, validate one
   repository's GitHub Action that proposes locked updates. Batch related changes
   into a reviewable PR. A GitHub App can follow adoption; consumer PRs are not
