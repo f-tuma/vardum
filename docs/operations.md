@@ -424,6 +424,19 @@ repurposed. Provisioning grants only data operations and checks the resulting ro
 before committing its changes. A password rotation uses the same stop/migrate/
 restart sequence, which also prevents old connection pools surviving the change.
 
+Migration `0016_known_usage_inventory.sql` adds private workspace consumer and
+manual-check tables with forced tenant RLS. Apply it with the matching migrator
+before starting the updated API. Runtime grants permit consumer CRUD and check
+SELECT/INSERT; table UPDATE revocation also clears corresponding direct column
+grants, and table DELETE is revoked. Provisioning fails if effective PUBLIC or
+inherited grants still permit UPDATE/DELETE. The deployed smoke compares both
+explicit workspace predicates, policy roles/permissiveness and effective column
+privileges alongside the existing limited-role guard. Declared source identities
+and reported checks survive asset/Vard deletion; authorized inventory or workspace
+deletion cascades their reports. Include this
+metadata in database backup/restore verification. The inventory performs no fetch,
+crawl or update automation for its registered destination URLs.
+
 pg-boss schema changes now run through its migration CLI before runtime startup.
 Runtime processes can enqueue, claim, schedule, retry and maintain jobs, but
 cannot rewrite the schema version or access executable BAM migration commands.

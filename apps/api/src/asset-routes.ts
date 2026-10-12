@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { supportedMimeTypes, videoMimeSet } from "@vardum/shared";
-import { and, asc, count, desc, eq, isNotNull, max, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNotNull, lt, max, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { fromDrizzle } from "pg-boss";
@@ -1311,6 +1311,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
         params: assetParams,
         querystring: z.object({
           limit: z.coerce.number().int().min(1).max(100).default(50),
+          before: z.coerce.number().int().min(1).max(2147483647).optional(),
         }),
       },
     },
@@ -1355,14 +1356,20 @@ export function registerAssetRoutes(app: FastifyInstance) {
             and(
               eq(assetVersion.workspaceId, workspaceId),
               eq(assetVersion.assetId, assetId),
+              request.query.before
+                ? lt(assetVersion.number, request.query.before)
+                : undefined,
             ),
           )
           .orderBy(desc(assetVersion.number))
-          .limit(request.query.limit);
+          .limit(request.query.limit + 1);
+        const page = versions.slice(0, request.query.limit);
 
         return {
           currentVersionId: target.currentVersionId,
-          versions: versions.map((version) => ({
+          nextCursor:
+            versions.length > request.query.limit ? page.at(-1)!.number : null,
+          versions: page.map((version) => ({
             ...version,
             current: version.id === target.currentVersionId,
           })),

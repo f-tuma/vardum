@@ -131,11 +131,11 @@ SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node "$(dirname "$0")/sm
     if (decoded.info.width !== 8 || decoded.info.height !== 4 || decoded.data[0] < 180) throw new Error("Deployed AVIF codec check failed");
     console.log(`Deployed AVIF encode/decode passed: sharp ${sharp.versions.sharp}, libheif ${sharp.versions.heif}`);
     await assertRuntimeDatabaseRole(pool);
-    const result = await pool.query("SELECT current_user AS role, (SELECT count(*)::int FROM public.asset) AS unscoped_assets");
-    if (result.rows[0].role !== "varda_app" || result.rows[0].unscoped_assets !== 0) throw new Error("Deployed RLS role check failed");
-    console.log("Deployed database role and unscoped RLS check passed");
+    const result = await pool.query(fixtures.runtimeDatabaseProbeSql);
+    fixtures.validateRuntimeDatabaseProbe(result.rows[0]);
+    console.log("Deployed database role, private inventory RLS and append-only check grants passed");
   } finally { await closeDatabase(); }
-' < scripts/fixtures/svg-compatibility.mjs
+' < <(cat scripts/fixtures/svg-compatibility.mjs scripts/fixtures/runtime-database.mjs)
 
 # Bind runtime evidence to the actual images under acceptance. Reports and the
 # database snapshot deliberately survive disposable stack cleanup for review.

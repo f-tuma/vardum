@@ -106,6 +106,73 @@ test(
           max: 1,
         });
         await assertRuntimeDatabaseRole(runtime);
+        const { runtimeDatabaseProbeSql, validateRuntimeDatabaseProbe } = await import("../../../scripts/fixtures/runtime-database.mjs");
+        validateRuntimeDatabaseProbe((await runtime.query(runtimeDatabaseProbeSql)).rows[0]);
+        // A narrow accidental evidence UPDATE grant must fail the deployed
+        // candidate probe even though the generic role remains non-owner.
+        for (const privilege of ["UPDATE", "DELETE"]) {
+          await admin!.query(`GRANT ${privilege} ON known_usage_check TO varda_app`);
+          try {
+            const changed = (await runtime.query(runtimeDatabaseProbeSql)).rows[0];
+            assert.throws(() => validateRuntimeDatabaseProbe(changed), /append-only/);
+          } finally {
+            await admin!.query(`REVOKE ${privilege} ON known_usage_check FROM varda_app`);
+          }
+        }
+        await admin!.query("CREATE POLICY accidental_public_inventory ON known_usage FOR SELECT USING (true)");
+        try {
+          const changed = (await runtime.query(runtimeDatabaseProbeSql)).rows[0];
+          assert.throws(() => validateRuntimeDatabaseProbe(changed), /RLS/);
+        } finally {
+          await admin!.query("DROP POLICY accidental_public_inventory ON known_usage");
+        }
+        validateRuntimeDatabaseProbe((await runtime.query(runtimeDatabaseProbeSql)).rows[0]);
+        // Empty tables cannot prove the predicates by row counts alone.
+        const policyQuery = "SELECT policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' AND tablename='known_usage' AND policyname='workspace_isolation'";
+        const originalPolicy = (await admin!.query(policyQuery)).rows[0];
+        const restorePolicy = async () => {
+          await admin!.query(`ALTER POLICY workspace_isolation ON public.known_usage TO PUBLIC USING (${originalPolicy.qual}) WITH CHECK (${originalPolicy.with_check})`);
+          assert.deepEqual((await admin!.query(policyQuery)).rows[0], originalPolicy);
+          validateRuntimeDatabaseProbe((await runtime!.query(runtimeDatabaseProbeSql)).rows[0]);
+        };
+        for (const change of ["USING (true)", "WITH CHECK (true)", "USING (true) WITH CHECK (true)", "TO varda_app"]) {
+          await admin!.query(`ALTER POLICY workspace_isolation ON public.known_usage ${change}`);
+          try {
+            const altered = (await runtime.query(runtimeDatabaseProbeSql)).rows[0];
+            assert.equal(altered.unscoped_known_usages, 0);
+            assert.throws(() => validateRuntimeDatabaseProbe(altered), /RLS/);
+          } finally { await restorePolicy(); }
+        }
+        await admin!.query("DROP POLICY workspace_isolation ON public.known_usage");
+        await admin!.query(`CREATE POLICY workspace_isolation ON public.known_usage AS RESTRICTIVE FOR ALL TO PUBLIC USING (${originalPolicy.qual}) WITH CHECK (${originalPolicy.with_check})`);
+        try {
+          const restricted = (await runtime.query(runtimeDatabaseProbeSql)).rows[0];
+          assert.throws(() => validateRuntimeDatabaseProbe(restricted), /RLS/);
+        } finally {
+          await admin!.query("DROP POLICY workspace_isolation ON public.known_usage");
+          await admin!.query(`CREATE POLICY workspace_isolation ON public.known_usage AS PERMISSIVE FOR ALL TO PUBLIC USING (${originalPolicy.qual}) WITH CHECK (${originalPolicy.with_check})`);
+          await restorePolicy();
+        }
+        await admin!.query("GRANT UPDATE (actor) ON public.known_usage_check TO varda_app");
+        try {
+          assert.equal((await runtime.query("SELECT has_table_privilege(current_user,'public.known_usage_check','UPDATE') AS allowed")).rows[0].allowed, false);
+          const columnResult = (await runtime.query(runtimeDatabaseProbeSql)).rows[0];
+          assert.throws(() => validateRuntimeDatabaseProbe(columnResult), /append-only/);
+          assert.equal((await runtime.query("SELECT has_any_column_privilege(current_user,'public.known_usage_check','UPDATE') AS allowed")).rows[0].allowed, true);
+          await provisionRuntimeRole(admin!, appPassword);
+          validateRuntimeDatabaseProbe((await runtime.query(runtimeDatabaseProbeSql)).rows[0]);
+        } finally {
+          await admin!.query("REVOKE UPDATE (actor) ON public.known_usage_check FROM varda_app");
+        }
+        await admin!.query("GRANT UPDATE (actor) ON public.known_usage_check TO PUBLIC");
+        try {
+          await assert.rejects(provisionRuntimeRole(admin!, appPassword), /append-only/);
+          assert.equal((await runtime.query("SELECT has_any_column_privilege(current_user,'public.known_usage_check','UPDATE') AS allowed")).rows[0].allowed, true, "failed provisioning must not silently rewrite PUBLIC grants");
+        } finally {
+          await admin!.query("REVOKE UPDATE (actor) ON public.known_usage_check FROM PUBLIC");
+          await provisionRuntimeRole(admin!, appPassword);
+          validateRuntimeDatabaseProbe((await runtime.query(runtimeDatabaseProbeSql)).rows[0]);
+        }
         await assert.rejects(
           assertRuntimeDatabaseRole(admin!),
           /Unsafe runtime database role/,

@@ -9,6 +9,7 @@ import {
   type ZodTypeProvider,
 } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { registerKnownUsageRoutes } from "./known-usage-routes.js";
 import { registerAssetRoutes } from "./asset-routes.js";
 import { registerAuthRoute } from "./auth-route.js";
 import { registerCapabilityRoutes } from "./capability-routes.js";
@@ -112,6 +113,7 @@ export async function buildApp() {
   registerInvitationRoutes(app);
   registerAssetRoutes(app);
   registerVardRoutes(app);
+  registerKnownUsageRoutes(app);
   registerTransformationRoutes(app);
   registerDeliveryRoutes(app);
   registerOperationsRoutes(app);

@@ -8,7 +8,7 @@ CLI version and it publishes shared → CLI → MCP. Do not use that workflow fo
 this server candidate.
 
 The preparation policy covers API/worker, the standard and Dokploy gateways,
-and migrations **0000–0015**. Its explicit public compatibility clients remain
+and migrations **0000–0016**. Its explicit public compatibility clients remain
 `@vardum/cli` **0.6.0**, `@vardum/mcp` **0.2.0** and `@vardum/shared` **0.2.0** on
 Node 22 or newer. `candidate.json` records these as `clientVersions`, separately
 from `sourceClientVersions` read from the exact build context. A source version
@@ -67,7 +67,7 @@ image IDs. Unique candidate tags preserve existing application/smoke tags.
 The manifest records commit, Git tree, platform, image tags/IDs and config IDs, archive SHA-256,
 every deployment-file checksum, all migration SHA-256 values, exact source client
 versions and the separate public compatibility versions. Migration verification
-requires the exact 0000–0015 tag/index order, strict JSON, and positive safe-integer
+requires the exact 0000–0016 tag/index order, strict JSON, and positive safe-integer
 `when` values in strictly increasing order; Drizzle uses those timestamps.
 It also includes Compose files without build sections, nginx routing, example
 environment files, monitoring rules, migration review copies, backup tooling and
@@ -168,6 +168,10 @@ also reuse the verified running image IDs. The existing source-build smoke mode
 remains available by omitting `SMOKE_SERVER_CANDIDATE`.
 
 Acceptance checks readiness, the limited runtime database role and unscoped RLS,
+including forced tenant RLS for the private known-usage inventory and SELECT/INSERT
+without effective table/column UPDATE or table DELETE grants on immutable manual
+check records. The inventory policies must have the exact workspace USING and
+WITH CHECK predicates, PUBLIC roles and PERMISSIVE/ALL properties. It also checks
 deployed AVIF encoding/decoding, authorization/private delivery, public client
 login/pull/push/frozen restore/logout, every advertised MCP tool, onboarding,
 resource budgets, worker heartbeat expiry, PostgreSQL/RustFS outages, queued
@@ -225,6 +229,7 @@ visibility and folder-rule precautions in [operations](operations.md), then:
 | `0013_upload_cleanup.sql` | Pending-upload deadlines/cleanup; review workspace storage and unfinished-upload budgets before deployment. |
 | `0014_upload_cleanup_fairness.sql` | Nullable cleanup scheduling timestamps and indexes; retain additive fields/indexes during image rollback. |
 | `0015_upload_request_checksum.sql` | Nullable `asset_version.expected_checksum` plus a lowercase 64-hex constraint; historical rows remain null. New upload requests bind resumable attempts to their source SHA-256. Preserve the field and pending journals during retry/restore. |
+| `0016_known_usage_inventory.sql` | Private `known_usage` and `known_usage_check` tables with forced workspace RLS. Run the matching migrator to grant consumer CRUD and check SELECT/INSERT while revoking direct check UPDATE/DELETE. Preserve declared source identities and manual reports in backup/restore; asset/Vard deletion retains them, while authorized inventory/workspace deletion cascades reports. |
 
 The current worker independently reconciles interrupted ingest at startup,
 including when an existing recovery queue job delays fresh scheduling. Stop all

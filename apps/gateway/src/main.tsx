@@ -92,6 +92,11 @@ const vardEditorRoute = createRoute({
   path: "/workspaces/$workspaceId/vards/$vardId",
   component: VardEditorPage,
 });
+const workspaceUsageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/usage",
+  component: WorkspaceUsagePage,
+});
 const workspaceActivityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspaces/$workspaceId/activity",
@@ -165,6 +170,7 @@ const router = createRouter({
     workspaceOverviewRoute,
     workspaceVardsRoute,
     vardEditorRoute,
+    workspaceUsageRoute,
     workspaceActivityRoute,
     workspaceAuditRoute,
     workspaceSettingsRoute,
@@ -216,6 +222,11 @@ function WorkspaceVardsPage() {
 function VardEditorPage() {
   const { workspaceId, vardId } = vardEditorRoute.useParams();
   return <App routeWorkspaceId={workspaceId} vardId={vardId} view="vards" />;
+}
+
+function WorkspaceUsagePage() {
+  const { workspaceId } = workspaceUsageRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="usage" />;
 }
 
 function WorkspaceActivityPage() {

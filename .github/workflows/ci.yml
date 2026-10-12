@@ -39,6 +39,8 @@ jobs:
               run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:private-delivery
             - name: Check asset pagination with real auth and workspace isolation
               run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:asset-pagination
+            - name: Check private known usage, manual evidence and runtime tenant isolation
+              run: PG_BINDIR="$(pg_config --bindir)" pnpm --filter @vardum/api test:known-usages
             - run: pnpm typecheck
             - run: pnpm lint
             - run: pnpm build
