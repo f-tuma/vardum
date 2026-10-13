@@ -58,10 +58,12 @@ test(
       destroyStorage?.();
       await closeDatabase?.();
       await admin?.end();
+      // Pool.end() can resolve before clients finish disconnecting. Smart
+      // shutdown waits for their physical close instead of force-killing sockets.
       if (started) {
         await execFile(
           join(pgBin, "pg_ctl"),
-          ["-D", data, "-m", "fast", "-w", "stop"],
+          ["-D", data, "-m", "smart", "-w", "-t", "10", "stop"],
           {
             env: cleanEnv,
           },

@@ -128,13 +128,17 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     await closeDatabase?.();
     await admin?.end();
     await new Promise<void>((resolve) => objectServer.close(() => resolve()));
+    // Pool.end() can resolve before clients finish disconnecting. Smart
+    // shutdown waits for their physical close instead of force-killing sockets.
     if (started)
       await execFile(join(pgBin, "pg_ctl"), [
         "-D",
         data,
         "-m",
-        "fast",
+        "smart",
         "-w",
+        "-t",
+        "10",
         "stop",
       ]);
     await rm(root, { recursive: true, force: true });

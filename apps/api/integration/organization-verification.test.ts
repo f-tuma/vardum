@@ -26,13 +26,17 @@ test(
     let admin: Pool | undefined;
     t.after(async () => {
       await admin?.end();
+      // Pool.end() can resolve before clients finish disconnecting. Smart
+      // shutdown waits for their physical close instead of force-killing sockets.
       if (started)
         await execFile(join(pgBin, "pg_ctl"), [
           "-D",
           data,
           "-m",
-          "fast",
+          "smart",
           "-w",
+          "-t",
+          "10",
           "stop",
         ]);
       await rm(root, { recursive: true, force: true });
