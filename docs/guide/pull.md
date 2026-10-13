@@ -21,7 +21,7 @@ CI: vardum pull --frozen
 ## Setup
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.8.1
+npm install --save-dev --save-exact @vardum/cli@0.8.2
 npx vardum init       # vardum.json: server, workspace, Vard
 npx vardum login      # stores a key for this machine
 ```
@@ -30,7 +30,7 @@ npx vardum login      # stores a key for this machine
   `0600`), named `cli@<machine>` in Settings. `logout` revokes it.
 - `VARDUM_API_KEY` overrides the stored key. Use it in CI.
 
-The setup above uses published **CLI 0.8.1**. It retains schema 2 and needs no
+The setup above uses published **CLI 0.8.2**. It retains schema 2 and needs no
 snapshot migration. See [release status](../npm-release.md) before changing the
 pinned package. The first-project/server compatibility fixture remains on CLI 0.6.0.
 
@@ -40,6 +40,28 @@ pinned package. The first-project/server compatibility fixture remains on CLI 0.
 - Writes `.vardum.lock`. Commit it with `vardum.json`.
 - Refuses to overwrite files you edited locally; `--force` overwrites.
 - `--dry-run` shows the plan. `--json` prints it for scripts.
+
+## Existing project files
+
+When the project already contains every mapped output, preview adoption first:
+
+```sh
+npx --no-install vardum status --adopt-existing --json
+npx --no-install vardum pull --adopt-existing --json
+```
+
+Run the second command only when every decision is `adopt`. The CLI compares
+each file with the actual immutable downloaded output, including transformations
+and pinned versions, then records one complete schema 2 `.vardum.lock`. It does
+not replace any asset file. Commit the lock with `vardum.json`.
+
+Missing or outdated files are `download` decisions; different or locally edited
+files are `conflict` decisions. Either blocks adoption. Resolve them deliberately
+before retrying; ordinary pull keeps its existing overwrite protections.
+Status and dry-run retain no project or update-cache writes. Adoption cannot
+combine with `--frozen`, `--force`, `--delete`, context overrides or positional
+arguments. See [the release contract](../client-release-0.8.2.md#existing-project-files)
+for drift checks and the limits of coordination with other writers.
 
 ## Frozen pull
 

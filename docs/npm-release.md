@@ -1,26 +1,26 @@
 # npm releases
 
-## CLI 0.8.2 source candidate (VARD-97)
-
-**Publication pending.** The candidate adds explicit lock-only adoption of
-existing matching outputs. It selects CLI **0.8.2** with unchanged published
-shared **0.4.1** and MCP **0.4.1**; their archive bytes must match the existing
-registry versions before publication can skip them. Only CLI 0.8.2 is a new
-npm write. [Candidate notes and required evidence](client-release-0.8.2.md)
-separate source, branch validation, final tag publication and public installs.
-Active guides and gateway Copy setup stay on verified CLI **0.8.1** until
-a separately reviewed promotion after final registry acceptance.
-
 ## Current status
 
-Published and independently verified **2026-10-11** (frgtn.VARD, VARD-77):
-[CLI **0.8.1**](https://www.npmjs.com/package/@vardum/cli/v/0.8.1),
+Published and independently verified **2026-10-13** (frgtn.VARD, VARD-97):
+[CLI **0.8.2**](https://www.npmjs.com/package/@vardum/cli/v/0.8.2),
 [MCP **0.4.1**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.1) and
 [shared **0.4.1**](https://www.npmjs.com/package/@vardum/shared/v/0.4.1).
-Actual registry tarballs match the final tag run's tested archive bytes and
-SHA-512 values; independent public CLI/MCP installs resolve shared 0.4.1
-transitively, and all four GitHub release assets match that batch. See
-[0.8.1 release notes and publication evidence](client-release-0.8.1.md#publication-evidence).
+CLI 0.8.2 adds explicit lock-only adoption of existing matching outputs.
+The final matching-tag workflow published only the new CLI; complete-batch
+preflight verified actual shared/MCP 0.4.1 tarballs before skipping their
+byte-identical existing versions. Actual anonymous registry tarballs, separate
+public CLI/MCP installs with transitive shared, 12 public-installed adoption
+checks and all four GitHub release assets match the tag run's own tested batch.
+See [0.8.2 publication evidence and upgrade order](client-release-0.8.2.md#publication-evidence).
+
+Active onboarding and gateway source Copy setup pin verified CLI **0.8.2**;
+MCP guidance remains **0.4.1**. Production Copy setup requires the matching
+gateway deployment. Source pin promotion does not change immutable package
+archives or establish server/runtime or Musubi pilot acceptance.
+
+Published CLI 0.8.1 remains immutable, with its
+[October 11 evidence](client-release-0.8.1.md#publication-evidence) preserved.
 
 Published CLI 0.8.0 / MCP and shared 0.4.0 remain immutable, with their
 [original publication evidence](#october-11-client-08-publication-evidence)
@@ -72,9 +72,9 @@ verification, independent installs and GitHub release creation. The downloaded
 original npm ZIP is **58,768 bytes**, SHA-256
 `a2ec0a844b656ff363f43c199124578fdfa1c58b01d7be3e6eba957dfcbdf5e8`.
 
-Active guides and the separately reviewed gateway Copy setup constant now pin
-verified CLI **0.8.1**; MCP guidance pins **0.4.1**. Production Copy setup needs
-the matching gateway deployment. Candidate package manifests do not promote
+At the October 11 checkpoint, active guides and the separately reviewed gateway
+Copy setup constant pinned verified CLI **0.8.1**; MCP guidance pinned **0.4.1**.
+Production Copy setup needs the matching gateway deployment. Candidate package manifests do not promote
 that constant. [Detailed publication evidence](client-release-0.8.1.md#publication-evidence)
 records the manifest, package integrities, public installs, all four release
 assets and sanitized runtime evidence limits. Do not repack these published
@@ -213,6 +213,15 @@ Asset/Vard keys do not receive administrative permissions.
 Source dependencies remain `workspace:^`; pinned pnpm rewrites them to `^0.3.0`
 in these archives. The minimum schema 2 consumption CLI remains **0.6.0**.
 See [release notes and upgrade order](client-release-0.7.md).
+
+### Published client 0.8.2
+
+CLI **0.8.2** adds `pull`/`status --adopt-existing` with the complete matching-output
+prerequisite. Shared and MCP stay **0.4.1** with byte-identical existing archives.
+Schema 2, minimum consumption CLI 0.6.0 and the 0.6/0.2/0.2 server compatibility
+fixture stay unchanged. No new server capability is required for adoption;
+upload/import and guarded MCP editing keep their existing migration/capability
+requirements. See [the current upgrade order](client-release-0.8.2.md#upgrade-order).
 
 ### Published client 0.8.1
 
@@ -492,10 +501,10 @@ archives. Recover a failed publisher only with `gh run rerun ORIGINAL_TAG_RUN_ID
 actual registry bytes, independent public installs and all four GitHub release
 assets before advertising the new version.
 
-For published CLI 0.8.1/MCP 0.4.1, verify backend migration `0015` and all applicable
-capabilities in the [upgrade order](client-release-0.8.1.md#upgrade-order).
+For published CLI 0.8.2/MCP 0.4.1, verify backend migration `0015` and all applicable
+capabilities in the [upgrade order](client-release-0.8.2.md#upgrade-order).
 The gateway uses an independently reviewed, verified-public-version constant for
-Copy setup; deploy that gateway source to offer CLI 0.8.1. It does not derive this
+Copy setup; deploy that gateway source to offer CLI 0.8.2. It does not derive this
 pin from a candidate package manifest. Source documentation changes after publication
 do not alter the immutable tag or packed READMEs. The existing
 [0.7 release notes](client-release-0.7.md#upgrade-order) remain historical evidence.
