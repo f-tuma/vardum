@@ -1,5 +1,16 @@
 # npm releases
 
+## CLI 0.8.2 source candidate (VARD-97)
+
+**Publication pending.** The candidate adds explicit lock-only adoption of
+existing matching outputs. It selects CLI **0.8.2** with unchanged published
+shared **0.4.1** and MCP **0.4.1**; their archive bytes must match the existing
+registry versions before publication can skip them. Only CLI 0.8.2 is a new
+npm write. [Candidate notes and required evidence](client-release-0.8.2.md)
+separate source, branch validation, final tag publication and public installs.
+Active guides and gateway Copy setup stay on verified CLI **0.8.1** until
+a separately reviewed promotion after final registry acceptance.
+
 ## Current status
 
 Published and independently verified **2026-10-11** (frgtn.VARD, VARD-77):
