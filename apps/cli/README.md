@@ -66,6 +66,34 @@ For CI, keep passing the key explicitly — it overrides anything stored:
 VARDUM_API_KEY=varda_... npx --no-install vardum pull --frozen --json
 ```
 
+## Upcoming CLI release: adopt existing files
+
+This option is implemented in the source candidate and is not in the published
+0.8.1 package above. With the updated CLI, projects that already contain all
+mapped outputs can explicitly adopt their matching bytes into a schema 2 lock:
+
+```sh
+vardum status --adopt-existing --json
+vardum pull --adopt-existing --json
+```
+
+This mode verifies the actual immutable downloads, including transformed and
+pinned outputs, then writes only the complete lockfile. Every output must already
+exist and match; missing or outdated files are reported as `download`, different
+or locally edited tracked files as `conflict`. Supply or resolve those files
+before adopting. No asset is replaced, and dry-run/status retain no project or
+update-cache writes. JSON adds `decision`, `snapshotChanged`, `snapshotApplied` and `adoptionReady`.
+
+Ordinary pull retains its existing conflict protection. Adoption cannot combine
+with `--frozen`, `--force`, `--delete`, context overrides or positional arguments.
+Current CLI pull/push/pull-asset operations share a temporary project mutex.
+Detected file, parent, configuration or lock drift aborts adoption; external
+editors and older clients do not honor this mutex. The snapshot is published
+atomically, not as a filesystem transaction that excludes arbitrary future edits.
+If a process crashes, confirm it is stopped before removing the retained
+`.vardum.snapshot.mutex`. Old output files absent from the current manifest stay
+on disk but cease to be tracked, as with a normal pull without deletion.
+
 ## Backend requirements
 
 The CLI connects to your Vardum instance, not directly to a storage bucket.

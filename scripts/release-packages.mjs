@@ -1,3 +1,4 @@
+import { smokeInstalledAdoption } from "./smoke-cli-adoption.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -534,7 +535,7 @@ async function main() {
   if (command === "check")
     return console.log("Release archive manifests and hashes passed");
   if (command === "smoke")
-    return withInstalledRelease(directory, async () => {});
+    return withInstalledRelease(directory, smokeInstalledAdoption);
   if (!["preflight", "publish", "verify-registry"].includes(command))
     throw new Error(`Unknown command: ${command}`);
   // Preflight the whole batch. Identical archives permit retrying an interrupted
