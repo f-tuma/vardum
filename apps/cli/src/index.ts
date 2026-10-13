@@ -18,6 +18,7 @@ import { assertFolderPlanCurrent, assertFolderSourcesCurrent, prepareFolderPlan,
 import { awaitGrant, loginUrl, newState, openBrowser } from "./login.js";
 import { maybeWarnOutdated, updateVardum, VERSION } from "./update.js";
 import { readUploadFile } from "./upload-file.js";
+import { adoptExistingOutputs, withSnapshotMutex, type AdoptionAction } from "./adoption.js";
 import {
   acquireFolderMutex,
   clearFolderJournal,
@@ -54,6 +55,7 @@ import {
 
 type Options = {
   frozen: boolean;
+  adoptExisting: boolean;
   dryRun: boolean;
   delete: boolean;
   force: boolean;
@@ -62,7 +64,8 @@ type Options = {
   positionals: string[];
 };
 type Action = {
-  action: "pull" | "push" | "delete" | "create";
+  action: "pull" | "push" | "delete" | "create" | "adopt";
+  decision?: AdoptionAction["decision"];
   path: string;
   applied: boolean;
   conflict?: boolean;
@@ -105,7 +108,7 @@ const versionCommands = ["version", "--version", "-v"];
 const json = rawArgs.includes("--json");
 
 // Folder selection, preview and cancellation must not create an update cache.
-if (![...helpCommands, ...versionCommands, "update", "push-folder"].includes(command))
+if (!rawArgs.includes("--adopt-existing") && ![...helpCommands, ...versionCommands, "update", "push-folder"].includes(command))
   maybeWarnOutdated();
 
 try {
@@ -124,6 +127,8 @@ try {
       throw new Error(
         "--frozen cannot be combined with --delete, context overrides or positional arguments",
       );
+    if (options.adoptExisting && (!["pull", "sync", "status"].includes(command) || options.frozen || options.force || options.delete || options.values.size || options.positionals.length))
+      throw new Error("--adopt-existing is a lock-only mode for pull, sync and status; it cannot be combined with --frozen, --force, --delete or context overrides");
     if (command === "init") await init(options);
     else if (command === "login") await login(options);
     else if (command === "logout") await logout(options);
@@ -358,6 +363,21 @@ async function optionalContext() {
 
 async function pull(options: Options) {
   const context = await loadContext();
+  const operation = async () => {
+    if (!options.adoptExisting) return pullOrdinary(options, context);
+    const result = await adoptExistingOutputs(context, options.dryRun, validateConfig, (entry) => {
+      actions.push(entry);
+      if (!options.json) console.log(`${options.dryRun ? "would " : ""}${entry.decision} ${entry.path}`);
+    });
+    summary(options, result.changed, { snapshotChanged: result.snapshotChanged, snapshotApplied: result.applied, adoptionReady: result.ready });
+    if (!options.json && !result.ready) console.log("adoption blocked: resolve download/conflict decisions first");
+    else if (!options.json && result.snapshotChanged) console.log(options.dryRun ? "snapshot would update" : "snapshot updated");
+  };
+  if (options.dryRun) await operation();
+  else await withSnapshotMutex(context.directory, operation);
+}
+
+async function pullOrdinary(options: Options, context: Awaited<ReturnType<typeof loadContext>>) {
   const lockPath = await safeLockPath(context.directory);
   const previous = await readLock(lockPath, context.config);
   const snapshot = previous?.schema === 2 ? previous : null;
@@ -518,6 +538,11 @@ async function pull(options: Options) {
 
 async function push(options: Options) {
   const context = await loadContext();
+  if (options.dryRun) return pushOrdinary(options, context);
+  return withSnapshotMutex(context.directory, () => pushOrdinary(options, context));
+}
+
+async function pushOrdinary(options: Options, context: Awaited<ReturnType<typeof loadContext>>) {
   requireApiKey(context.client);
   let manifest = await context.client.manifest(context.config, true);
   assertManifest(manifest, context.config);
@@ -1028,10 +1053,17 @@ async function resolveFolderPlan<Plan extends FolderPlanPreview>(
 }
 
 async function pullAsset(options: Options) {
+
   const [key, output] = options.positionals;
   if (!key || !output)
     throw new Error("Usage: vardum pull-asset <asset-key> <output-path>");
   const context = await loadContext();
+  if (options.dryRun) return pullAssetOrdinary(options, context);
+  return withSnapshotMutex(context.directory, () => pullAssetOrdinary(options, context));
+}
+
+async function pullAssetOrdinary(options: Options, context: Awaited<ReturnType<typeof loadContext>>) {
+  const [key, output] = options.positionals as [string, string];
   const prefix = key.includes("/") ? `${dirname(key)}/` : "";
   const remote = await context.client.syncAssets(
     context.config.workspace,
@@ -1176,6 +1208,7 @@ async function readPushLock(
 function parseOptions(args: string[]): Options {
   const options: Options = {
     frozen: false,
+    adoptExisting: false,
     dryRun: false,
     delete: false,
     force: false,
@@ -1186,6 +1219,7 @@ function parseOptions(args: string[]): Options {
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--frozen") options.frozen = true;
+    else if (argument === "--adopt-existing") options.adoptExisting = true;
     else if (argument === "--dry-run") options.dryRun = true;
     else if (argument === "--delete") options.delete = true;
     else if (argument === "--force") options.force = true;
@@ -1232,10 +1266,10 @@ function report(
   return entry;
 }
 
-function summary(options: Options, changed: number) {
+function summary(options: Options, changed: number, adoption?: { snapshotChanged: boolean; snapshotApplied: boolean; adoptionReady: boolean }) {
   if (options.json) {
     console.log(
-      JSON.stringify({ dryRun: options.dryRun, changed, actions, ...folderLibraryReport, ...folderImportReport }, null, 2),
+      JSON.stringify({ dryRun: options.dryRun, changed, actions, ...adoption, ...folderLibraryReport, ...folderImportReport }, null, 2),
     );
     return;
   }
@@ -1254,9 +1288,9 @@ Usage:
   vardum whoami
   vardum version
   vardum update [--json]
-  vardum status [--frozen | --delete]
-  vardum sync [--frozen | --delete] [--dry-run] [--force]
-  vardum pull [--frozen | --delete] [--dry-run] [--force]
+  vardum status [--frozen | --delete | --adopt-existing]
+  vardum sync [--frozen | --delete | --adopt-existing] [--dry-run] [--force]
+  vardum pull [--frozen | --delete | --adopt-existing] [--dry-run] [--force]
   vardum push [--dry-run] [--force]
   vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
   vardum push-folder <directory> [prefix] [--dry-run] [--delete | --output <prefix>]

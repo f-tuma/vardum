@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { uploadLimitFor } from "@vardum/shared";
 import type {
   SyncAsset,
@@ -78,6 +79,8 @@ export type FolderImportResultFile = Pick<FolderImportFile, "assetId" | "key" | 
   mappingId: string;
   mappingAction: "added" | "kept";
 };
+
+export class AdoptionSizeMismatchError extends Error {}
 
 export class VardumHttpError extends Error {
   constructor(
@@ -354,6 +357,38 @@ export class VardumClient {
         `Download failed (${response.status} ${response.statusText})`,
       );
     return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /** Hash the actual authorized immutable output without retaining a response body. */
+  async downloadChecksum(path: string, maximumBytes: number) {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0)
+      throw new Error("Invalid adoption download limit");
+    const downloadUrl = safeDownloadUrl(path, this.server);
+    const response = await fetch(downloadUrl, {
+      redirect: "error", headers: this.headers(), signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Download failed (${response.status} ${response.statusText})`);
+    }
+    const hash = createHash("sha256");
+    const reader = response.body?.getReader();
+    let bytes = 0;
+    if (reader) {
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          bytes += chunk.value.byteLength;
+          if (bytes > maximumBytes) throw new AdoptionSizeMismatchError("Adoption download exceeds the captured local file size");
+          hash.update(chunk.value);
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+    }
+    return { checksum: hash.digest("hex"), bytes };
   }
 
   private async request<T = unknown>(path: string, init: RequestInit = {}) {
