@@ -4,10 +4,11 @@ The CLI materializes a workspace **Vard** into a project. Create a Vard in the
 web UI, select its assets and output paths, then run `vardum init` in the target
 repository to create `vardum.json`.
 
-This README describes [CLI **0.8.1**](https://www.npmjs.com/package/@vardum/cli/v/0.8.1).
+This README describes [CLI **0.8.2**](https://www.npmjs.com/package/@vardum/cli/v/0.8.2).
 It keeps schema **2** frozen snapshots, the complete folder-upload plan and
 resumable uploads. The matching client batch uses shared **0.4.1** and MCP **0.4.1**.
-This patch makes setup self-contained; it does not change the snapshot schema.
+This patch adds explicit adoption of existing matching files; it does not change
+the snapshot schema. Shared and MCP 0.4.1 remain the compatible published packages.
 
 ## First project
 
@@ -24,7 +25,7 @@ The exact installation below does not require access to the source repository.
    and authorize your machine:
 
    ```sh
-   npm install --save-dev --save-exact @vardum/cli@0.8.1
+   npm install --save-dev --save-exact @vardum/cli@0.8.2
    npx --no-install vardum init
    npx --no-install vardum login
    npx --no-install vardum pull
@@ -66,11 +67,10 @@ For CI, keep passing the key explicitly — it overrides anything stored:
 VARDUM_API_KEY=varda_... npx --no-install vardum pull --frozen --json
 ```
 
-## Upcoming CLI release: adopt existing files
+## Adopt existing matching files
 
-This option is implemented in the source candidate and is not in the published
-0.8.1 package above. With the updated CLI, projects that already contain all
-mapped outputs can explicitly adopt their matching bytes into a schema 2 lock:
+In CLI 0.8.2, projects that already contain all mapped outputs can explicitly
+adopt their matching bytes into a schema 2 lock:
 
 ```sh
 vardum status --adopt-existing --json
@@ -119,9 +119,11 @@ vardum init [--server URL --workspace ID --vard ID] [--dry-run] [--force]
 vardum whoami
 vardum version
 vardum update [--json]
-vardum status [--frozen | --delete]
+vardum status [--frozen | --delete | --adopt-existing]
 vardum sync [--frozen | --delete] [--dry-run] [--force]
+vardum sync --adopt-existing [--dry-run]
 vardum pull [--frozen | --delete] [--dry-run] [--force]
+vardum pull --adopt-existing [--dry-run]
 vardum push [--dry-run] [--force]
 vardum pull-asset <asset-key> <output-path> [--dry-run] [--force]
 vardum push-folder <directory> [prefix] [--output <output-prefix>] [--dry-run] [--delete]
@@ -315,7 +317,7 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 ## Reproducible asset consumption
 
 **Minimum compatible CLI for schema 2: 0.6.0**. Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. CLI 0.8.1 consumes existing schema 2
+cannot safely maintain schema 2 snapshots. CLI 0.8.2 consumes existing schema 2
 snapshots without migration, as published CLI 0.7.0 does. Keep the exact tested CLI pinned;
 a source version bump or passing tests do not publish future versions.
 
