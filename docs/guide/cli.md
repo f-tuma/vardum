@@ -3,10 +3,10 @@
 `@vardum/cli` puts a Vard's files into a project and keeps them locked.
 
 ```sh
-npm install --save-dev --save-exact @vardum/cli@0.8.1
+npm install --save-dev --save-exact @vardum/cli@0.8.2
 ```
 
-Node.js 22 or newer. This installs published **0.8.1**; pin the exact version
+Node.js 22 or newer. This installs published **0.8.2**; pin the exact version
 in CI. It includes the [complete folder plan](push.md#complete-plan-cli-080).
 See [release status](../npm-release.md) for compatibility and evidence.
 
@@ -36,7 +36,11 @@ See [release status](../npm-release.md) for compatibility and evidence.
 | `--force` | pull, push | Overwrite local edits / conflicts |
 | `--delete` | pull, push-folder | Remove files an earlier run created |
 | `--frozen` | pull, status | Use the lock, not the live Vard |
+| `--adopt-existing` | pull, status | Verify every output; `pull` records only the lock; [all outputs must match](pull.md#existing-project-files) |
 | `--output <path>` | push-folder | Also map files into the Vard (since 0.7.0) |
+
+`--adopt-existing` cannot combine with `--frozen`, `--force`, `--delete`,
+context overrides or positional arguments. Preview with `status` before applying.
 
 ## Files
 

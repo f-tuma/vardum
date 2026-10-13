@@ -25,11 +25,11 @@ them. Websites use stable URLs.
 
 ## Versions
 
-- Published: `@vardum/cli` 0.8.1, `@vardum/mcp` 0.4.1 and `@vardum/shared` 0.4.1.
-  This patch provides standalone package setup and retains the complete folder
-  plan and guarded MCP Vard edits introduced in the 0.8 batch.
+- Published: `@vardum/cli` 0.8.2, `@vardum/mcp` 0.4.1 and `@vardum/shared` 0.4.1.
+  CLI 0.8.2 adds explicit adoption of existing matching outputs. Standalone
+  setup, the complete folder plan and guarded MCP Vard edits are retained.
 - Frozen snapshots remain schema 2, with minimum CLI 0.6.0. Folder upload/import
   and guarded edits need their matching backend capabilities.
-- See [0.8.1 release evidence and upgrade order](../client-release-0.8.1.md),
+- See [0.8.2 release evidence and upgrade order](../client-release-0.8.2.md),
   [historical 0.8 feature notes](../client-release-0.8.md),
   [historical 0.7 notes](../client-release-0.7.md) and [release status](../npm-release.md).

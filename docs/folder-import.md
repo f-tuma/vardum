@@ -1,9 +1,9 @@
 # Import a folder into a Vard
 
-Use published **CLI 0.8.1** for folder import and the complete folder plan
+Use published **CLI 0.8.2** for folder import and the complete folder plan
 below. Import was introduced in CLI 0.7.0 and is absent from CLI 0.6.0.
 Verify the target backend before upgrading; see
-[release evidence and upgrade order](client-release-0.8.1.md) and
+[release evidence and upgrade order](client-release-0.8.2.md) and
 [npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server
@@ -84,7 +84,9 @@ vardum pull
 ```
 
 Review changed project files and commit `vardum.json` and `.vardum.lock` with the
-project. CI can then restore that exact snapshot with `vardum pull --frozen`.
+project. If every mapped output already exists and matches, use
+[lock-only adoption](guide/pull.md#existing-project-files) instead of downloading
+over it. CI can then restore that exact snapshot with `vardum pull --frozen`.
 An independently retained old snapshot still has its old membership and versions;
 the server must retain the underlying assets, version files and delivery keys.
 
