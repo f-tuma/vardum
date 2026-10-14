@@ -36,28 +36,49 @@ Projects using live URLs do not need an update PR for each artwork change.
 
 ### 1. Complete the dependable handoff
 
-Finish the remaining Musubi pilot evidence (VARD-16), production card rollout
-(VARD-78), public npm onboarding (VARD-77) and real human first-use validation
-(VARD-17). Implementation, merge, publication and deployment are separate facts.
+Finish the remaining deployment/provider acceptance (VARD-7) and real human
+first-use validation (VARD-17). Implementation, merge, publication, deployment
+and owner value acceptance are separate facts. See the
+[Musubi pilot evaluation](musubi-pilot-evaluation.md) for the 2026-10-14 results.
 
-At this checkpoint, mobile frozen delivery and marketing live delivery have
-passed their recorded acceptance. The Musubi web-app source PR has merged;
-its release, deployment and live consumer verification remain separate work.
-The pilot still needs an agreed visibly different artwork and a measured second
-update. A metadata-only version does not demonstrate a visible brand change.
+The Musubi functional pilot now includes private mobile frozen delivery,
+marketing live references, observed web-app v0.2.3 branding, two approved visible
+OG updates and real-server folder arrival/removal with historical frozen
+restoration. The owner accepts centralized asset control as the substantial
+benefit and explicitly does not require a saved-minute benchmark. Do not leave
+that benchmark or the completed artwork/folder work as pending acceptance.
+VARD-16 remains Started because its explicit inward VARD-7 deployment dependency
+is open; this report does not infer provider/runtime acceptance or clear the
+recipe implementation dependency. VARD-17 still requires a real new person.
 
-While external deployment or human input is pending, VARD-77 is the first
-independently actionable implementation: self-contained public package guidance,
-correct Setup naming and a verified new patch release. A source README merge
-does not change an already published npm archive. Existing versions, release
-archives and tags must remain unchanged; promote setup pins only after verifying
-the new publication.
+VARD-78 production card acceptance and VARD-77 public npm onboarding are recorded
+complete in the planner. Public CLI 0.8.2/shared 0.4.1/MCP 0.4.1 publication and
+verified Setup pin promotion are complete; see
+[0.8.2 release evidence](client-release-0.8.2.md). A source README merge alone
+still does not update an already published npm archive. Existing versions,
+release archives and tags remain immutable.
 
 Runtime, provider and server-release acceptance remain independent tasks
 (VARD-6, VARD-7 through VARD-13 and their security follow-ups). This roadmap
 does not close those gates or broaden an operator's existing risk acceptance.
 
-### 2. Deliver one useful recipe with a preservation contract
+### 2. Reuse one source across library folders
+
+The owner's 2026-10-14 pilot feedback prioritizes **VARD-100**: one digital source
+asset should back separate uses in multiple library folders. Each use has its
+own path and output settings; current-following uses should adopt a source
+version once it changes. Existing Vard mappings already reference source IDs,
+but that is not a shipped reusable library-item model.
+
+Design the smallest compatible source/use slice before expanding Templates.
+Preserve original identity/history, existing URLs, private delivery and frozen
+snapshots; define deletion and push-target behavior. Do not automatically merge
+existing artwork or confuse different OG compositions/theme variants with copies.
+The [pilot evaluation](musubi-pilot-evaluation.md#priority-finding-one-source-separate-uses-vard-100)
+records the user need and current boundary. Planning is not implementation and
+this priority change does not waive deployment/provider or compatibility checks.
+
+### 3. Deliver one useful recipe with a preservation contract
 
 See the [app/web recipe design proposal](template-recipe-model.md) for observed
 Musubi inputs and the staged model. This design does not satisfy the pilot gate
@@ -83,7 +104,7 @@ Additional crop, focal-point, padding or rotation options should address a
 specific recipe need, rather than requiring a broad transformation catalog.
 Team recipe sharing (VARD-27) follows actual use of the basic recipes.
 
-### 3. Show change impact and add opt-in automation
+### 4. Show change impact and add opt-in automation
 
 - **VARD-28:** record explicitly known consumers, destinations and update modes.
   Delivery analytics are not a complete inventory of asset use.
