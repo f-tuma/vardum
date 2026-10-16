@@ -54,7 +54,7 @@ export async function checkBackupRestore({
         text,
       )
     ).stdout.trim();
-  const queryCounts = `SELECT json_build_object(${["user", "session", "account", "verification", "organization", "member", "invitation", "workspace", "workspace_settings", "asset", "asset_version", "asset_folder", "vard", "vard_item", "apikey", "audit_event", "delivery_event"].map((name) => `'${name}',(SELECT count(*) FROM "${name}")`).join(",")})`;
+  const queryCounts = `SELECT json_build_object(${["user", "session", "account", "verification", "organization", "member", "invitation", "workspace", "workspace_settings", "asset", "asset_version", "asset_folder", "asset_use", "vard", "vard_item", "apikey", "audit_event", "delivery_event"].map((name) => `'${name}',(SELECT count(*) FROM "${name}")`).join(",")})`;
   const tables = (project) =>
     sql(
       project,
@@ -220,6 +220,16 @@ export async function checkBackupRestore({
             await fetch(new URL(signed.url, base), { headers: { cookie } })
           ).arrayBuffer(),
         );
+
+        const linkedUse = await api(`/api/workspaces/${workspaceId}/asset-uses`, {
+          sourceAssetId: assetId, key: "reuse/restored-logo.png", displayName: "Restored linked logo",
+          transformation: { format: "png", w: 24 },
+        });
+        const linkedBefore = await api(`/api/workspaces/${workspaceId}/asset-uses?sourceAssetId=${assetId}`);
+        assert.equal(linkedBefore.uses[0].id, linkedUse.id);
+        const linkedPath = new URL(linkedBefore.uses[0].previewUrl, base).pathname.replace(/\/__v\/[^/]+\/.*$/, "/reuse/restored-logo.png");
+        const linkedBytes = Buffer.from(await (await fetch(`${base}${linkedPath}`, { headers: { cookie } })).arrayBuffer());
+        assert.deepEqual(linkedBytes, signedBytes);
 
         // Include a real durable job that cannot finish until the restored worker starts.
         await compose(source, "stop", "worker");
@@ -437,6 +447,10 @@ export async function checkBackupRestore({
 
         if (process.env.SMOKE_SERVER_CANDIDATE)
           await assertRunningCandidate(process.env.SMOKE_SERVER_CANDIDATE, target);
+
+        const linkedAfter = await api(`/api/workspaces/${workspaceId}/asset-uses?sourceAssetId=${assetId}`);
+        assert.deepEqual(linkedAfter, linkedBefore, "linked use identity, settings and source relation survive restore");
+        assert.deepEqual(Buffer.from(await (await fetch(`${base}${linkedPath}`, { headers: { cookie } })).arrayBuffer()), linkedBytes);
 
         // A new signature may be issued, but identity, reservation and the
         // original expiry must stay fixed. Denied content changes do no work.

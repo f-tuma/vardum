@@ -9,6 +9,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   ImagesIcon,
+  LinkIcon,
   LayoutGridIcon,
   ListIcon,
   ArrowDownIcon,
@@ -100,6 +101,7 @@ import {
   type AssetSummary,
 } from "./asset-api";
 import { assetBrowserQueryOptions, flattenAssetPages } from "./asset-queries";
+import { AssetUseDialog, LinkedUses, useLibraryUses } from "./asset-uses";
 import { AssetDetail } from "./asset-detail";
 import { useUploader } from "./use-uploader";
 import { workspaceCrumb, type WorkspaceRef } from "./workspace";
@@ -187,7 +189,7 @@ function AssetBrowser({
   const uploader = useUploader(workspace.id);
   const queryClient = useQueryClient();
   const needle = useDebouncedValue(search.trim());
-  const [dialog, setDialog] = useState<"upload" | "folder" | "import" | null>(null);
+  const [dialog, setDialog] = useState<"upload" | "folder" | "import" | "use" | null>(null);
   const [dragging, setDragging] = useState(false);
   const [view, setView] = useStoredView();
   const searchInput = useRef<HTMLInputElement>(null);
@@ -209,13 +211,16 @@ function AssetBrowser({
   const options = assetBrowserQueryOptions(workspace.id, needle ? "" : prefix, needle);
   const assets = useInfiniteQuery(options);
   const { folders, assets: files } = flattenAssetPages(assets.data?.pages);
-  const loaded = folders.length + files.length;
+  const uses = useLibraryUses(workspace.id, needle ? "" : prefix, needle);
+  const linkedCount = uses.data?.pages.reduce((total, page) => total + page.uses.length, 0) ?? 0;
+  const loaded = folders.length + files.length + linkedCount;
 
   function loadMore() {
     if (!assets.isFetching) void assets.fetchNextPage({ cancelRefetch: false });
   }
 
   function refresh() {
+    void uses.refetch();
     if (!assets.isFetching) {
       window.scrollTo({ top: 0 });
       void queryClient.resetQueries({ queryKey: options.queryKey, exact: true });
@@ -294,6 +299,7 @@ function AssetBrowser({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  <Button variant="outline" onClick={() => setDialog("use")}><LinkIcon data-icon="inline-start" />Use existing</Button>
                   <Button onClick={() => setDialog("upload")}>
                     <UploadIcon data-icon="inline-start" />
                     Upload
@@ -403,7 +409,7 @@ function AssetBrowser({
                 </ul>
               )}
             </div>
-          ) : needle ? (
+          ) : linkedCount || uses.isPending || uses.isError ? null : needle ? (
             <Empty variant="outline">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -442,6 +448,8 @@ function AssetBrowser({
             </Empty>
           )}
 
+          <LinkedUses workspace={workspace} listing={uses} />
+
           {assets.data && (assets.hasNextPage || assets.data.pages.length > 1 || assets.isError) && (
             <AssetPageControls
               loaded={loaded}
@@ -466,6 +474,7 @@ function AssetBrowser({
         </section>
       </Page>
 
+      {dialog === "use" ? <AssetUseDialog workspace={workspace} prefix={needle ? "" : prefix} onClose={() => setDialog(null)} /> : null}
       <UploadDialog
         open={dialog === "upload"}
         prefix={prefix}

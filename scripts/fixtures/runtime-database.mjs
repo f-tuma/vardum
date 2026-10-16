@@ -6,6 +6,15 @@
 export const runtimeDatabaseProbeSql = `
 SELECT current_user AS role,
   (SELECT count(*)::int FROM public.asset) AS unscoped_assets,
+  (SELECT count(*)::int FROM public.asset_use) AS unscoped_asset_uses,
+  (SELECT count(*) = 1 AND bool_and(relrowsecurity AND relforcerowsecurity)
+    FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname = 'asset_use') AS uses_rls,
+  (SELECT count(*) = 1 AND bool_and(COALESCE(
+      policyname = 'workspace_isolation' AND cmd = 'ALL'
+      AND permissive = 'PERMISSIVE' AND roles = ARRAY['public']::name[]
+      AND qual = '(workspace_id = current_setting(''app.workspace_id''::text, true))'
+      AND with_check = '(workspace_id = current_setting(''app.workspace_id''::text, true))', false))
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'asset_use') AS uses_tenant_policy,
   (SELECT count(*)::int FROM public.known_usage) AS unscoped_known_usages,
   (SELECT count(*)::int FROM public.known_usage_check) AS unscoped_known_checks,
   (SELECT count(*) = 2 AND bool_and(relrowsecurity AND relforcerowsecurity)
@@ -30,7 +39,8 @@ SELECT current_user AS role,
 `;
 
 export function validateRuntimeDatabaseProbe(row) {
-  if (row?.role !== "varda_app" || row.unscoped_assets !== 0 ||
+  if (row?.role !== "varda_app" || row.unscoped_assets !== 0 || row.unscoped_asset_uses !== 0 ||
+      row.uses_rls !== true || row.uses_tenant_policy !== true ||
       row.unscoped_known_usages !== 0 || row.unscoped_known_checks !== 0 ||
       row.usage_rls !== true || row.usage_tenant_policies !== true ||
       row.usage_crud !== true || row.checks_append_only !== true)

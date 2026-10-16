@@ -14,6 +14,8 @@ import { registerAssetRoutes } from "./asset-routes.js";
 import { registerAuthRoute } from "./auth-route.js";
 import { registerCapabilityRoutes } from "./capability-routes.js";
 import { CapacityError, registerAdmission } from "./resource-budget.js";
+import { namespaceConflict } from "./asset-use-namespace.js";
+import { registerAssetUseRoutes } from "./asset-use-routes.js";
 import { config } from "./config.js";
 import { registerDeliveryRoutes } from "./delivery-routes.js";
 import { db } from "./db/index.js";
@@ -34,6 +36,8 @@ export async function buildApp() {
 
   registerAdmission(app);
   app.setErrorHandler((error, _request, reply) => {
+    if (namespaceConflict(error))
+      return reply.code(409).send({ code: "library_path_conflict", error: "Path conflicts with an existing library item or folder. Linked uses are read-only upload destinations." });
     if (error instanceof CapacityError) {
       if (error.statusCode === 429 || error.statusCode === 503)
         reply.header("retry-after", "1");
@@ -116,6 +120,7 @@ export async function buildApp() {
   registerKnownUsageRoutes(app);
   registerTransformationRoutes(app);
   registerDeliveryRoutes(app);
+  registerAssetUseRoutes(app);
   registerOperationsRoutes(app);
 
   app.get(

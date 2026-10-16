@@ -451,6 +451,10 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     w: 8,
     format: "png",
   });
+  await t.test("linked library uses", async (usesTest) => {
+    const { checkAssetUses } = await import("./asset-uses.fixture.js");
+    await checkAssetUses(usesTest, app, admin!, objects, cookies);
+  });
   const shapes = [
     { url: immutable, status: 200 },
     { url: immutable.replace(versionId, historicalVersion), status: 200 },

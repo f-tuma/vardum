@@ -23,6 +23,7 @@ export function useUploader(workspaceId: string) {
   function refresh() {
     return Promise.all([
       queryClient.invalidateQueries({ queryKey: ["assets", workspaceId] }),
+      queryClient.invalidateQueries({ queryKey: ["asset-uses", workspaceId] }),
       queryClient.invalidateQueries({ queryKey: ["asset", workspaceId] }),
       queryClient.invalidateQueries({ queryKey: ["asset-versions", workspaceId] }),
       queryClient.invalidateQueries({ queryKey: ["workspace-overview", workspaceId] }),
