@@ -8,11 +8,13 @@ import { assetKey } from "./asset-routes.js";
 import {
   asset,
   assetVersion,
+  assetUse,
   workspace as workspaceTable,
   workspaceSettings,
 } from "./db/app-schema.js";
 import { db } from "./db/index.js";
 import { inWorkspace } from "./db/tenant.js";
+import { useRows, useIssue } from "./asset-use-query.js";
 import { recordDeliveryEvent } from "./delivery-analytics.js";
 import { CapacityError } from "./resource-budget.js";
 import { getImageVariant } from "./image-variant.js";
@@ -22,6 +24,7 @@ import {
   deliveryQuerySchema,
   type Transformation,
   verifyTransformation,
+  transformedVersionUrl,
 } from "./transformation.js";
 
 const stableParams = z.object({
@@ -156,7 +159,7 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const workspace = await findWorkspace(request.params.workspaceSlug);
       if (!workspace) return reply.code(404).send({ error: "Asset not found" });
-      const [target] = await inWorkspace(workspace.id, (transaction) =>
+      let [target] = await inWorkspace(workspace.id, (transaction) =>
         transaction
           .select({ isPublic: asset.isPublic })
           .from(asset)
@@ -167,6 +170,8 @@ export function registerDeliveryRoutes(app: FastifyInstance) {
             ),
           ),
       );
+      if (!target) [target] = await inWorkspace(workspace.id, (transaction) =>
+        useRows(transaction, workspace.id).where(and(eq(assetUse.workspaceId, workspace.id), eq(assetUse.key, request.params["*"]))));
       if (!target) return reply.code(404).send({ error: "Asset not found" });
       if (!(await canDeliver(target.isPublic, workspace.id, request, reply)))
         return reply;
@@ -191,6 +196,22 @@ async function redirectCurrent(
       .from(asset)
       .where(and(eq(asset.workspaceId, workspace.id), eq(asset.key, key))),
   );
+  if (!current) {
+    const [use] = await inWorkspace(workspace.id, (transaction) =>
+      useRows(transaction, workspace.id).where(and(eq(assetUse.workspaceId, workspace.id), eq(assetUse.key, key))));
+    if (!use) return reply.code(404).send({ error: "Asset not found" });
+    if (!(await canDeliver(use.isPublic, workspace.id, request, reply))) return reply;
+    if (transformation) return reply.code(400).send({ error: "Linked use URLs already have saved settings; edit the use instead of adding transformations" });
+    const issue = useIssue(use);
+    if (issue || !use.currentVersionId)
+      return reply.code(422).send({ code: "linked_use_unavailable", error: issue ?? "Source unavailable" });
+    let path = use.transformation
+      ? transformedVersionUrl(workspace.slug, use.sourceKey, use.currentVersionId, use.transformation)
+      : `/w/${encodeURIComponent(workspace.slug)}/__v/${use.currentVersionId}/${use.sourceKey.split("/").map(encodeURIComponent).join("/")}`;
+    if (customDomain) path = path.replace(`/w/${encodeURIComponent(workspace.slug)}/`, "/w/");
+    reply.header("cache-control", use.isPublic ? "public, max-age=60, stale-while-revalidate=300" : "private, no-store");
+    return reply.redirect(path, 302);
+  }
   if (
     current &&
     !(await canDeliver(current.isPublic, workspace.id, request, reply))

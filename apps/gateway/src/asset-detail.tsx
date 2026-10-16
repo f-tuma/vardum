@@ -87,6 +87,7 @@ import {
 import { assetVersionHistoryQueryOptions } from "./asset-queries";
 import { folderCrumbs, statusBadge, UploadLimitDescription } from "./asset-dashboard";
 import { assetOrigin } from "./asset-origin";
+import { LinkedUses, useLibraryUses } from "./asset-uses";
 import { useUploader } from "./use-uploader";
 import type { WorkspaceRef } from "./workspace";
 
@@ -150,6 +151,7 @@ function AssetDetailPage({
   fromPrefix?: string;
   fromSearch: string;
 }) {
+  const linked = useLibraryUses(workspace.id, "", "", asset.id);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<"delete" | "visibility" | "version" | "rename" | null>(null);
@@ -172,7 +174,7 @@ function AssetDetailPage({
     await queryClient.cancelQueries(previews);
     queryClient.removeQueries(previews);
     await Promise.all(
-      ["asset", "assets", "vard", "vards", "audit", "workspace-overview"].map((key) =>
+      ["asset", "assets", "asset-uses", "vard", "vards", "audit", "workspace-overview"].map((key) =>
         queryClient.invalidateQueries({ queryKey: [key, workspace.id] }),
       ),
     );
@@ -328,6 +330,7 @@ function AssetDetailPage({
             <DeliveryCard workspaceId={workspace.id} assetId={asset.id} />
           </div>
         </div>
+        <LinkedUses key={asset.currentVersionId} workspace={workspace} source={asset} listing={linked} />
       </Page>
 
       {dialog === "rename" && (
@@ -355,7 +358,7 @@ function AssetDetailPage({
       <ConfirmDialog
         open={dialog === "delete"}
         title={`Delete “${asset.displayName}”?`}
-        description="All versions and generated variants are deleted permanently."
+        description="All versions and generated variants are deleted permanently. Remove linked uses first."
         confirmLabel="Delete asset"
         onCancel={() => setDialog(null)}
         onConfirm={removeAsset}
@@ -520,6 +523,7 @@ function VersionHistory({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset", workspace.id] }),
         queryClient.invalidateQueries({ queryKey: ["assets", workspace.id] }),
+        queryClient.invalidateQueries({ queryKey: ["asset-uses", workspace.id] }),
         queryClient.invalidateQueries({ queryKey: ["asset-versions", workspace.id, assetId] }),
       ]);
       toast.success(retry ? "Processing restarted" : "Version restored");

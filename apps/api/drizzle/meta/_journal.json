@@ -120,6 +120,13 @@
       "when": 1791747492664,
       "tag": "0016_known_usage_inventory",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792162853587,
+      "tag": "0017_asset_uses",
+      "breakpoints": true
     }
   ]
 }

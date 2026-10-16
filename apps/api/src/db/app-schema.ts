@@ -4,6 +4,7 @@ import type {
   Source,
   EvidenceScope,
 } from "../known-usage-model.js";
+import type { Transformation } from "../transformation.js";
 import type { VardFolderRule } from "@vardum/shared";
 import { sql } from "drizzle-orm";
 import {
@@ -212,6 +213,35 @@ export const asset = pgTable(
       "asset_key_length_check",
       sql`length(${table.key}) between 1 and 255`,
     ),
+    tenantPolicy(table.workspaceId),
+  ],
+).enableRLS();
+
+// A library use owns only placement/settings. Bytes, history and visibility
+// belong to its direct source, enforced within the same tenant by the FK.
+export const assetUse = pgTable(
+  "asset_use",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspace.id, { onDelete: "cascade" }),
+    sourceAssetId: uuid("source_asset_id").notNull(),
+    key: text("key").notNull(),
+    displayName: text("display_name").notNull(),
+    transformation: jsonb("transformation").$type<Transformation | null>(),
+    outputMimeType: text("output_mime_type").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+    updatedBy: text("updated_by").notNull(),
+  },
+  (table) => [
+    uniqueIndex("asset_use_workspace_key_uidx").on(table.workspaceId, table.key),
+    index("asset_use_source_idx").on(table.workspaceId, table.sourceAssetId, table.key),
+    foreignKey({ name: "asset_use_source_fk", columns: [table.workspaceId, table.sourceAssetId], foreignColumns: [asset.workspaceId, asset.id] }),
+    check("asset_use_revision_check", sql`${table.revision} > 0`),
+    check("asset_use_key_check", sql`length(${table.key}) between 1 and 255 and ${table.key} ~ '^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$'`),
+    check("asset_use_name_check", sql`length(${table.displayName}) between 1 and 255`),
     tenantPolicy(table.workspaceId),
   ],
 ).enableRLS();

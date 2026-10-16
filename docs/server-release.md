@@ -8,7 +8,7 @@ CLI version and it publishes shared → CLI → MCP. Do not use that workflow fo
 this server candidate.
 
 The preparation policy covers API/worker, the standard and Dokploy gateways,
-and migrations **0000–0016**. Its explicit public compatibility clients remain
+and migrations **0000–0017**. Its explicit public compatibility clients remain
 `@vardum/cli` **0.6.0**, `@vardum/mcp` **0.2.0** and `@vardum/shared` **0.2.0** on
 Node 22 or newer. `candidate.json` records these as `clientVersions`, separately
 from `sourceClientVersions` read from the exact build context. A source version
@@ -77,7 +77,7 @@ store pruning or archive-index rewriting is part of preparation.
 The manifest records commit, Git tree, platform, image tags/IDs and config IDs, archive SHA-256,
 every deployment-file checksum, all migration SHA-256 values, exact source client
 versions and the separate public compatibility versions. Migration verification
-requires the exact 0000–0016 tag/index order, strict JSON, and positive safe-integer
+requires the exact 0000–0017 tag/index order, strict JSON, and positive safe-integer
 `when` values in strictly increasing order; Drizzle uses those timestamps.
 It also includes Compose files without build sections, nginx routing, example
 environment files, monitoring rules, migration review copies, backup tooling and
@@ -291,6 +291,7 @@ visibility and folder-rule precautions in [operations](operations.md), then:
 | `0014_upload_cleanup_fairness.sql` | Nullable cleanup scheduling timestamps and indexes; retain additive fields/indexes during image rollback. |
 | `0015_upload_request_checksum.sql` | Nullable `asset_version.expected_checksum` plus a lowercase 64-hex constraint; historical rows remain null. New upload requests bind resumable attempts to their source SHA-256. Preserve the field and pending journals during retry/restore. |
 | `0016_known_usage_inventory.sql` | Private `known_usage` and `known_usage_check` tables with forced workspace RLS. Run the matching migrator to grant consumer CRUD and check SELECT/INSERT while revoking direct check UPDATE/DELETE. Preserve declared source identities and manual reports in backup/restore; asset/Vard deletion retains them, while authorized inventory/workspace deletion cascades reports. |
+| `0017_asset_uses.sql` | Linked library uses with forced tenant RLS, restrictive source references and coordinated file/folder namespace triggers. Run the matching migrator/runtime grants. Preserve use identities/settings in backup/restore and keep the table during image rollback. See [library uses](library-uses.md); no automatic source deduplication or Vard folder expansion. |
 
 The current worker independently reconciles interrupted ingest at startup,
 including when an existing recovery queue job delays fresh scheduling. Stop all

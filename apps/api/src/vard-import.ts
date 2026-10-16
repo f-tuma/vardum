@@ -6,6 +6,7 @@ import { z } from "zod";
 import { assetKey } from "./asset-key.js";
 import { authorizeAsset, type AssetAction } from "./authorization.js";
 import { asset, assetVersion, auditEvent, vard, vardItem } from "./db/app-schema.js";
+import { conflictsWithUse } from "./asset-use-namespace.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
 import { maximumUploadSize } from "./upload-limits.js";
@@ -114,6 +115,9 @@ export function registerVardImportRoutes(app: FastifyInstance) {
       const result = await inWorkspace(workspaceId, async (tx) => {
         await lockWorkspaceContent(tx, workspaceId);
         assertImportIdentities(request.body.files);
+        for (const file of request.body.files)
+          if (await conflictsWithUse(tx, workspaceId, file.key))
+            throw new VardResolutionError("Linked uses are read-only upload destinations; select the source asset instead");
         const context = await importContext(tx, workspaceId, vardId);
         if (!context) return null;
         const rows = await tx.select({
@@ -173,6 +177,9 @@ export function registerVardImportRoutes(app: FastifyInstance) {
       const result = await inWorkspace(workspaceId, async (tx) => {
         await lockWorkspaceContent(tx, workspaceId);
         assertImportIdentities(request.body.files);
+        for (const file of request.body.files)
+          if (await conflictsWithUse(tx, workspaceId, file.key))
+            throw new VardResolutionError("Linked uses are read-only upload destinations; select the source asset instead");
         const context = await importContext(tx, workspaceId, vardId);
         if (!context) return null;
         const rows = await tx.select({

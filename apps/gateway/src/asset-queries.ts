@@ -49,6 +49,10 @@ export function assetVersionHistoryQueryOptions(
             { throwOnError: true },
           ),
           queryClient.invalidateQueries(
+            { queryKey: ["asset-uses", workspaceId] },
+            { throwOnError: true },
+          ),
+          queryClient.invalidateQueries(
             { queryKey: ["assets", workspaceId] },
             { throwOnError: true },
           ),

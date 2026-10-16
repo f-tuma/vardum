@@ -15,10 +15,12 @@ import {
 import { authorizeAsset } from "./authorization.js";
 import { assetKey } from "./asset-key.js";
 export { assetKey } from "./asset-key.js";
+import { conflictsWithUse } from "./asset-use-namespace.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
 import {
   asset,
   assetFolder,
+  assetUse,
   assetVersion,
   auditEvent,
   deliveryEvent,
@@ -475,7 +477,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             .from(asset)
             .where(and(eq(asset.workspaceId, workspaceId), eq(asset.key, key)))
             .limit(1);
-          if (existing) return false;
+          if (existing || await conflictsWithUse(transaction, workspaceId, key)) return false;
           await reserveUpload(transaction, workspaceId, object.size);
           const [row] = await transaction
             .insert(asset)
@@ -657,7 +659,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       const result = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceContent(transaction, workspaceId);
-        const [[stored], [assets], [children]] = await Promise.all([
+        const [[stored], [assets], [children], [uses]] = await Promise.all([
           transaction
             .select({ id: assetFolder.id })
             .from(assetFolder)
@@ -686,9 +688,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
                 sql`${assetFolder.prefix} <> ${prefix}`,
               ),
             ),
+          transaction.select({ count: count() }).from(assetUse).where(and(
+            eq(assetUse.workspaceId, workspaceId), sql`starts_with(${assetUse.key}, ${prefix})`,
+          )),
         ]);
 
-        if ((assets?.count ?? 0) > 0 || (children?.count ?? 0) > 0)
+        if ((assets?.count ?? 0) > 0 || (children?.count ?? 0) > 0 || (uses?.count ?? 0) > 0)
           return "not-empty" as const;
         if (!stored) return "missing" as const;
 
@@ -1144,6 +1149,10 @@ export function registerAssetRoutes(app: FastifyInstance) {
           .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
           .for("update");
         if (!target) return null;
+        const [linked] = await transaction.select({ count: count() }).from(assetUse).where(and(
+          eq(assetUse.workspaceId, workspaceId), eq(assetUse.sourceAssetId, assetId),
+        ));
+        if (linked!.count > 0) return { sourceInUse: true as const, count: linked!.count };
         const versions = await transaction
           .select({ id: assetVersion.id, storageKey: assetVersion.storageKey })
           .from(assetVersion)
@@ -1180,6 +1189,8 @@ export function registerAssetRoutes(app: FastifyInstance) {
         return target;
       });
 
+      if (deleted && "sourceInUse" in deleted)
+        return reply.code(409).send({ code: "source_in_use", error: `Remove the ${deleted.count} linked uses before deleting this source`, useCount: deleted.count });
       return deleted
         ? reply.code(204).send()
         : reply.code(404).send({ error: "Asset not found" });

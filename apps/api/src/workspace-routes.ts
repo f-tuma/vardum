@@ -10,6 +10,7 @@ import { workspaceKeyRateLimit } from "./api-key-policy.js";
 import { authorizeAsset, authorizeWorkspaceAdmin } from "./authorization.js";
 import {
   assetVersion,
+  assetUse,
   auditEvent,
   workspace as workspaceTable,
 } from "./db/app-schema.js";
@@ -563,6 +564,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
               eq(apikey.referenceId, workspaceId),
             ),
           );
+        await transaction.delete(assetUse).where(eq(assetUse.workspaceId, workspaceId));
         await transaction
           .delete(workspaceTable)
           .where(eq(workspaceTable.id, workspaceId));

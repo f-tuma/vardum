@@ -599,6 +599,54 @@ export function listAssets(workspaceId: string, prefix = "", search = "") {
   );
 }
 
+export type AssetUseSummary = {
+  kind: "use";
+  id: string;
+  key: string;
+  displayName: string;
+  sourceAssetId: string;
+  sourceKey: string;
+  sourceDisplayName: string;
+  sourceMimeType: string | null;
+  currentVersionId: string | null;
+  isPublic: boolean;
+  transformation: TransformationInput | null;
+  outputMimeType: string;
+  revision: number;
+  updatedAt: string;
+  availabilityError: string | null;
+  previewUrl: string | null;
+};
+
+export type AssetUsePage = { uses: AssetUseSummary[]; nextCursor: string | null };
+export function listAssetUses(workspaceId: string, prefix: string, search: string, cursor: string | null,
+  sourceAssetId?: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ prefix, search, limit: "50" });
+  if (cursor) query.set("cursor", cursor);
+  if (sourceAssetId) query.set("sourceAssetId", sourceAssetId);
+  return request<AssetUsePage>(`/api/workspaces/${workspaceId}/asset-uses?${query}`, { signal });
+}
+
+export function createAssetUse(workspaceId: string, input: {
+  key: string; displayName: string; sourceAssetId: string; transformation: TransformationInput | null;
+}) {
+  return request<{ id: string }>(`/api/workspaces/${workspaceId}/asset-uses`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  });
+}
+
+export function updateAssetUse(workspaceId: string, use: AssetUseSummary,
+  settings: { displayName: string; transformation: TransformationInput | null }) {
+  return request(`/api/workspaces/${workspaceId}/asset-uses/${use.id}`, {
+    method: "PATCH", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...settings, expectedRevision: use.revision }),
+  });
+}
+
+export function removeAssetUse(workspaceId: string, use: AssetUseSummary) {
+  return request<void>(`/api/workspaces/${workspaceId}/asset-uses/${use.id}?expectedRevision=${use.revision}`, { method: "DELETE" });
+}
+
 export type AssetPage = {
   folders: AssetFolder[];
   assets: AssetSummary[];
