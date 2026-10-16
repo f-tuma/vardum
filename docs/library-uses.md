@@ -57,9 +57,13 @@ original byte ranges can return `206`, transformed requests return complete outp
 A use always follows the **ready current** source, so a pending or failed newer
 upload does not replace its effective version. Original uses retain their chosen
 MIME type. A transformed use requires an explicit supported output format. A
-source change that cannot satisfy the saved settings returns
+source MIME change that cannot satisfy the saved format, or a known source size
+that exceeds the configured output pixel budget, returns
 `422 linked_use_unavailable`, without a redirect or fallback to original bytes.
-The library exposes this as unavailable; repair its settings or source. Caller
+The library exposes these metadata incompatibilities as unavailable; repair its
+settings or source. Canonical delivery still checks actual bytes, all animation
+frames and storage availability; this list is not a full rendering/availability
+probe. Caller
 transformation overrides on use URLs are rejected: edit the saved settings instead.
 The canonical response retains the source's download filename convention.
 
@@ -71,7 +75,9 @@ Workspace routes:
   traversal (`prefix`, literal `search`, optional `sourceAssetId`, `limit` up to
   100, `cursor` from `nextCursor`). It returns use identities, their direct source,
   inherited visibility/current version, settings, revision, availability and
-  canonical preview URLs. The initial workspace limit is 1,000 uses.
+  canonical preview URLs and source-processing state. Active library views refresh
+  while a referenced source is processing, retaining its previous ready preview
+  until the new one is ready. The initial workspace limit is 1,000 uses.
 - `POST /asset-uses`: `sourceAssetId`, `key`, `displayName`, and nullable
   `transformation`. Creation requires a ready source in the same workspace.
 - `PATCH /asset-uses/:useId`: `displayName`, nullable `transformation`, and

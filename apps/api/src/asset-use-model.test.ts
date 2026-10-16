@@ -11,3 +11,12 @@ test("use format and suffix promises fail explicitly when source bytes change ty
   assert.match(useCompatibilityIssue("icon.ico", "image/png", "image/png", null)!, /extension/);
   assert.equal(createUseSchema.safeParse({ sourceAssetId: "00000000-0000-4000-8000-000000000001", key: "other/icon", displayName: "Icon", transformation: { w: 32 } }).success, false);
 });
+
+test("known source dimensions reject impossible format-only outputs before redirect", () => {
+  assert.match(useCompatibilityIssue("hero", "image/webp", "image/png", { format: "webp" }, { width: 5000, height: 5000 })!, /pixel limit/);
+  assert.equal(useCompatibilityIssue("hero", "image/webp", "image/png", { format: "webp", w: 320 }, { width: 5000, height: 5000 }), null);
+});
+
+test("auto-oriented metadata does not falsely reject a feasible rotated source", () => {
+  assert.equal(useCompatibilityIssue("portrait", "image/png", "image/jpeg", { format: "png", w: 4096 }, { width: 100, height: 10000 }), null);
+});

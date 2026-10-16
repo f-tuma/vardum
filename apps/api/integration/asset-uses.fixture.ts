@@ -20,6 +20,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     "INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,created_by,updated_by) VALUES ($1,'ws',$2,$3,'ready',$4,'logo.svg','image/svg+xml',$5,$6,'fixture','fixture')",
     [id, sourceId, number, `uses-${id}`, bytes.length, checksum]);
   await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [first, sourceId]);
+  await admin.query("UPDATE asset_version SET width=16,height=16 WHERE asset_id=$1", [sourceId]);
   const create = (key: string, transformation: unknown = { format: "png", w: 8 }) => app.inject({
     method: "POST", url: `${api}/asset-uses`, headers,
     payload: { key, sourceAssetId: sourceId, displayName: "Shared logo", transformation },
@@ -105,7 +106,12 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
       payload: { filename: "logo.svg", mimeType: "image/svg+xml", size: bytes.length } });
     assert.equal(pending.statusCode, 201, pending.body);
     assert.match((await stable("reuse/web/logo.png")).headers.location!, new RegExp(first));
+    await admin.query("UPDATE asset_version SET status='processing' WHERE id=$1", [pending.json().id]);
+    const processingUses = await app.inject({ url: `${api}/asset-uses?sourceAssetId=${sourceId}`, headers });
+    assert.ok(processingUses.json().uses.every((row: { sourceProcessing: boolean; currentVersionId: string }) => row.sourceProcessing && row.currentVersionId === first));
     await admin.query("UPDATE asset_version SET status='failed' WHERE id=$1", [pending.json().id]);
+    const failedUses = await app.inject({ url: `${api}/asset-uses?sourceAssetId=${sourceId}`, headers });
+    assert.ok(failedUses.json().uses.every((row: { sourceProcessing: boolean }) => !row.sourceProcessing));
     assert.match((await stable("reuse/web/logo.png")).headers.location!, new RegExp(first));
     await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [second, sourceId]);
     assert.match((await stable("reuse/web/logo.png")).headers.location!, new RegExp(second));
@@ -131,6 +137,23 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal((await create("reuse/wrong.jpg")).statusCode, 422);
     assert.equal((await create("reuse/unrecognized.ico")).statusCode, 422);
     assert.equal((await create("reuse/size-only", { w: 8 })).statusCode, 400);
+  });
+
+  await t.test("known impossible source size is rejected on create, edit and stable resolution", async () => {
+    const full = await create("reuse/full-size", { format: "png" });
+    assert.equal(full.statusCode, 201, full.body);
+    await admin.query("UPDATE asset_version SET width=5000,height=5000 WHERE id=$1", [first]);
+    const unavailable = await stable("reuse/full-size");
+    assert.equal(unavailable.statusCode, 422, unavailable.body); assert.equal(unavailable.headers.location, undefined);
+    assert.equal((await create("reuse/full-size-new", { format: "png" })).statusCode, 422);
+    const badEdit = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${full.json().id}`, headers,
+      payload: { displayName: "Impossible", transformation: { format: "png" }, expectedRevision: 1 } });
+    assert.equal(badEdit.statusCode, 422, badEdit.body);
+    const repair = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${full.json().id}`, headers,
+      payload: { displayName: "Small preview", transformation: { format: "png", w: 320 }, expectedRevision: 1 } });
+    assert.equal(repair.statusCode, 200, repair.body);
+    assert.equal((await stable("reuse/full-size")).statusCode, 302);
+    await admin.query("UPDATE asset_version SET width=16,height=16 WHERE id=$1", [first]);
   });
 
   await t.test("shared namespace rejects alias overwrites, ancestors, folders and import preflight before upload", async () => {

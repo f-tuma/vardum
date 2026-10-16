@@ -59,13 +59,13 @@ export function registerAssetUseRoutes(app: FastifyInstance) {
     const input = request.body;
     const result = await inWorkspace(workspaceId, async (tx) => {
       await lockWorkspaceContent(tx, workspaceId);
-      const [source] = await tx.select({ mimeType: assetVersion.mimeType }).from(asset).innerJoin(assetVersion, and(
+      const [source] = await tx.select({ mimeType: assetVersion.mimeType, width: assetVersion.width, height: assetVersion.height }).from(asset).innerJoin(assetVersion, and(
         eq(assetVersion.id, asset.currentVersionId), eq(assetVersion.assetId, asset.id),
         eq(assetVersion.workspaceId, workspaceId), eq(assetVersion.status, "ready"),
       )).where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, input.sourceAssetId)));
       if (!source) return { status: 409 as const, error: "Select a source with a ready current version in this workspace" };
       const outputMimeType = useOutputMime(source.mimeType, input.transformation);
-      const error = useCompatibilityIssue(input.key, outputMimeType, source.mimeType, input.transformation);
+      const error = useCompatibilityIssue(input.key, outputMimeType, source.mimeType, input.transformation, source);
       if (error) return { status: 422 as const, error };
       const [total] = await tx.select({ count: count() }).from(assetUse).where(eq(assetUse.workspaceId, workspaceId));
       if (total!.count >= 1000) return { status: 409 as const, error: "Workspace supports at most 1,000 linked uses" };
@@ -101,7 +101,7 @@ export function registerAssetUseRoutes(app: FastifyInstance) {
       if (row.revision !== request.body.expectedRevision) return { status: 409 as const, error: "Linked use changed; reload before saving" };
       const { displayName, transformation } = request.body;
       const outputMimeType = useOutputMime(row.sourceMimeType ?? row.outputMimeType, transformation);
-      const error = useCompatibilityIssue(row.key, outputMimeType, row.sourceMimeType, transformation);
+      const error = useCompatibilityIssue(row.key, outputMimeType, row.sourceMimeType, transformation, { width: row.sourceWidth, height: row.sourceHeight });
       if (error) return { status: 422 as const, error };
       if (displayName === row.displayName && (transformation === null ? row.transformation === null : row.transformation !== null && canonicalizeTransformation(transformation) === canonicalizeTransformation(row.transformation)) && outputMimeType === row.outputMimeType)
         return { status: 200 as const, row: { id: row.id, revision: row.revision } };

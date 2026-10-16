@@ -608,6 +608,9 @@ export type AssetUseSummary = {
   sourceKey: string;
   sourceDisplayName: string;
   sourceMimeType: string | null;
+  sourceWidth: number | null;
+  sourceHeight: number | null;
+  sourceProcessing: boolean;
   currentVersionId: string | null;
   isPublic: boolean;
   transformation: TransformationInput | null;

@@ -1,4 +1,3 @@
-import { mediaStem } from "@vardum/shared";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, FolderIcon, LinkIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
@@ -17,20 +16,15 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { errorMessage, toKey } from "@/lib/format";
-import { ApiRequestError, assetDeliveryPath, assetPreviewUrl, createAssetUse, createTransformationUrl, getAsset, listAssetUses,
+import { errorMessage } from "@/lib/format";
+import { ApiRequestError, assetDeliveryPath, assetPreviewUrl, createAssetUse, createTransformationUrl, getAsset,
   removeAssetUse, updateAssetUse, type AssetSummary, type AssetUseSummary, type TransformationInput } from "./asset-api";
-import { assetBrowserQueryOptions, flattenAssetPages } from "./asset-queries";
+import { assetBrowserQueryOptions, assetUseQueryOptions, flattenAssetPages } from "./asset-queries";
+import { defaultUsePath } from "./asset-use-path";
 import type { WorkspaceRef } from "./workspace";
 
 export function useLibraryUses(workspaceId: string, prefix = "", search = "", sourceAssetId?: string) {
-  return useInfiniteQuery({
-    queryKey: ["asset-uses", workspaceId, prefix, search, sourceAssetId],
-    queryFn: ({ pageParam, signal }) => listAssetUses(workspaceId, prefix, search, pageParam, sourceAssetId, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-    staleTime: 30_000,
-  });
+  return useInfiniteQuery(assetUseQueryOptions(workspaceId, prefix, search, sourceAssetId));
 }
 
 export function LinkedUses({ workspace, listing, source }: {
@@ -61,7 +55,7 @@ export function LinkedUses({ workspace, listing, source }: {
               <span className="flex w-full min-w-0 flex-col gap-1 p-3">
                 <span className="flex min-w-0 items-center justify-between gap-2 text-sm"><span className="truncate font-medium">{use.displayName}</span><Badge variant="secondary"><LinkIcon />Linked</Badge></span>
                 <span className="truncate text-xs text-muted-foreground" title={use.key}>{use.key}</span>
-                {use.availabilityError ? <span className="text-xs text-destructive">Source unavailable</span> : null}
+                {use.availabilityError ? <span className="text-xs text-destructive">Source unavailable</span> : use.sourceProcessing ? <span className="text-xs text-muted-foreground">Updating source…</span> : null}
               </span>
             </button>
           </li>)}
@@ -125,7 +119,7 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   const navigate = useNavigate();
   const client = useQueryClient();
   const [name, setName] = useState(use?.displayName ?? source.displayName);
-  const [key, setKey] = useState(use?.key ?? `${prefix}${toKey(mediaStem(source.displayName))}`);
+  const [key, setKey] = useState(use?.key ?? defaultUsePath(prefix, source.displayName));
   const [keyEdited, setKeyEdited] = useState(Boolean(use));
   const [format, setFormat] = useState<"original" | NonNullable<TransformationInput["format"]>>(use?.transformation?.format ?? "original");
   const [width, setWidth] = useState(String(use?.transformation?.w ?? ""));
@@ -168,14 +162,14 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   }
   return <>
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-      <Link to="/workspaces/$workspaceId/assets/$assetId" params={{ workspaceId: workspace.id, assetId: source.id }} search={{ from: source.key.includes("/") ? `${source.key.split("/").slice(0, -1).join("/")}/` : "" }}>Source: {source.displayName}</Link>
+      <Link className="min-w-0 truncate" to="/workspaces/$workspaceId/assets/$assetId" params={{ workspaceId: workspace.id, assetId: source.id }} search={{ from: source.key.includes("/") ? `${source.key.split("/").slice(0, -1).join("/")}/` : "" }}>Source: {source.displayName}</Link>
       <Badge variant="secondary">Latest ready version · {source.isPublic ? "Public" : "Private"}</Badge>
     </div>
     <form onSubmit={save} className="flex flex-col gap-4">
       <div className="flex aspect-16/10 max-h-56 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells"><AssetThumb url={preview} mimeType={format === "original" ? source.mimeType : `image/${format}`} label={`Preview of ${name}`} controls /></div>
       {use?.availabilityError ? <Alert variant="destructive"><TriangleAlertIcon /><AlertTitle>Saved use unavailable</AlertTitle><AlertDescription>{use.availabilityError}</AlertDescription></Alert> : null}
       <FieldGroup>
-        <Field><FieldLabel htmlFor={`${id}-name`}>Use name</FieldLabel><Input id={`${id}-name`} value={name} required maxLength={255} readOnly={!workspace.canEdit} onChange={(event) => { setName(event.target.value); if (!keyEdited) setKey(`${prefix}${toKey(mediaStem(event.target.value))}`); }} /></Field>
+        <Field><FieldLabel htmlFor={`${id}-name`}>Use name</FieldLabel><Input id={`${id}-name`} value={name} required maxLength={255} readOnly={!workspace.canEdit} onChange={(event) => { setName(event.target.value); if (!keyEdited) setKey(defaultUsePath(prefix, event.target.value)); }} /></Field>
         <Field><FieldLabel htmlFor={`${id}-key`}>Path</FieldLabel><Input id={`${id}-key`} value={key} required maxLength={255} pattern={"[a-z0-9][a-z0-9._\\-]*(/[a-z0-9][a-z0-9._\\-]*)*"} readOnly={Boolean(use) || !workspace.canEdit} onChange={(event) => { setKeyEdited(true); setKey(event.target.value); }} />
           <FieldDescription>{use ? "Path is fixed. Create another use for a different URL." : "Include the destination folder. A file extension is optional."}</FieldDescription></Field>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
