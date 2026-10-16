@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import { act, createElement } from "react";
+import { act, createElement, useEffect } from "react";
 
 test("linked-only folder follows source completion after its source history observer unmounts", { timeout: 7000 }, async (t) => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost:5173/", pretendToBeVisual: true });
@@ -29,14 +29,14 @@ test("linked-only folder follows source completion after its source history obse
   function Folder() {
     const listing = useInfiniteQuery(assetUseQueryOptions("workspace", "mobile/"));
     const item = listing.data?.pages[0]?.uses[0];
-    observed = { version: item?.currentVersionId, processing: item?.sourceProcessing };
+    useEffect(() => { observed = { version: item?.currentVersionId, processing: item?.sourceProcessing }; }, [item?.currentVersionId, item?.sourceProcessing]);
     return null;
   }
-  async function until(predicate: () => boolean) {
-    const deadline = Date.now() + 3000;
-    while (!predicate() && Date.now() < deadline)
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
-    assert.ok(predicate(), JSON.stringify({ observed, reads }));
+  async function until(predicate: () => boolean, deadline = Date.now() + 3000): Promise<void> {
+    if (predicate()) return;
+    assert.ok(Date.now() < deadline, JSON.stringify({ observed, reads }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    return until(predicate, deadline);
   }
   await act(async () => { root.render(createElement(QueryClientProvider, { client }, createElement(Folder))); });
   await until(() => observed.version === "v1");
