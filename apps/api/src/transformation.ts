@@ -10,6 +10,11 @@ const fields = {
   q: z.coerce.number().int().min(1).max(100).optional(),
   bg: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Background must be a six-digit hex color")
     .toLowerCase().optional(),
+  // JSON bodies must not coerce null, booleans or empty strings into a percent.
+  pad: z.union([z.number().int().min(0).max(45), z.string().regex(/^0*(?:[0-9]|[1-3][0-9]|4[0-5])$/)])
+    .pipe(z.coerce.number<string | number>().int().min(0).max(45))
+    .describe('Inset on each edge as an integer percent (0–45) of the shorter final side. Positive padding requires explicit w, h, raster format and fit "contain".')
+    .optional(),
 };
 const baseSchema = z.object(fields).strict();
 export type Transformation = z.infer<typeof baseSchema>;
@@ -40,6 +45,7 @@ export function canonicalizeTransformation(input: Transformation) {
     query.set("q", String(input.q ?? 80));
   }
   if (input.bg) query.set("bg", input.bg.toLowerCase());
+  if (input.pad) query.set("pad", String(input.pad));
   return query.toString();
 }
 
@@ -120,6 +126,8 @@ function signature(workspaceSlug: string, key: string, canonical: string) {
 }
 
 function transformationIssue(input: Transformation) {
+  if (input.pad && (!input.w || !input.h || !input.format || input.fit !== "contain"))
+    return 'Padding requires width, height, an output format and fit "contain"';
   if (input.bg && !input.format) return "Background requires an output format";
   if (!input.w && !input.h && !input.format)
     return "A size or output format is required";

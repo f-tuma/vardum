@@ -81,6 +81,36 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal(changedPath.statusCode, 400);
   });
 
+  await t.test("padded linked uses persist settings, sign their final canvas and preserve captured output after edits", async () => {
+    const spec = { w: 40, h: 32, fit: "contain", format: "png", bg: "#204060", pad: 25 };
+    const created = await create("reuse/padded/logo.png", spec);
+    assert.equal(created.statusCode, 201, created.body);
+    const id = created.json().id;
+    assert.deepEqual((await admin.query("SELECT transformation FROM asset_use WHERE id=$1", [id])).rows[0].transformation, spec);
+    const capturedUrl = (await stable("reuse/padded/logo.png")).headers.location!;
+    assert.match(capturedUrl, /w=40&h=32&fit=contain&format=png&q=80&bg=%23204060&pad=25&sig=/);
+    const captured = await app.inject({ url: capturedUrl, headers });
+    assert.equal(captured.statusCode, 200, captured.body);
+    const metadata = await sharp(captured.rawPayload).metadata();
+    assert.equal(metadata.width, 40); assert.equal(metadata.height, 32); assert.equal(metadata.hasAlpha, false);
+    const listing = (await app.inject({ url: `${api}/asset-uses?sourceAssetId=${sourceId}`, headers })).json();
+    assert.deepEqual(listing.uses.find((row: { id: string }) => row.id === id).transformation, spec);
+    const edited = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${id}`, headers,
+      payload: { displayName: "Shared logo", transformation: { ...spec, pad: 10 }, expectedRevision: 1 } });
+    assert.equal(edited.statusCode, 200, edited.body); assert.equal(edited.json().revision, 2);
+    const nextUrl = (await stable("reuse/padded/logo.png")).headers.location!;
+    assert.notEqual(nextUrl, capturedUrl); assert.match(nextUrl, /&pad=10&sig=/);
+    const next = await app.inject({ url: nextUrl, headers });
+    assert.equal(next.statusCode, 200, next.body); assert.notDeepEqual(next.rawPayload, captured.rawPayload);
+    assert.deepEqual((await app.inject({ url: capturedUrl, headers })).rawPayload, captured.rawPayload);
+    const before = (await admin.query("SELECT transformation,revision FROM asset_use WHERE id=$1", [id])).rows[0];
+    const invalid = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${id}`, headers,
+      payload: { displayName: "Shared logo", transformation: { ...spec, fit: "cover" }, expectedRevision: 2 } });
+    assert.equal(invalid.statusCode, 400);
+    assert.deepEqual((await admin.query("SELECT transformation,revision FROM asset_use WHERE id=$1", [id])).rows[0], before);
+    assert.equal((await app.inject({ method: "DELETE", url: `${api}/asset-uses/${id}?expectedRevision=2`, headers })).statusCode, 204);
+  });
+
   await t.test("private use authorizes before Location and on canonical targets, including HEAD/range/custom domain", async () => {
     for (const method of ["GET", "HEAD"] as const) for (const [role, expected] of [["anonymous", 401], ["outsider", 403], ["viewer", 302]] as const) {
       for (const [url, host] of [["/w/demo/reuse/web/logo.png", "localhost"], ["/w/reuse/web/logo.png", "cdn.example.test"]]) {

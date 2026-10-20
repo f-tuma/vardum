@@ -156,6 +156,35 @@ export async function checkImagePipeline(
     assert.equal((await admin.query("SELECT checksum FROM asset_version WHERE id=$1", [source.id])).rows[0].checksum,
       createHash("sha256").update(bytes).digest("hex"));
   });
+  await t.test("padding values get separate cached canvases while zero keeps the existing derivative", async () => {
+    const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="red"/></svg>');
+    const { source } = await ingest(bytes, "image/svg+xml");
+    const base = { w: 40, h: 32, fit: "contain", format: "png", q: 100, bg: "#204060" } as const;
+    const unpadded = await getImageVariant(source, base);
+    const original = Buffer.from(await unpadded.object.Body!.transformToByteArray());
+    const zero = await getImageVariant(source, { ...base, pad: 0 });
+    assert.equal(zero.cacheHit, true);
+    assert.deepEqual(Buffer.from(await zero.object.Body!.transformToByteArray()), original);
+    let previous = original;
+    for (const pad of [10, 25]) {
+      const spec = { ...base, pad };
+      const generated = await getImageVariant(source, spec);
+      assert.equal(generated.cacheHit, false);
+      const encoded = Buffer.from(await generated.object.Body!.transformToByteArray());
+      const metadata = await sharp(encoded).metadata();
+      assert.equal(metadata.width, 40); assert.equal(metadata.height, 32); assert.equal(metadata.hasAlpha, false);
+      const canonical = `w=40&h=32&fit=contain&format=png&q=100&bg=%23204060&pad=${pad}`;
+      const hash = createHash("sha256").update(`v1:${canonical}`).digest("hex");
+      assert.deepEqual(objects.get(`derived/v1/${source.id}/${hash}.png`), encoded);
+      assert.notDeepEqual(encoded, previous, "changing only padding changes the rendered artwork size");
+      const cached = await getImageVariant(source, spec);
+      assert.equal(cached.cacheHit, true);
+      assert.deepEqual(Buffer.from(await cached.object.Body!.transformToByteArray()), encoded);
+      previous = encoded;
+    }
+    assert.deepEqual(objects.get(source.storageKey), bytes);
+  });
+
   await t.test("automatic thumbnails shrink without enlargement; explicit transforms still enlarge", async () => {
     for (const [width, height, expectedWidth, expectedHeight] of [
       [48, 48, 48, 48], [3200, 2000, 640, 400], [100, 1000, 40, 400], [1000, 100, 640, 64],

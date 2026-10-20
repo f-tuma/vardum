@@ -684,7 +684,7 @@ server.tool(
               .record(z.unknown())
               .nullable()
               .describe(
-                "Optional transformation parameters (w, h, fit, format, q, bg) or null. bg is an opaque #rrggbb background and requires an explicit raster format.",
+                "Optional transformation parameters (w, h, fit, format, q, bg, pad) or null. bg is an opaque #rrggbb background and requires an explicit raster format. pad is an integer 0–45 percent inset per edge of the shorter final side; positive pad requires w, h, an explicit raster format and fit contain. Omit bg for transparent padding.",
               ),
           })
           .strict(),

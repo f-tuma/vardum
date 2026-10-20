@@ -102,3 +102,40 @@ test("legacy transformations without background retain their exact canonical ide
     [{ w: 128, h: 128, fit: "cover", format: "jpeg", q: 90 }, "w=128&h=128&fit=cover&format=jpeg&q=90"],
   ] as const) assert.equal(canonicalizeTransformation(input), canonical);
 });
+
+
+test("padding is a bounded integer percentage requiring an explicit contained canvas", () => {
+  const canvas = { w: 1024, h: 1024, fit: "contain", format: "png" } as const;
+  for (const pad of [0, 1, 15, 45]) {
+    assert.equal(transformationSchema.parse({ ...canvas, pad }).pad, pad);
+    assert.equal(transformationQuerySchema.parse({ ...canvas, pad: String(pad), sig: "fixture" }).pad, pad);
+  }
+  for (const pad of [-1, 46, "46", "046", 1.5, "1.5", "", " ", null, false, true, "many", {}, []]) {
+    assert.equal(transformationSchema.safeParse({ ...canvas, pad }).success, false, JSON.stringify(pad));
+    assert.equal(transformationQuerySchema.safeParse({ ...canvas, pad, sig: "fixture" }).success, false, JSON.stringify(pad));
+  }
+  for (const input of [
+    { format: "png", pad: 10 }, { w: 32, fit: "contain", format: "png", pad: 10 },
+    { h: 32, fit: "contain", format: "png", pad: 10 }, { w: 32, h: 32, fit: "contain", pad: 10 },
+    ...[undefined, "inside", "outside", "cover", "fill"].map(fit => ({ ...canvas, fit, pad: 10 })),
+  ]) {
+    assert.equal(transformationSchema.safeParse(input).success, false, JSON.stringify(input));
+    assert.equal(transformationQuerySchema.safeParse({ ...input, sig: "fixture" }).success, false, JSON.stringify(input));
+  }
+  assert.equal(transformationQuerySchema.parse({ ...canvas, pad: "015", sig: "fixture" }).pad, 15);
+  assert.equal(transformationSchema.safeParse({ format: "png", pad: 0 }).success, true);
+  assert.equal(transformationSchema.safeParse({ pad: 0 }).success, false);
+});
+
+test("padding participates in signed identity while zero preserves existing identities", () => {
+  const canvas = { w: 64, h: 48, fit: "contain", format: "png", bg: "#204060" } as const;
+  const url = new URL(transformedVersionUrl("workspace", "brand/logo", "version", { ...canvas, pad: 15 }), "https://example.test");
+  const parsed = transformationQuerySchema.parse(Object.fromEntries(url.searchParams));
+  assert.equal(canonicalizeTransformation(parsed), "w=64&h=48&fit=contain&format=png&q=80&bg=%23204060&pad=15");
+  assert.equal(verifyTransformation("workspace", "brand/logo", parsed, parsed.sig), true);
+  assert.equal(verifyTransformation("workspace", "brand/logo", { ...parsed, pad: 16 }, parsed.sig), false);
+  assert.equal(verifyTransformation("workspace", "brand/logo", { ...parsed, pad: undefined }, parsed.sig), false);
+  assert.equal(canonicalizeTransformation({ ...canvas, pad: 0 }), canonicalizeTransformation(canvas));
+  assert.equal(signTransformation("workspace", "brand/logo", { ...canvas, pad: 0 }), signTransformation("workspace", "brand/logo", canvas));
+  assert.equal(transformedVersionUrl("workspace", "brand/logo", "version", { ...canvas, pad: 0 }), transformedVersionUrl("workspace", "brand/logo", "version", canvas));
+});
