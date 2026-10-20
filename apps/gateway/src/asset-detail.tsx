@@ -15,6 +15,7 @@ import { useCallback, useEffect, useId, useMemo, useState, type SyntheticEvent }
 import { toast } from "sonner";
 import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
+import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
 import { DeliveryChart } from "@/components/delivery-chart";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -658,11 +659,14 @@ function TransformationCard({
   const [format, setFormat] = useState<DisplayFormat>(sourceFormat);
   const [transformation, setTransformation] = useState<TransformationInput | null>(null);
   const [background, setBackground] = useState<string | undefined>();
-  const outputTransformation = useMemo(() => background !== undefined ? {
+  const [padding, setPadding] = useState<number | undefined>();
+  const [fit, setFit] = useState<TransformationInput["fit"]>("inside");
+  const outputTransformation = useMemo(() => background !== undefined || Boolean(padding) ? {
     ...transformation,
     format: isOutputFormat(format) ? format : "png" as const,
     bg: background,
-  } : transformation, [background, format, transformation]);
+    pad: padding,
+  } : transformation, [background, padding, format, transformation]);
   const [settledTransformation, setSettledTransformation] =
     useState<TransformationInput | null>(null);
 
@@ -677,11 +681,11 @@ function TransformationCard({
       if (!settledTransformation) throw new Error("No transformation selected");
       return createTransformationUrl(workspaceId, assetId, settledTransformation);
     },
-    enabled: Boolean(settledTransformation) && validOutputBackground(settledTransformation?.bg),
+    enabled: Boolean(settledTransformation) && validOutputBackground(settledTransformation?.bg) && validOutputSafeArea(settledTransformation),
     staleTime: Infinity,
   });
   const generatedUrl = outputTransformation
-    ? JSON.stringify(outputTransformation) === JSON.stringify(settledTransformation) && validOutputBackground(background) ? preview.data?.url : undefined
+    ? JSON.stringify(outputTransformation) === JSON.stringify(settledTransformation) && validOutputBackground(background) && validOutputSafeArea(outputTransformation) ? preview.data?.url : undefined
     : originalUrl;
   const generatedPreviewUrl = assetPreviewUrl(workspaceSlug, asset, generatedUrl ?? null);
 
@@ -694,6 +698,8 @@ function TransformationCard({
     const width = form.get("width");
     const height = form.get("height");
     const quality = form.get("quality");
+    const rawPadding = form.get("pad");
+    const nextPadding = typeof rawPadding === "string" && rawPadding ? Number(rawPadding) : undefined;
     let selectedFormat = String(form.get("format")) as DisplayFormat;
     const nextWidth = typeof width === "string" && width ? Number(width) : undefined;
     const nextHeight = typeof height === "string" && height ? Number(height) : undefined;
@@ -703,12 +709,12 @@ function TransformationCard({
       nextHeight === (sourceHeight ?? undefined) &&
       selectedFormat === sourceFormat &&
       (nextQuality ?? 80) === 80 &&
-      form.get("fit") === "inside"
+      form.get("fit") === "inside" && !nextPadding
     ) {
       setTransformation(null);
       return;
     }
-    if (selectedFormat === "svg") {
+    if (selectedFormat === "svg" || nextPadding && !isOutputFormat(selectedFormat)) {
       selectedFormat = "png";
       setFormat("png");
     }
@@ -716,7 +722,8 @@ function TransformationCard({
     setTransformation({
       w: nextWidth,
       h: nextHeight,
-      fit: nextWidth || nextHeight ? String(form.get("fit")) as TransformationInput["fit"] : undefined,
+      pad: nextPadding,
+      fit: nextPadding ? "contain" : nextWidth || nextHeight ? String(form.get("fit") ?? fit) as TransformationInput["fit"] : undefined,
       format: outputFormat,
       q: outputFormat ? nextQuality : undefined,
     });
@@ -758,7 +765,7 @@ function TransformationCard({
               </Field>
               <Field>
                 <FieldLabel htmlFor={`${id}-fit`}>Fit</FieldLabel>
-                <NativeSelect id={`${id}-fit`} name="fit" defaultValue="inside">
+                <NativeSelect id={`${id}-fit`} name="fit" value={fit} disabled={Boolean(padding)} onChange={(event) => setFit(event.target.value as TransformationInput["fit"])}>
                   <NativeSelectOption value="inside">Inside</NativeSelectOption>
                   <NativeSelectOption value="cover">Cover</NativeSelectOption>
                   <NativeSelectOption value="contain">Contain</NativeSelectOption>
@@ -774,9 +781,9 @@ function TransformationCard({
                   value={format}
                   onChange={(event) => setFormat(event.target.value as DisplayFormat)}
                 >
-                  {sourceFormat === "svg" && <NativeSelectOption value="svg" disabled={background !== undefined}>SVG</NativeSelectOption>}
-                  {sourceFormat === "gif" && <NativeSelectOption value="gif" disabled={background !== undefined}>GIF</NativeSelectOption>}
-                  {sourceFormat === "tiff" && <NativeSelectOption value="tiff" disabled={background !== undefined}>TIFF</NativeSelectOption>}
+                  {sourceFormat === "svg" && <NativeSelectOption value="svg" disabled={background !== undefined || Boolean(padding)}>SVG</NativeSelectOption>}
+                  {sourceFormat === "gif" && <NativeSelectOption value="gif" disabled={background !== undefined || Boolean(padding)}>GIF</NativeSelectOption>}
+                  {sourceFormat === "tiff" && <NativeSelectOption value="tiff" disabled={background !== undefined || Boolean(padding)}>TIFF</NativeSelectOption>}
                   <NativeSelectOption value="webp">WebP</NativeSelectOption>
                   <NativeSelectOption value="avif">AVIF</NativeSelectOption>
                   <NativeSelectOption value="jpeg">JPEG</NativeSelectOption>
@@ -796,6 +803,10 @@ function TransformationCard({
                 />
               </Field>
             </div>
+            <OutputSafeArea id={`${id}-safe-area`} transformation={outputTransformation} onChange={(pad) => {
+              setPadding(pad);
+              if (pad) { setFit("contain"); if (!isOutputFormat(format)) setFormat("png"); }
+            }} />
             <OutputBackground id={`${id}-background`} value={background} onChange={(next) => {
               setBackground(next);
               if (next !== undefined && !isOutputFormat(format)) {

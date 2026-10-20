@@ -70,6 +70,14 @@ The canonical response retains the source's download filename convention.
 
 ## API and compatibility
 
+### Output padding
+
+Use optional `pad` with an explicit width, height, raster format and `fit: "contain"`
+to reserve centered space within the final canvas. The integer percentage (0–45)
+applies to each edge relative to the shorter final side. It works with solid or
+transparent backgrounds. See [Output padding](output-padding.md) for exact geometry,
+rounding and compatibility.
+
 ### Solid output backgrounds
 
 `transformation.bg` accepts an opaque six-digit RGB hex color, such as `#e8e4d9`.

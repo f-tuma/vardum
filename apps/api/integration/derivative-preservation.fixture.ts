@@ -164,6 +164,54 @@ export async function checkDerivativePreservation(
     assert.equal(await readFile(lockPath, "utf8"), locked, "background adoption leaves the existing no-background snapshot intact");
   });
 
+  await t.test("padding changes Vard fingerprints while frozen pull restores captured padded bytes", async () => {
+    const paddedProject = { path: join(root, "padding-frozen"), key };
+    const paddedLockPath = join(paddedProject.path, ".vardum.lock");
+    const paddedOutput = join(paddedProject.path, "assets/variant.png");
+    await mkdir(paddedProject.path);
+    await writeFile(join(paddedProject.path, "vardum.json"), JSON.stringify({
+      schema: 1, server: origin, workspace: "ws", vard: vardId,
+    }));
+    let captured: Buffer | undefined, capturedLock: string | undefined, firstFingerprint: string | undefined;
+    for (const pad of [10, 25]) {
+      const paddedSpec = { w: 32, h: 32, fit: "contain", format: "png", bg: "#204060", pad };
+      await admin.query("UPDATE vard_item SET transformation=$1,version_id=$2 WHERE id=$3", [JSON.stringify(paddedSpec), versionId, itemId]);
+      const manifest = await app.inject({ url: `/api/workspaces/ws/vards/${vardId}/manifest`, headers });
+      assert.equal(manifest.statusCode, 200, manifest.body);
+      const item = manifest.json().items[0];
+      const paddedCanonical = `w=32&h=32&fit=contain&format=png&q=80&bg=%23204060&pad=${pad}`;
+      assert.equal(item.fingerprint, `${versionId}:${paddedCanonical}`);
+      assert.deepEqual(item.transformation, paddedSpec);
+      assert.equal(item.pinned, true); assert.equal(item.writable, false);
+      const response = await app.inject({ url: item.downloadUrl, headers });
+      assert.equal(response.statusCode, 200, response.body);
+      const metadata = await sharp(response.rawPayload).metadata();
+      assert.equal(metadata.width, 32); assert.equal(metadata.height, 32); assert.equal(metadata.hasAlpha, false);
+      const paddedKey = `derived/v1/${versionId}/${digest(Buffer.from(`v1:${paddedCanonical}`))}.png`;
+      backgroundKeys.push(paddedKey);
+      assert.deepEqual(objects.get(paddedKey), response.rawPayload);
+      if (!captured) {
+        captured = Buffer.from(response.rawPayload); firstFingerprint = item.fingerprint;
+        assert.equal(JSON.parse((await run(paddedProject, "pull")).stdout).changed, 1);
+        capturedLock = await readFile(paddedLockPath, "utf8");
+        const snapshot = JSON.parse(capturedLock).items[itemId];
+        assert.equal(snapshot.fingerprint, item.fingerprint);
+        assert.equal(snapshot.downloadUrl, new URL(item.downloadUrl, origin).href);
+        assert.equal(snapshot.checksum, digest(captured));
+      } else {
+        assert.notEqual(item.fingerprint, firstFingerprint);
+        assert.notDeepEqual(response.rawPayload, captured);
+        await writeFile(paddedOutput, "local change before frozen restore");
+        assert.equal(JSON.parse((await run(paddedProject, "pull", "--frozen", "--force")).stdout).changed, 1);
+        assert.deepEqual(await readFile(paddedOutput), captured);
+        assert.equal(await readFile(paddedLockPath, "utf8"), capturedLock);
+      }
+    }
+    assert.deepEqual(objects.get(storageKey), original);
+    await admin.query("UPDATE vard_item SET transformation=$1,version_id=null WHERE id=$2", [JSON.stringify(spec), itemId]);
+    assert.equal(await readFile(lockPath, "utf8"), locked);
+  });
+
   async function frozenFailure(message: RegExp) {
     await assert.rejects(run(project, "pull", "--frozen", "--force"), (error: unknown) => {
       assert.ok(error instanceof Error && "stderr" in error && "code" in error);

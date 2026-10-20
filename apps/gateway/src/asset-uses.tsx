@@ -5,6 +5,7 @@ import { useId, useState, type SyntheticEvent } from "react";
 import { toast } from "sonner";
 import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
+import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton } from "@/components/copy-button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -128,19 +129,20 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   const [fit, setFit] = useState<TransformationInput["fit"]>(use?.transformation?.fit ?? "inside");
   const [quality, setQuality] = useState(String(use?.transformation?.q ?? 80));
   const [background, setBackground] = useState(use?.transformation?.bg);
+  const [padding, setPadding] = useState(use?.transformation?.pad);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [removing, setRemoving] = useState(false);
   const transformation: TransformationInput | null = format === "original" ? null : {
     format, ...(width ? { w: Number(width) } : {}), ...(height ? { h: Number(height) } : {}),
-    ...(width || height ? { fit } : {}), q: Number(quality), ...(background !== undefined ? { bg: background } : {}),
+    ...(width || height ? { fit } : {}), q: Number(quality), ...(background !== undefined ? { bg: background } : {}), ...(padding !== undefined ? { pad: padding } : {}),
   };
   const settled = useDebouncedValue(JSON.stringify(transformation));
   const transformPreview = useQuery({
     queryKey: ["use-preview", workspace.id, source.id, source.currentVersionId, source.isPublic, source.customDomain, settled],
     queryFn: () => createTransformationUrl(workspace.id, source.id, JSON.parse(settled) as TransformationInput),
-    enabled: settled !== "null" && validOutputBackground((JSON.parse(settled) as TransformationInput | null)?.bg) && Boolean(source.currentVersionId), staleTime: Infinity, retry: false,
+    enabled: settled !== "null" && validOutputBackground((JSON.parse(settled) as TransformationInput | null)?.bg) && validOutputSafeArea(JSON.parse(settled) as TransformationInput | null) && Boolean(source.currentVersionId), staleTime: Infinity, retry: false,
   });
   const preview = format === "original" ? assetPreviewUrl(workspace.slug, source, assetDeliveryPath(workspace.slug, source))
     : settled === JSON.stringify(transformation) ? assetPreviewUrl(workspace.slug, source, transformPreview.data?.url) : null;
@@ -148,7 +150,7 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
     await Promise.all(["asset-uses", "assets", "asset", "audit"].map((part) => client.invalidateQueries({ queryKey: [part, workspace.id] })));
   }
   async function save(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault(); setSaving(true); setError(null); setConflict(false);
+    event.preventDefault(); if (!validOutputSafeArea(transformation)) return; setSaving(true); setError(null); setConflict(false);
     try {
       if (use) await updateAssetUse(workspace.id, use, { displayName: name, transformation });
       else await createAssetUse(workspace.id, { key, displayName: name, sourceAssetId: source.id, transformation });
@@ -181,11 +183,12 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
           </NativeSelect></Field>
           <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-width`}>Width</FieldLabel><Input id={`${id}-width`} type="number" min="1" max="4096" value={width} disabled={format === "original" || !workspace.canEdit} placeholder="Auto" onChange={(event) => setWidth(event.target.value)} /></Field>
           <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-height`}>Height</FieldLabel><Input id={`${id}-height`} type="number" min="1" max="4096" value={height} disabled={format === "original" || !workspace.canEdit} placeholder="Auto" onChange={(event) => setHeight(event.target.value)} /></Field>
-          <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-fit`}>Fit</FieldLabel><NativeSelect id={`${id}-fit`} value={fit} disabled={format === "original" || !workspace.canEdit} onChange={(event) => setFit(event.target.value as typeof fit)}>
+          <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-fit`}>Fit</FieldLabel><NativeSelect id={`${id}-fit`} value={fit} disabled={format === "original" || Boolean(padding) || !workspace.canEdit} onChange={(event) => setFit(event.target.value as typeof fit)}>
             {["inside", "cover", "contain", "fill", "outside"].map((value) => <NativeSelectOption key={value} value={value}>{value}</NativeSelectOption>)}
           </NativeSelect></Field>
           <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-quality`}>Quality</FieldLabel><Input id={`${id}-quality`} type="number" min="1" max="100" required value={quality} disabled={format === "original" || !workspace.canEdit} onChange={(event) => setQuality(event.target.value)} /></Field>
         </div>
+        <OutputSafeArea id={`${id}-safe-area`} transformation={transformation} onChange={(pad) => { setPadding(pad); if (pad) setFit("contain"); }} disabled={format === "original" || !workspace.canEdit} />
         <OutputBackground id={`${id}-background`} value={format === "original" ? undefined : background} onChange={setBackground} disabled={format === "original" || !workspace.canEdit} />
         {transformPreview.isError && format !== "original" ? <FieldError>{transformPreview.error.message}</FieldError> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
@@ -196,7 +199,7 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
           {use ? <CopyButton text={new URL(`/w/${encodeURIComponent(workspace.slug)}/${use.key.split("/").map(encodeURIComponent).join("/")}`, window.location.origin).href} label="Copy URL" /> : null}
           {use && workspace.canEdit ? <Button type="button" variant="destructive" onClick={() => setRemoving(true)}>Remove use</Button> : null}
         </div>
-        {workspace.canEdit ? <Button type="submit" disabled={saving || !source.currentVersionId}>{saving ? <Spinner data-icon="inline-start" /> : null}{use ? "Save settings" : "Create use"}</Button> : null}
+        {workspace.canEdit ? <Button type="submit" disabled={saving || !source.currentVersionId || !validOutputSafeArea(transformation)}>{saving ? <Spinner data-icon="inline-start" /> : null}{use ? "Save settings" : "Create use"}</Button> : null}
       </div></DialogFooter>
     </form>
     <ConfirmDialog open={removing} title="Remove this linked use?" description="The source asset, its versions and all other uses are kept. This use's URL will stop working." confirmLabel="Remove use" onCancel={() => setRemoving(false)} onConfirm={remove} />

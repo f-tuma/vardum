@@ -327,6 +327,7 @@ export type VardTransformation = {
   format?: "avif" | "jpeg" | "png" | "webp";
   q?: number;
   bg?: string;
+  pad?: number;
 };
 
 export const vardItem = pgTable(

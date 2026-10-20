@@ -11,6 +11,9 @@ export type Transformation = {
  q?: number;
  /** Opaque output background, normalized to lowercase #rrggbb. Requires format. */
  bg?: string;
+ /** Inset on each edge, as an integer percent (0–45) of the shorter final side.
+  * Positive padding requires w, h, format and fit: "contain". */
+ pad?: number;
 };
 
 export type VardItem = {

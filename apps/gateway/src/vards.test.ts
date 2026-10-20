@@ -171,6 +171,34 @@ test("a solid background is saved on the output while literal pins and other map
   assert.equal(items[0]!.writable, false);
 });
 
+test("safe area locks contain, blocks incomplete or invalid canvas settings, and saves the full output recipe", async (t) => {
+  const { calls } = await render(t);
+  await click(fileButton());
+  const pane = dialog();
+  const format = pane.querySelector("select")!;
+  await act(async () => { format.value = "png"; format.dispatchEvent(new Event("change", { bubbles: true })); });
+  await settle();
+  await change(field("Safe area (%)", pane), "20");
+  assert.match(pane.textContent!, /Set both width and height/);
+  assert.equal(button("Save", pane).disabled, true);
+  await change(field("Width", pane), "180");
+  await change(field("Height", pane), "180");
+  const fit = [...pane.querySelectorAll("select")].find((select) => [...select.options].some((option) => option.value === "contain"))!;
+  assert.equal(fit.value, "contain");
+  assert.equal(fit.disabled, true);
+  await change(field("Safe area (%)", pane), "46");
+  assert.equal(button("Save", pane).disabled, true);
+  assert.match(pane.textContent!, /whole percentage from 0 to 45/);
+  assert.equal(mutations(calls).length, 0);
+  await change(field("Safe area (%)", pane), "20");
+  assert.equal(button("Save", pane).disabled, false);
+  await submit(button("Save", pane).closest("form")!);
+  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  assert.deepEqual(items[0]!.transformation, { format: "png", pad: 20, fit: "contain", w: 180, h: 180 });
+  assert.equal(items[0]!.versionId, "missing-pin");
+  assert.deepEqual(items[1]!.transformation, original.items[1]!.transformation);
+});
+
 test("a transformed pin without a current source keeps an explicitly labelled selected-source preview", async (t) => {
   const { calls } = await render(t, { editor: { ...original, items: [
     { ...original.items[0], versionId: "retained-pin", pinnedVersionId: "retained-pin",

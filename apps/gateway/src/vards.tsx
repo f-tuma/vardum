@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { AssetPageControls } from "@/components/asset-page-controls";
 import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
+import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -1382,13 +1383,13 @@ function VardItemDialog({
   const transformPreview = useQuery({
     queryKey: ["vard-output-preview", workspaceId, draft.assetId, preview.url, settledTransformation],
     queryFn: () => createTransformationUrl(workspaceId, draft.assetId, previewTransform!),
-    enabled: Boolean(previewTransform && source?.versionId && preview.url) && validOutputBackground(previewTransform?.bg),
+    enabled: Boolean(previewTransform && source?.versionId && preview.url) && validOutputBackground(previewTransform?.bg) && validOutputSafeArea(previewTransform),
     retry: false,
     staleTime: Infinity,
   });
   const outputPreview = transformed
     ? showingSource ? preview.url
-      : settledTransformation === JSON.stringify(draft.transformation) && validOutputBackground(draft.transformation?.bg)
+      : settledTransformation === JSON.stringify(draft.transformation) && validOutputBackground(draft.transformation?.bg) && validOutputSafeArea(draft.transformation)
       ? transformedPreviewUrl(preview.url, transformPreview.data?.url) : null
     : preview.url;
 
@@ -1408,7 +1409,7 @@ function VardItemDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (draft.outputPath) void run(() => onSave(draft));
+            if (draft.outputPath && validOutputSafeArea(draft.transformation)) void run(() => onSave(draft));
           }}
         >
           <FieldGroup>
@@ -1509,7 +1510,7 @@ function VardItemDialog({
                   <NativeSelect
                     id={`${id}-fit`}
                     value={draft.transformation?.fit ?? "inside"}
-                    disabled={!editable || (!draft.transformation?.w && !draft.transformation?.h)}
+                    disabled={!editable || Boolean(draft.transformation?.pad) || (!draft.transformation?.w && !draft.transformation?.h)}
                     onChange={(event) =>
                       changeTransformation({ fit: event.target.value as TransformationInput["fit"] })
                     }
@@ -1535,6 +1536,9 @@ function VardItemDialog({
                 </Field>
               </div>
             )}
+
+            {transformed ? <OutputSafeArea id={`${id}-safe-area`} transformation={draft.transformation}
+              onChange={(pad) => changeTransformation({ pad, ...(pad ? { fit: "contain" as const } : {}) })} disabled={!editable || !draft.transformation?.format} /> : null}
 
             {transformed ? <OutputBackground id={`${id}-background`} value={draft.transformation?.bg}
               onChange={(bg) => changeTransformation({ bg })} disabled={!editable || !draft.transformation?.format} /> : null}
@@ -1577,7 +1581,7 @@ function VardItemDialog({
                   <Button type="button" variant="destructive" disabled={!editable} onClick={() => void run(onRemove)}>
                     {isNew ? "Discard" : "Remove"}
                   </Button>
-                  <Button type="submit" disabled={!editable || !draft.outputPath}>
+                  <Button type="submit" disabled={!editable || !draft.outputPath || !validOutputSafeArea(draft.transformation)}>
                     {saving && <Spinner data-icon="inline-start" />}
                     {isNew ? "Add file" : "Save"}
                   </Button>

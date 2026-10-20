@@ -1502,7 +1502,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
         name: string;
         variant: Buffer;
       }> = [];
-      const cli = fileURLToPath(
+      const cli = vardImportCliPath ?? fileURLToPath(
         new URL("../../cli/src/index.ts", import.meta.url),
       );
       const run = (project: { path: string; key: string }, ...args: string[]) =>

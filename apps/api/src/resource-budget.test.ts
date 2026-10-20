@@ -203,6 +203,8 @@ test("output budget accounts for outside aspect ratio, upscaling and animation",
     20_000,
   );
   assert.equal(outputPixels(1000, 500, 10, {}), 5_000_000);
+  const padded = { w: 4096, h: 4096, fit: "contain", pad: 45 };
+  assert.equal(outputPixels(2, 1, 3, padded), 4096 * 4096 * 3, "padding budgets the full final canvas on every frame");
 });
 
 test("object reads bound both declared and streamed bytes", async () => {
