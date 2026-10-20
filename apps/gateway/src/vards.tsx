@@ -1375,6 +1375,7 @@ function VardItemDialog({
     finally { pendingRef.current = false; }
   }
   const transformed = Boolean(draft.transformation);
+  const showingSource = transformed && !source?.versionId;
   const preview = sourcePreview(draft, workspaceSlug, source, saved);
   const settledTransformation = useDebouncedValue(JSON.stringify(draft.transformation));
   const previewTransform = JSON.parse(settledTransformation) as TransformationInput | null;
@@ -1386,7 +1387,8 @@ function VardItemDialog({
     staleTime: Infinity,
   });
   const outputPreview = transformed
-    ? settledTransformation === JSON.stringify(draft.transformation) && validOutputBackground(draft.transformation?.bg)
+    ? showingSource ? preview.url
+      : settledTransformation === JSON.stringify(draft.transformation) && validOutputBackground(draft.transformation?.bg)
       ? transformedPreviewUrl(preview.url, transformPreview.data?.url) : null
     : preview.url;
 
@@ -1421,13 +1423,14 @@ function VardItemDialog({
             <div className="flex h-40 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells">
               <AssetThumb
                 url={outputPreview}
-                mimeType={draft.transformation?.format ? `image/${draft.transformation.format}`
+                mimeType={showingSource ? preview.mimeType : draft.transformation?.format ? `image/${draft.transformation.format}`
                   : transformed && preview.mimeType === "image/svg+xml" ? "image/png" : preview.mimeType}
-                label={`Output preview of ${item.key}`}
+                label={`${showingSource ? "Source" : "Output"} preview of ${item.key}`}
                 controls
               />
             </div>
 
+            {showingSource ? <FieldDescription>Output preview unavailable; showing the selected source version.</FieldDescription> : null}
             {transformed && transformPreview.isError ? <FieldError>{transformPreview.error.message}</FieldError> : null}
 
             <Field>
@@ -1470,8 +1473,8 @@ function VardItemDialog({
                 <NativeSelectOption value="png">PNG</NativeSelectOption>
                 <NativeSelectOption value="webp">WebP</NativeSelectOption>
               </NativeSelect>
-              {!transformed && (
-                <FieldDescription>Pick a format to resize or convert.</FieldDescription>
+              {!draft.transformation?.format && (
+                <FieldDescription>Pick a format to resize, convert or add a background.</FieldDescription>
               )}
             </Field>
 
@@ -1534,7 +1537,7 @@ function VardItemDialog({
             )}
 
             {transformed ? <OutputBackground id={`${id}-background`} value={draft.transformation?.bg}
-              onChange={(bg) => changeTransformation({ bg })} disabled={!editable} /> : null}
+              onChange={(bg) => changeTransformation({ bg })} disabled={!editable || !draft.transformation?.format} /> : null}
 
             <Field orientation="horizontal">
               <FieldContent>

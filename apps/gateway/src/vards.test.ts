@@ -171,6 +171,20 @@ test("a solid background is saved on the output while literal pins and other map
   assert.equal(items[0]!.writable, false);
 });
 
+test("a transformed pin without a current source keeps an explicitly labelled selected-source preview", async (t) => {
+  const { calls } = await render(t, { editor: { ...original, items: [
+    { ...original.items[0], versionId: "retained-pin", pinnedVersionId: "retained-pin",
+      sourceMimeType: "image/svg+xml", transformation: { format: "png", bg: "#050507" } },
+  ] } });
+  await click(fileButton());
+  const pane = dialog();
+  const image = pane.querySelector<HTMLImageElement>('img[alt="Source preview of logo.svg"]')!;
+  assert.ok(image);
+  assert.equal(image.getAttribute("src"), "/w/workspace/__v/retained-pin/logo.svg");
+  assert.match(pane.textContent!, /Output preview unavailable; showing the selected source version/);
+  assert.equal(calls.some(({ path }) => path.endsWith("/transform-url")), false);
+});
+
 test("typed stale item conflict preserves the draft, does not retry, and deliberate reload fetches fresh editor and preview", async (t) => {
   const { calls, setServer } = await render(t, { mutation: () => Response.json({ code: "vard_revision_conflict", error: "Vard changed; reload before saving.", currentRevision: freshRevision }, { status: 409 }) });
   await click(fileButton());

@@ -9,6 +9,17 @@ const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="96" heig
 const formats = ["png", "webp", "avif", "jpeg"] as const;
 const background = "#204060";
 
+async function grayscaleAlphaPng() {
+  const data = Buffer.alloc(96 * 32 * 2);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 96; x++) {
+    const offset = (y * 96 + x) * 2;
+    data[offset] = x < 32 ? 0 : x < 64 ? 128 : 240;
+    data[offset + 1] = x < 32 ? 0 : x < 64 ? 128 : 255;
+  }
+  return sharp(data, { raw: { width: 96, height: 32, channels: 2 } })
+    .toColourspace("b-w").png().toBuffer();
+}
+
 async function pixels(encoded: Buffer, allowOpaqueAlpha = false) {
   const metadata = await sharp(encoded).metadata();
   if (!allowOpaqueAlpha) assert.equal(metadata.hasAlpha, false, "static opaque outputs must remove the alpha channel");
@@ -47,6 +58,26 @@ for (const inputFormat of ["svg", "png"] as const) {
   }
 }
 
+for (const format of formats) {
+  test(`grayscale-alpha PNG to ${format}: RGB background stays colored before flattening and canvas padding`, async () => {
+    const source = await grayscaleAlphaPng();
+    const metadata = await sharp(source).metadata();
+    assert.equal(metadata.space, "b-w");
+    assert.equal(metadata.channels, 2);
+    assert.equal(metadata.hasAlpha, true);
+    const encoded = await applyImageTransformation(sharp(source), {
+      w: 96, h: 96, fit: "contain", format, q: 100, bg: background,
+    }, format).toBuffer();
+    const decoded = await pixels(encoded);
+    assert.equal(decoded.width, 96); assert.equal(decoded.height, 96);
+    const tolerance = format === "png" ? 1 : 8;
+    decoded.at(48, 16, [32, 64, 96], tolerance);
+    decoded.at(16, 48, [32, 64, 96], tolerance);
+    decoded.at(48, 48, [80, 96, 112], tolerance);
+    decoded.at(80, 48, [240, 240, 240], tolerance);
+  });
+}
+
 test("a format and background alone preserve source dimensions and make every pixel opaque", async () => {
   const encoded = await applyImageTransformation(sharp(svg), { format: "png", bg: background }, "png").toBuffer();
   const decoded = await pixels(encoded);
@@ -57,8 +88,7 @@ test("a format and background alone preserve source dimensions and make every pi
 });
 
 test("without bg, the legacy resize/encode pipeline produces the same bytes and retains PNG transparency", async () => {
-  for (const format of [...formats, undefined]) {
-    const input = await sharp(svg).png().toBuffer();
+  for (const input of [await sharp(svg).png().toBuffer(), await grayscaleAlphaPng()]) for (const format of [...formats, undefined]) {
     const transformation = { w: 48, h: 48, fit: "contain", format } as const;
     let legacy = sharp(input).resize({ width: 48, height: 48, fit: "contain" });
     if (format) legacy = legacy.toFormat(format, { quality: 80 });

@@ -7,7 +7,11 @@ export function applyImageTransformation(
   transformation: Transformation,
   outputFormat: Transformation["format"],
 ) {
-  if (transformation.bg) image = image.flatten({ background: transformation.bg });
+  if (transformation.bg) {
+    // Flatten uses the working color space. Convert before compositing so
+    // grayscale sources do not turn the selected RGB background into gray.
+    image = image.pipelineColourspace("srgb").flatten({ background: transformation.bg });
+  }
   if (transformation.w || transformation.h) {
     image = image.resize({
       width: transformation.w,
