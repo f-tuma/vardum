@@ -178,12 +178,13 @@ export async function checkVardEditor(t: TestContext, fixture: {
     await admin.query("UPDATE vard_item SET created_at='2026-01-01 01:02:03.123456+00',created_by='original:creator' WHERE vard_id=$1", [id]);
     const current = await editor(id), before = await rows(id);
     const desired = current.items.map(input);
-    desired[0]!.transformation = { w: 12, format: "webp" };
+    desired[0]!.transformation = { w: 12, format: "webp", bg: "#Ab12Ef" };
     desired.push(add(c));
     const changed = ok(await put(id, current.revision, desired)) as Definition;
     assert.notEqual(changed.revision, current.revision);
     assert.equal(changed.items[0]!.id, saved.items[0]!.id);
     assert.equal(changed.items[0]!.pinnedVersionId, a.versionId);
+    assert.deepEqual(changed.items[0]!.transformation, { w: 12, format: "webp", bg: "#ab12ef" });
     const after = await rows(id);
     for (const old of before) {
       const next = after.find(row => row.id === old.id);

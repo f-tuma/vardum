@@ -8,6 +8,8 @@ const fields = {
   fit: z.enum(["cover", "contain", "fill", "inside", "outside"]).optional(),
   format: z.enum(["avif", "jpeg", "png", "webp"]).optional(),
   q: z.coerce.number().int().min(1).max(100).optional(),
+  bg: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Background must be a six-digit hex color")
+    .toLowerCase().optional(),
 };
 const baseSchema = z.object(fields).strict();
 export type Transformation = z.infer<typeof baseSchema>;
@@ -37,6 +39,7 @@ export function canonicalizeTransformation(input: Transformation) {
     query.set("format", input.format);
     query.set("q", String(input.q ?? 80));
   }
+  if (input.bg) query.set("bg", input.bg.toLowerCase());
   return query.toString();
 }
 
@@ -117,6 +120,7 @@ function signature(workspaceSlug: string, key: string, canonical: string) {
 }
 
 function transformationIssue(input: Transformation) {
+  if (input.bg && !input.format) return "Background requires an output format";
   if (!input.w && !input.h && !input.format)
     return "A size or output format is required";
   if (input.fit && !input.w && !input.h)

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SyncAsset, VardItem } from "@vardum/shared";
 import type { DraftItem } from "./vard-editor-state";
-import { sourcePreview } from "./vard-preview-url";
+import { sourcePreview, transformedPreviewUrl } from "./vard-preview-url";
 
 test("source previews stay on the app origin and honor pinned versions", () => {
   const item = { key: "brand/a #1.png", versionId: "old-version" } as DraftItem;
@@ -37,4 +37,14 @@ test("a pinned transformed output previews and restores its actual original sour
   const saved = { versionId: "old", mimeType: "image/webp", sourceMimeType: "image/png",
     transformation: { format: "webp" } } as VardItem;
   assert.equal(sourcePreview(item, "demo", source, saved).mimeType, "image/png");
+});
+
+test("output previews apply signed settings to the selected version, never latest", () => {
+  const original = sourcePreview({ key: "logo.svg", versionId: "pinned" } as DraftItem,
+    "demo", { versionId: "latest", mimeType: "image/svg+xml" } as SyncAsset, undefined).url;
+  assert.equal(transformedPreviewUrl(original, "https://cdn.example/w/logo.svg?format=png&bg=%23ffffff&sig=signed"),
+    "/w/demo/__v/pinned/logo.svg?format=png&bg=%23ffffff&sig=signed");
+  assert.equal(transformedPreviewUrl(null, "/w/demo/logo.svg?sig=signed"), null);
+  assert.equal(transformedPreviewUrl(original, undefined), null);
+  assert.equal(transformedPreviewUrl(original, "/w/demo/logo.svg"), null);
 });

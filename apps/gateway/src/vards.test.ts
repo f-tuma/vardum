@@ -145,6 +145,46 @@ test("item saves retain the full original baseline across refetch and remain ope
   assert.equal(document.querySelector('[role="dialog"]'), null);
 });
 
+test("a solid background is saved on the output while literal pins and other mappings are retained", async (t) => {
+  const { calls } = await render(t);
+  await click(fileButton());
+  const pane = dialog();
+  const format = pane.querySelector("select")!;
+  await act(async () => { format.value = "png"; format.dispatchEvent(new Event("change", { bubbles: true })); });
+  await settle();
+  const backgroundLabel = [...pane.querySelectorAll("label")].find((label) => label.textContent === "Solid background")!;
+  await click(document.getElementById(backgroundLabel.htmlFor)!);
+  const hex = pane.querySelector<HTMLInputElement>('[aria-label="Background hex color"]')!;
+  await change(hex, "#oops");
+  assert.equal(hex.checkValidity(), false);
+  assert.match(pane.textContent!, /six-digit hex/);
+  await change(hex, "#050507");
+  assert.equal(hex.checkValidity(), true);
+  await submit(button("Save", pane).closest("form")!);
+  const body = mutations(calls)[0]!.body!;
+  const items = body.items as Array<Record<string, unknown>>;
+  assert.equal(body.expectedRevision, revision);
+  assert.equal(items[0]!.versionId, "missing-pin");
+  assert.equal(items[0]!.id, original.items[0]!.id);
+  assert.deepEqual(items[0]!.transformation, { format: "png", bg: "#050507" });
+  assert.deepEqual(items[1]!.transformation, original.items[1]!.transformation);
+  assert.equal(items[0]!.writable, false);
+});
+
+test("a transformed pin without a current source keeps an explicitly labelled selected-source preview", async (t) => {
+  const { calls } = await render(t, { editor: { ...original, items: [
+    { ...original.items[0], versionId: "retained-pin", pinnedVersionId: "retained-pin",
+      sourceMimeType: "image/svg+xml", transformation: { format: "png", bg: "#050507" } },
+  ] } });
+  await click(fileButton());
+  const pane = dialog();
+  const image = pane.querySelector<HTMLImageElement>('img[alt="Source preview of logo.svg"]')!;
+  assert.ok(image);
+  assert.equal(image.getAttribute("src"), "/w/workspace/__v/retained-pin/logo.svg");
+  assert.match(pane.textContent!, /Output preview unavailable; showing the selected source version/);
+  assert.equal(calls.some(({ path }) => path.endsWith("/transform-url")), false);
+});
+
 test("typed stale item conflict preserves the draft, does not retry, and deliberate reload fetches fresh editor and preview", async (t) => {
   const { calls, setServer } = await render(t, { mutation: () => Response.json({ code: "vard_revision_conflict", error: "Vard changed; reload before saving.", currentRevision: freshRevision }, { status: 409 }) });
   await click(fileButton());

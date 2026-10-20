@@ -26,6 +26,26 @@ Sources: [Nginx official images](https://github.com/docker-library/official-imag
 [Distroless supported images and signature verification](https://github.com/GoogleContainerTools/distroless),
 [Trivy 0.75.0 release](https://github.com/aquasecurity/trivy/releases/tag/v0.75.0).
 
+## Gateway build input refresh: 20 October 2026
+
+The official Alpine 3.24 index no longer carries the previously pinned
+`libexpat=2.8.5-r0`. A fresh production build fails closed instead of selecting
+another version implicitly. The shared gateway base now pins
+`libexpat=2.9.0-r0`, available in the same `v3.24/main/x86_64` repository;
+the Nginx base digest and the other five exact package pins are unchanged.
+The disposable pinned-base preflight installed all six packages and retained
+the `libexpat.so.1` provider needed by fontconfig. Alpine's
+[package record](https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/libexpat)
+and [3.24 security database](https://secdb.alpinelinux.org/v3.24/main.json)
+record this revision as the fix for CVE-2026-102633 and CVE-2026-77214.
+
+This refresh applies to both gateway targets. Fresh production, routing and
+clean-stack restore acceptance must use the rebuilt images. Historical image
+IDs, scan counts and package observations below remain dated evidence for
+their original images; the pin change does not transfer that certification
+to a new build or establish a production rollout. Exact-version failure,
+scanner policy and the other runtime findings remain unchanged.
+
 ## Evidence and replay
 
 `bash scripts/smoke-production.sh` runs full disposable acceptance followed by

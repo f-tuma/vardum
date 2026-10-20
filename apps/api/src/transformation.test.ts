@@ -4,6 +4,7 @@ import {
   canonicalizeTransformation,
   signTransformation,
   transformationSchema,
+  transformationQuerySchema,
   transformedAssetUrl,
   transformedVersionUrl,
   verifyTransformation,
@@ -64,4 +65,40 @@ test("transformations are canonical and signatures reject tampering", () => {
 test("fit and quality cannot create meaningless transformations", () => {
   assert.equal(transformationSchema.safeParse({ fit: "cover" }).success, false);
   assert.equal(transformationSchema.safeParse({ q: 90 }).success, false);
+});
+
+test("opaque backgrounds normalize and require an explicit raster output format", () => {
+  const transformation = transformationSchema.parse({ format: "png", bg: "#Ab12Ef" });
+  assert.deepEqual(transformation, { format: "png", bg: "#ab12ef" });
+  assert.equal(canonicalizeTransformation(transformation), "format=png&q=80&bg=%23ab12ef");
+  assert.equal(transformationSchema.safeParse({ bg: "#123456" }).success, false);
+  assert.equal(transformationSchema.safeParse({ w: 16, bg: "#123456" }).success, false);
+  assert.equal(transformationSchema.safeParse({ format: "svg", bg: "#123456" }).success, false);
+  for (const bg of ["", "#abc", "#12345678", "transparent", "white", "rgb(1,2,3)", "#gg0000", "#123456 ", null, 123]) {
+    assert.equal(transformationSchema.safeParse({ format: "png", bg }).success, false, String(bg));
+    assert.equal(transformationQuerySchema.safeParse({ format: "png", bg, sig: "fixture" }).success, false, String(bg));
+  }
+  assert.equal(transformationQuerySchema.safeParse({ w: "16", bg: "#123456", sig: "fixture" }).success, false);
+});
+
+test("background URLs encode the hash, round-trip and reject color tampering", () => {
+  const transformation = { w: 16, format: "webp", bg: "#Ab12Ef" } as const;
+  const url = new URL(transformedVersionUrl("workspace", "brand/logo", "version", transformation), "https://example.test");
+  assert.equal(url.hash, "");
+  assert.match(url.search, /&bg=%23ab12ef&sig=/);
+  const parsed = transformationQuerySchema.parse(Object.fromEntries(url.searchParams));
+  assert.equal(parsed.bg, "#ab12ef");
+  assert.equal(verifyTransformation("workspace", "brand/logo", parsed, parsed.sig), true);
+  assert.equal(verifyTransformation("workspace", "brand/logo", { ...parsed, bg: "#123456" }, parsed.sig), false);
+  assert.notEqual(signTransformation("workspace", "brand/logo", parsed), signTransformation("workspace", "brand/logo", { ...parsed, bg: "#123456" }));
+  assert.notEqual(signTransformation("workspace", "brand/logo", parsed), signTransformation("workspace", "brand/logo", { w: 16, format: "webp" }));
+});
+
+test("legacy transformations without background retain their exact canonical identity", () => {
+  for (const [input, canonical] of [
+    [{ w: 300 }, "w=300&fit=inside"],
+    [{ h: 40, fit: "contain" }, "h=40&fit=contain"],
+    [{ format: "png" }, "format=png&q=80"],
+    [{ w: 128, h: 128, fit: "cover", format: "jpeg", q: 90 }, "w=128&h=128&fit=cover&format=jpeg&q=90"],
+  ] as const) assert.equal(canonicalizeTransformation(input), canonical);
 });

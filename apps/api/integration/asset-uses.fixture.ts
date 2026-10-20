@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
+import sharp from "sharp";
 
 export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin: Pool,
   objects: Map<string, Buffer>, cookies: Record<string, string>) {
@@ -11,7 +12,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
   const sourceId = randomUUID();
   const first = randomUUID();
   const second = randomUUID();
-  const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="blue"/></svg>');
+  const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="8" height="16" fill="blue"/></svg>');
   const checksum = createHash("sha256").update(bytes).digest("hex");
   objects.set(`uses-${first}`, bytes);
   objects.set(`uses-${second}`, bytes);
@@ -49,9 +50,22 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal(canonical.statusCode, 200, canonical.body); assert.equal(canonical.headers["content-type"], "image/png");
     const oldImmutable = link.headers.location!;
     const edited = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${one.id}`, headers,
-      payload: { displayName: "Web logo", transformation: { format: "png", w: 10 }, expectedRevision: 1 } });
+      payload: { displayName: "Web logo", transformation: { format: "png", w: 10, bg: "#Ab12Ef" }, expectedRevision: 1 } });
     assert.equal(edited.statusCode, 200, edited.body); assert.equal(edited.json().revision, 2);
-    assert.notEqual((await stable("reuse/web/logo.png")).headers.location, oldImmutable);
+    const opaqueUrl = (await stable("reuse/web/logo.png")).headers.location!;
+    assert.notEqual(opaqueUrl, oldImmutable);
+    assert.match(opaqueUrl, /&bg=%23ab12ef&sig=/);
+    const settings = (await app.inject({ url: `${api}/asset-uses?sourceAssetId=${sourceId}`, headers })).json();
+    assert.equal(settings.uses.find((row: { id: string }) => row.id === one.id).transformation.bg, "#ab12ef");
+    const opaque = await app.inject({ url: opaqueUrl, headers });
+    assert.equal(opaque.statusCode, 200, opaque.body);
+    assert.equal((await sharp(opaque.rawPayload).metadata()).hasAlpha, false);
+    const decoded = await sharp(opaque.rawPayload).raw().toBuffer();
+    // The existing PNG quality=80 encoder can quantize palette RGB by a step.
+    const backgroundPixel = [...decoded.subarray((5 * 10 + 9) * 3, (5 * 10 + 9) * 3 + 3)];
+    assert.ok(backgroundPixel.every((value, channel) => Math.abs(value - [171, 18, 239][channel]!) <= 2));
+    assert.equal((await sharp(canonical.rawPayload).metadata()).hasAlpha, true, "captured original transformation retains transparency");
+    assert.deepEqual(objects.get(`uses-${first}`), bytes, "background rendering never changes the retained SVG original");
     assert.match((await stable("reuse/mobile/logo")).headers.location!, /w=12&.*format=webp/);
     assert.equal((await app.inject({ url: oldImmutable, headers })).statusCode, 200, "captured immutable settings survive edit");
     const stale = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${one.id}`, headers,
@@ -59,7 +73,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal(stale.statusCode, 409, stale.body);
     const before = (await admin.query("SELECT revision,updated_at FROM asset_use WHERE id=$1", [one.id])).rows[0];
     const noop = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${one.id}`, headers,
-      payload: { displayName: "Web logo", transformation: { format: "png", w: 10 }, expectedRevision: 2 } });
+      payload: { displayName: "Web logo", transformation: { format: "png", w: 10, bg: "#AB12EF" }, expectedRevision: 2 } });
     assert.equal(noop.statusCode, 200, noop.body);
     assert.deepEqual((await admin.query("SELECT revision,updated_at FROM asset_use WHERE id=$1", [one.id])).rows[0], before);
     const changedPath = await app.inject({ method: "PATCH", url: `${api}/asset-uses/${one.id}`, headers,
@@ -137,6 +151,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal((await create("reuse/wrong.jpg")).statusCode, 422);
     assert.equal((await create("reuse/unrecognized.ico")).statusCode, 422);
     assert.equal((await create("reuse/size-only", { w: 8 })).statusCode, 400);
+    assert.equal((await create("reuse/background-only", { w: 8, bg: "#123456" })).statusCode, 400);
   });
 
   await t.test("known impossible source size is rejected on create, edit and stable resolution", async () => {

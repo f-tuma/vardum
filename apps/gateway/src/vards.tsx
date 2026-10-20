@@ -16,6 +16,8 @@ import { useId, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { toast } from "sonner";
 import { AssetPageControls } from "@/components/asset-page-controls";
 import { AssetThumb } from "@/components/asset-thumb";
+import { OutputBackground, validOutputBackground } from "@/components/output-background";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
 import { AppHeader, Page, PageHeader, PageSkeleton } from "@/components/page";
@@ -76,6 +78,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { errorMessage, timeAgo } from "@/lib/format";
 import {
   assetPreviewUrl,
+  createTransformationUrl,
   createVard,
   ApiRequestError,
   deleteVardEditor,
@@ -106,7 +109,7 @@ import {
   type DraftItem,
 } from "./vard-editor-state";
 import { useDeploymentCapabilities } from "./capabilities";
-import { sourcePreview } from "./vard-preview-url";
+import { sourcePreview, transformedPreviewUrl } from "./vard-preview-url";
 import { workspaceCrumb, type WorkspaceRef } from "./workspace";
 
 function vardsCrumb(workspace: WorkspaceRef) {
@@ -655,6 +658,7 @@ export function VardEditor({
           item={itemSession.item}
           isNew={itemSession.isNew}
           source={assets.data?.assets.find(({ id }) => id === itemSession.item.assetId)}
+          workspaceId={workspace.id}
           workspaceSlug={assets.data?.workspaceSlug}
           saved={itemSession.saved}
           canEdit={canEdit && Boolean(itemSession.baseline)}
@@ -1325,6 +1329,7 @@ function VardItemDialog({
   item,
   isNew,
   source,
+  workspaceId,
   workspaceSlug,
   saved,
   canEdit,
@@ -1337,6 +1342,7 @@ function VardItemDialog({
   item: DraftItem;
   isNew: boolean;
   source?: SyncAsset;
+  workspaceId: string;
   workspaceSlug?: string;
   saved?: VardItem;
   canEdit: boolean;
@@ -1369,7 +1375,22 @@ function VardItemDialog({
     finally { pendingRef.current = false; }
   }
   const transformed = Boolean(draft.transformation);
+  const showingSource = transformed && !source?.versionId;
   const preview = sourcePreview(draft, workspaceSlug, source, saved);
+  const settledTransformation = useDebouncedValue(JSON.stringify(draft.transformation));
+  const previewTransform = JSON.parse(settledTransformation) as TransformationInput | null;
+  const transformPreview = useQuery({
+    queryKey: ["vard-output-preview", workspaceId, draft.assetId, preview.url, settledTransformation],
+    queryFn: () => createTransformationUrl(workspaceId, draft.assetId, previewTransform!),
+    enabled: Boolean(previewTransform && source?.versionId && preview.url) && validOutputBackground(previewTransform?.bg),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const outputPreview = transformed
+    ? showingSource ? preview.url
+      : settledTransformation === JSON.stringify(draft.transformation) && validOutputBackground(draft.transformation?.bg)
+      ? transformedPreviewUrl(preview.url, transformPreview.data?.url) : null
+    : preview.url;
 
   function change(patch: Partial<DraftItem>) {
     if (editable && !pendingRef.current) setDraft((current) => ({ ...current, ...patch }));
@@ -1401,12 +1422,16 @@ function VardItemDialog({
 
             <div className="flex h-40 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells">
               <AssetThumb
-                url={preview.url}
-                mimeType={preview.mimeType}
-                label={`Source preview of ${item.key}`}
+                url={outputPreview}
+                mimeType={showingSource ? preview.mimeType : draft.transformation?.format ? `image/${draft.transformation.format}`
+                  : transformed && preview.mimeType === "image/svg+xml" ? "image/png" : preview.mimeType}
+                label={`${showingSource ? "Source" : "Output"} preview of ${item.key}`}
                 controls
               />
             </div>
+
+            {showingSource ? <FieldDescription>Output preview unavailable; showing the selected source version.</FieldDescription> : null}
+            {transformed && transformPreview.isError ? <FieldError>{transformPreview.error.message}</FieldError> : null}
 
             <Field>
               <FieldLabel htmlFor={`${id}-path`}>Project path</FieldLabel>
@@ -1448,8 +1473,8 @@ function VardItemDialog({
                 <NativeSelectOption value="png">PNG</NativeSelectOption>
                 <NativeSelectOption value="webp">WebP</NativeSelectOption>
               </NativeSelect>
-              {!transformed && (
-                <FieldDescription>Pick a format to resize or convert.</FieldDescription>
+              {!draft.transformation?.format && (
+                <FieldDescription>Pick a format to resize, convert or add a background.</FieldDescription>
               )}
             </Field>
 
@@ -1510,6 +1535,9 @@ function VardItemDialog({
                 </Field>
               </div>
             )}
+
+            {transformed ? <OutputBackground id={`${id}-background`} value={draft.transformation?.bg}
+              onChange={(bg) => changeTransformation({ bg })} disabled={!editable || !draft.transformation?.format} /> : null}
 
             <Field orientation="horizontal">
               <FieldContent>

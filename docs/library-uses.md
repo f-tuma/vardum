@@ -16,7 +16,8 @@ settings.
 2. Search for a source, choose it, then set the use name and full destination
    path. The path includes its folders; missing folders are created.
 3. Choose **Original**, or an explicit image format with optional width, height,
-   fit and quality. Check the preview and create the use.
+   fit and quality. Enable **Solid background** to choose an opaque color.
+   Check the preview and create the use.
 4. Open a **Linked** card to change its settings, copy its stable URL, open the
    source, or remove only that use.
 
@@ -68,6 +69,32 @@ transformation overrides on use URLs are rejected: edit the saved settings inste
 The canonical response retains the source's download filename convention.
 
 ## API and compatibility
+
+### Solid output backgrounds
+
+`transformation.bg` accepts an opaque six-digit RGB hex color, such as `#e8e4d9`.
+The API normalizes letters to lowercase and requires an explicit PNG, WebP,
+AVIF or JPEG output format. Alpha hex colors, CSS expressions and named colors
+are rejected. Omit `bg` to retain the existing transformation behavior.
+
+The selected color fills transparent pixels and any `contain` padding. Static
+outputs have no alpha channel; animated formats can retain an opaque alpha band
+while all rendered pixels remain opaque. The original bytes, transparency and
+version history are unchanged. Background is an output setting, not an edit to
+the source. Original SVG delivery keeps its vector styles and adaptive behavior;
+adding a solid background produces a raster output.
+
+Each use and Vard manual output can choose its own background. Their previews
+show the output settings; Vard previews retain the selected source version.
+The signed query, derivative cache key and Vard fingerprint include `bg`.
+Changing a background produces a new output identity; existing captured URLs and
+schema-2 frozen locks continue to identify the previously selected output. With
+`bg` absent, existing canonical queries, signatures and cache keys are unchanged.
+
+No database migration is required for this optional transformation field. Deploy
+the updated API to every serving instance before creating background settings;
+older API binaries reject the new strict query/body field. Existing clients can
+pull the signed outputs through the current manifest and frozen-lock protocols.
 
 Workspace routes:
 

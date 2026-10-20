@@ -1,6 +1,12 @@
 import type { SyncAsset, VardItem } from "@vardum/shared";
 import type { DraftItem } from "./vard-editor-state";
 
+export function transformedPreviewUrl(sourceUrl: string | null, signedUrl: string | undefined) {
+  if (!sourceUrl || !signedUrl) return null;
+  const query = new URL(signedUrl, "https://preview.invalid").search;
+  return query ? `${sourceUrl}${query}` : null;
+}
+
 export function sourcePreview(
   item: DraftItem,
   workspaceSlug: string | undefined,

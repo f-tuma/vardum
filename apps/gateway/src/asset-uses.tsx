@@ -4,6 +4,7 @@ import { ArrowLeftIcon, FolderIcon, LinkIcon, PlusIcon, TriangleAlertIcon } from
 import { useId, useState, type SyntheticEvent } from "react";
 import { toast } from "sonner";
 import { AssetThumb } from "@/components/asset-thumb";
+import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton } from "@/components/copy-button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -126,19 +127,20 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   const [height, setHeight] = useState(String(use?.transformation?.h ?? ""));
   const [fit, setFit] = useState<TransformationInput["fit"]>(use?.transformation?.fit ?? "inside");
   const [quality, setQuality] = useState(String(use?.transformation?.q ?? 80));
+  const [background, setBackground] = useState(use?.transformation?.bg);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [removing, setRemoving] = useState(false);
   const transformation: TransformationInput | null = format === "original" ? null : {
     format, ...(width ? { w: Number(width) } : {}), ...(height ? { h: Number(height) } : {}),
-    ...(width || height ? { fit } : {}), q: Number(quality),
+    ...(width || height ? { fit } : {}), q: Number(quality), ...(background !== undefined ? { bg: background } : {}),
   };
   const settled = useDebouncedValue(JSON.stringify(transformation));
   const transformPreview = useQuery({
     queryKey: ["use-preview", workspace.id, source.id, source.currentVersionId, source.isPublic, source.customDomain, settled],
     queryFn: () => createTransformationUrl(workspace.id, source.id, JSON.parse(settled) as TransformationInput),
-    enabled: settled !== "null" && Boolean(source.currentVersionId), staleTime: Infinity, retry: false,
+    enabled: settled !== "null" && validOutputBackground((JSON.parse(settled) as TransformationInput | null)?.bg) && Boolean(source.currentVersionId), staleTime: Infinity, retry: false,
   });
   const preview = format === "original" ? assetPreviewUrl(workspace.slug, source, assetDeliveryPath(workspace.slug, source))
     : settled === JSON.stringify(transformation) ? assetPreviewUrl(workspace.slug, source, transformPreview.data?.url) : null;
@@ -184,6 +186,7 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
           </NativeSelect></Field>
           <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-quality`}>Quality</FieldLabel><Input id={`${id}-quality`} type="number" min="1" max="100" required value={quality} disabled={format === "original" || !workspace.canEdit} onChange={(event) => setQuality(event.target.value)} /></Field>
         </div>
+        <OutputBackground id={`${id}-background`} value={format === "original" ? undefined : background} onChange={setBackground} disabled={format === "original" || !workspace.canEdit} />
         {transformPreview.isError && format !== "original" ? <FieldError>{transformPreview.error.message}</FieldError> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
         {conflict ? <Button type="button" variant="outline" onClick={async () => { await invalidate(); onClose(); }}>Close and reload settings</Button> : null}

@@ -42,6 +42,7 @@ export async function checkDerivativePreservation(
   // Pin legacy identity independently of the production canonicalizer/key builder.
   const canonical = "w=8&fit=inside&format=png&q=80";
   const derivedKey = `derived/v1/${versionId}/${digest(Buffer.from(`v1:${canonical}`))}.png`;
+  const backgroundKeys: string[] = [];
   const url = transformedVersionUrl("demo", sourceKey, versionId, spec);
   assert.equal(
     new URL(url, origin).searchParams.get("sig"),
@@ -54,7 +55,7 @@ export async function checkDerivativePreservation(
   const output = join(project.path, "assets/variant.png");
   const lockPath = join(project.path, ".vardum.lock");
   const original = await sharp({
-    create: { width: 32, height: 16, channels: 4, background: "red" },
+    create: { width: 32, height: 16, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0.5 } },
   }).png().toBuffer();
   const originalChecksum = digest(original);
   objects.set(storageKey, original);
@@ -62,7 +63,7 @@ export async function checkDerivativePreservation(
   t.after(async () => {
     await admin.query("DELETE FROM vard WHERE id=$1", [vardId]);
     await admin.query("DELETE FROM asset WHERE id=$1", [assetId]);
-    for (const objectKey of [storageKey, derivedKey]) {
+    for (const objectKey of [storageKey, derivedKey, ...backgroundKeys]) {
       objects.delete(objectKey);
       objectTypes.delete(objectKey);
     }
@@ -115,6 +116,53 @@ export async function checkDerivativePreservation(
   assert.equal(snapshot.items[itemId].checksum, digest(retainedBytes));
   assert.equal(snapshot.items[itemId].downloadUrl, new URL(url, origin).href);
   assert.deepEqual(await readFile(output), retainedBytes);
+
+  await t.test("background changes Vard identity while a frozen pinned output keeps its captured color and bytes", async () => {
+    const backgroundProject = { path: join(root, "background-frozen"), key };
+    const backgroundLockPath = join(backgroundProject.path, ".vardum.lock");
+    const backgroundOutput = join(backgroundProject.path, "assets/variant.png");
+    await mkdir(backgroundProject.path);
+    await writeFile(join(backgroundProject.path, "vardum.json"), JSON.stringify({
+      schema: 1, server: origin, workspace: "ws", vard: vardId,
+    }));
+    let captured: Buffer | undefined, backgroundLock: string | undefined, firstFingerprint: string | undefined;
+    for (const bg of ["#204060", "#e0c0a0"]) {
+      await admin.query("UPDATE vard_item SET transformation=$1,version_id=$2 WHERE id=$3", [JSON.stringify({ ...spec, bg }), versionId, itemId]);
+      const manifest = await app.inject({ url: `/api/workspaces/ws/vards/${vardId}/manifest`, headers });
+      assert.equal(manifest.statusCode, 200, manifest.body);
+      const item = manifest.json().items[0];
+      const backgroundCanonical = `${canonical}&bg=%23${bg.slice(1)}`;
+      assert.equal(item.fingerprint, `${versionId}:${backgroundCanonical}`);
+      assert.equal(item.versionId, versionId); assert.equal(item.pinned, true);
+      assert.equal(item.writable, false); assert.equal(item.mimeType, "image/png");
+      assert.deepEqual(item.transformation, { ...spec, bg });
+      backgroundKeys.push(`derived/v1/${versionId}/${digest(Buffer.from(`v1:${backgroundCanonical}`))}.png`);
+      const response = await app.inject({ url: item.downloadUrl, headers });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal((await sharp(response.rawPayload).metadata()).hasAlpha, false);
+      if (!captured) {
+        captured = Buffer.from(response.rawPayload);
+        firstFingerprint = item.fingerprint;
+        assert.equal(JSON.parse((await run(backgroundProject, "pull")).stdout).changed, 1);
+        backgroundLock = await readFile(backgroundLockPath, "utf8");
+        const saved = JSON.parse(backgroundLock).items[itemId];
+        assert.equal(saved.fingerprint, item.fingerprint);
+        assert.equal(saved.checksum, digest(captured));
+        assert.equal(saved.downloadUrl, new URL(item.downloadUrl, origin).href);
+      } else {
+        assert.notEqual(item.fingerprint, firstFingerprint);
+        assert.notDeepEqual(response.rawPayload, captured, "changing only bg renders a different opaque color");
+        await writeFile(backgroundOutput, "local edit before frozen restore");
+        assert.equal(JSON.parse((await run(backgroundProject, "pull", "--frozen", "--force")).stdout).changed, 1);
+        assert.deepEqual(await readFile(backgroundOutput), captured);
+        assert.equal(await readFile(backgroundLockPath, "utf8"), backgroundLock);
+      }
+    }
+    assert.deepEqual(objects.get(storageKey), original);
+    assert.equal((await admin.query("SELECT checksum FROM asset_version WHERE id=$1", [versionId])).rows[0].checksum, originalChecksum);
+    await admin.query("UPDATE vard_item SET transformation=$1,version_id=null WHERE id=$2", [JSON.stringify(spec), itemId]);
+    assert.equal(await readFile(lockPath, "utf8"), locked, "background adoption leaves the existing no-background snapshot intact");
+  });
 
   async function frozenFailure(message: RegExp) {
     await assert.rejects(run(project, "pull", "--frozen", "--force"), (error: unknown) => {

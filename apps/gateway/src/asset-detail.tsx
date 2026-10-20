@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useId, useMemo, useState, type SyntheticEvent } from "react";
 import { toast } from "sonner";
 import { AssetThumb } from "@/components/asset-thumb";
+import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { DeliveryChart } from "@/components/delivery-chart";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -656,13 +657,19 @@ function TransformationCard({
   const sourceFormat = formatForMimeType(sourceMimeType);
   const [format, setFormat] = useState<DisplayFormat>(sourceFormat);
   const [transformation, setTransformation] = useState<TransformationInput | null>(null);
+  const [background, setBackground] = useState<string | undefined>();
+  const outputTransformation = useMemo(() => background !== undefined ? {
+    ...transformation,
+    format: isOutputFormat(format) ? format : "png" as const,
+    bg: background,
+  } : transformation, [background, format, transformation]);
   const [settledTransformation, setSettledTransformation] =
     useState<TransformationInput | null>(null);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => setSettledTransformation(transformation), 250);
+    const timeout = window.setTimeout(() => setSettledTransformation(outputTransformation), 250);
     return () => window.clearTimeout(timeout);
-  }, [transformation]);
+  }, [outputTransformation]);
 
   const preview = useQuery({
     queryKey: ["transformation-preview", workspaceId, assetId, currentVersionId, originalUrl, settledTransformation],
@@ -670,10 +677,12 @@ function TransformationCard({
       if (!settledTransformation) throw new Error("No transformation selected");
       return createTransformationUrl(workspaceId, assetId, settledTransformation);
     },
-    enabled: Boolean(settledTransformation),
+    enabled: Boolean(settledTransformation) && validOutputBackground(settledTransformation?.bg),
     staleTime: Infinity,
   });
-  const generatedUrl = transformation ? preview.data?.url : originalUrl;
+  const generatedUrl = outputTransformation
+    ? JSON.stringify(outputTransformation) === JSON.stringify(settledTransformation) && validOutputBackground(background) ? preview.data?.url : undefined
+    : originalUrl;
   const generatedPreviewUrl = assetPreviewUrl(workspaceSlug, asset, generatedUrl ?? null);
 
   useEffect(() => {
@@ -707,7 +716,7 @@ function TransformationCard({
     setTransformation({
       w: nextWidth,
       h: nextHeight,
-      fit: String(form.get("fit")) as TransformationInput["fit"],
+      fit: nextWidth || nextHeight ? String(form.get("fit")) as TransformationInput["fit"] : undefined,
       format: outputFormat,
       q: outputFormat ? nextQuality : undefined,
     });
@@ -765,9 +774,9 @@ function TransformationCard({
                   value={format}
                   onChange={(event) => setFormat(event.target.value as DisplayFormat)}
                 >
-                  {sourceFormat === "svg" && <NativeSelectOption value="svg">SVG</NativeSelectOption>}
-                  {sourceFormat === "gif" && <NativeSelectOption value="gif">GIF</NativeSelectOption>}
-                  {sourceFormat === "tiff" && <NativeSelectOption value="tiff">TIFF</NativeSelectOption>}
+                  {sourceFormat === "svg" && <NativeSelectOption value="svg" disabled={background !== undefined}>SVG</NativeSelectOption>}
+                  {sourceFormat === "gif" && <NativeSelectOption value="gif" disabled={background !== undefined}>GIF</NativeSelectOption>}
+                  {sourceFormat === "tiff" && <NativeSelectOption value="tiff" disabled={background !== undefined}>TIFF</NativeSelectOption>}
                   <NativeSelectOption value="webp">WebP</NativeSelectOption>
                   <NativeSelectOption value="avif">AVIF</NativeSelectOption>
                   <NativeSelectOption value="jpeg">JPEG</NativeSelectOption>
@@ -787,6 +796,13 @@ function TransformationCard({
                 />
               </Field>
             </div>
+            <OutputBackground id={`${id}-background`} value={background} onChange={(next) => {
+              setBackground(next);
+              if (next !== undefined && !isOutputFormat(format)) {
+                setFormat("png");
+                setTransformation((current) => ({ ...current, format: "png" }));
+              }
+            }} />
             <Field>
               <FieldLabel htmlFor={`${id}-url`}>URL</FieldLabel>
               <InputGroup>

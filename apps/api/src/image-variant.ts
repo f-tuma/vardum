@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { config } from "./config.js";
+import { applyImageTransformation } from "./image-transform.js";
 import { CapacityError } from "./resource-budget.js";
 import { withTransformBudget, outputPixels } from "./transform-budget.js";
 import { getObject, putDerivedObject, readBoundedObject } from "./storage.js";
@@ -80,7 +81,7 @@ async function generate(
     Math.min(source.size, config.UPLOAD_MAX_IMAGE_MB * 1024 ** 2),
     boundedSignal,
   );
-  let image = sharp(bytes, {
+  const image = sharp(bytes, {
     animated: true,
     limitInputPixels: 100_000_000,
   }).timeout({ seconds: config.TRANSFORM_TIMEOUT_SECONDS });
@@ -100,31 +101,8 @@ async function generate(
       422,
     );
 
-  if (transformation.w || transformation.h) {
-    image = image.resize({
-      width: transformation.w,
-      height: transformation.h,
-      fit: transformation.fit ?? "inside",
-    });
-  }
-  const quality = transformation.q ?? 80;
-  switch (outputFormat) {
-    case "avif":
-      image = image.avif({ quality });
-      break;
-    case "jpeg":
-      image = image.jpeg({ quality });
-      break;
-    case "png":
-      image = image.png({ quality });
-      break;
-    case "webp":
-      image = image.webp({ quality });
-      break;
-  }
-
   boundedSignal.throwIfAborted();
-  const result = await image.toBuffer();
+  const result = await applyImageTransformation(image, transformation, outputFormat).toBuffer();
   boundedSignal.throwIfAborted();
   await putDerivedObject(storageKey, result, mimeType, boundedSignal);
 }
