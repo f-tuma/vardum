@@ -326,6 +326,7 @@ export type VardTransformation = {
   fit?: "cover" | "contain" | "fill" | "inside" | "outside";
   format?: "avif" | "jpeg" | "png" | "webp";
   q?: number;
+  bg?: string;
 };
 
 export const vardItem = pgTable(

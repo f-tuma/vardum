@@ -9,6 +9,8 @@ export type Transformation = {
  fit?: "cover" | "contain" | "fill" | "inside" | "outside";
  format?: "avif" | "jpeg" | "png" | "webp";
  q?: number;
+ /** Opaque output background, normalized to lowercase #rrggbb. Requires format. */
+ bg?: string;
 };
 
 export type VardItem = {

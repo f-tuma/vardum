@@ -120,6 +120,42 @@ export async function checkImagePipeline(
       },
     );
   }
+  await t.test("background colors have separate cached outputs and never replace the source original", async () => {
+    const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="16" height="16" fill="red" fill-opacity="0.5"/></svg>');
+    const { source } = await ingest(bytes, "image/svg+xml");
+    const legacy = await getImageVariant(source, { format: "png" });
+    const transparent = Buffer.from(await legacy.object.Body!.transformToByteArray());
+    assert.equal((await sharp(transparent).metadata()).hasAlpha, true);
+    const keys: string[] = [];
+    for (const bg of ["#204060", "#e0c0a0"]) {
+      const spec = { w: 32, h: 32, fit: "contain", format: "png", bg } as const;
+      const result = await getImageVariant(source, spec);
+      assert.equal(result.cacheHit, false);
+      const encoded = Buffer.from(await result.object.Body!.transformToByteArray());
+      assert.equal(result.mimeType, "image/png");
+      const metadata = await sharp(encoded).metadata();
+      assert.equal(metadata.hasAlpha, false);
+      assert.equal(metadata.width, 32); assert.equal(metadata.height, 32);
+      const rgb = bg.match(/[0-9a-f]{2}/g)!.map((channel) => parseInt(channel, 16));
+      const decoded = await sharp(encoded).raw().toBuffer();
+      for (const [x, y] of [[16, 2], [24, 16]]) {
+        const offset = (y! * 32 + x!) * 3;
+        assert.deepEqual([...decoded.subarray(offset, offset + 3)], rgb, "padding and transparent pixels use the selected color");
+      }
+      const hash = createHash("sha256").update(`v1:w=32&h=32&fit=contain&format=png&q=80&bg=%23${bg.slice(1)}`).digest("hex");
+      const key = `derived/v1/${source.id}/${hash}.png`;
+      keys.push(key);
+      assert.deepEqual(objects.get(key), encoded, "background participates in the legacy v1 cache identity");
+      const cached = await getImageVariant(source, spec);
+      assert.equal(cached.cacheHit, true);
+      assert.deepEqual(Buffer.from(await cached.object.Body!.transformToByteArray()), encoded);
+    }
+    assert.notEqual(keys[0], keys[1]);
+    assert.notDeepEqual(objects.get(keys[0]!), objects.get(keys[1]!));
+    assert.deepEqual(objects.get(source.storageKey), bytes);
+    assert.equal((await admin.query("SELECT checksum FROM asset_version WHERE id=$1", [source.id])).rows[0].checksum,
+      createHash("sha256").update(bytes).digest("hex"));
+  });
   await t.test("automatic thumbnails shrink without enlargement; explicit transforms still enlarge", async () => {
     for (const [width, height, expectedWidth, expectedHeight] of [
       [48, 48, 48, 48], [3200, 2000, 640, 400], [100, 1000, 40, 400], [1000, 100, 640, 64],

@@ -684,7 +684,7 @@ server.tool(
               .record(z.unknown())
               .nullable()
               .describe(
-                "Optional transformation parameters (w, h, fit, format, q) or null",
+                "Optional transformation parameters (w, h, fit, format, q, bg) or null. bg is an opaque #rrggbb background and requires an explicit raster format.",
               ),
           })
           .strict(),
