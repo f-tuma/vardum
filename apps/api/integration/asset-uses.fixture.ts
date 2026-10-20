@@ -61,7 +61,9 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal(opaque.statusCode, 200, opaque.body);
     assert.equal((await sharp(opaque.rawPayload).metadata()).hasAlpha, false);
     const decoded = await sharp(opaque.rawPayload).raw().toBuffer();
-    assert.deepEqual([...decoded.subarray((5 * 10 + 9) * 3, (5 * 10 + 9) * 3 + 3)], [171, 18, 239]);
+    // The existing PNG quality=80 encoder can quantize palette RGB by a step.
+    const backgroundPixel = [...decoded.subarray((5 * 10 + 9) * 3, (5 * 10 + 9) * 3 + 3)];
+    assert.ok(backgroundPixel.every((value, channel) => Math.abs(value - [171, 18, 239][channel]!) <= 2));
     assert.equal((await sharp(canonical.rawPayload).metadata()).hasAlpha, true, "captured original transformation retains transparency");
     assert.deepEqual(objects.get(`uses-${first}`), bytes, "background rendering never changes the retained SVG original");
     assert.match((await stable("reuse/mobile/logo")).headers.location!, /w=12&.*format=webp/);
