@@ -7,13 +7,19 @@ export type Transformation = {
  w?: number;
  h?: number;
  fit?: "cover" | "contain" | "fill" | "inside" | "outside";
- format?: "avif" | "jpeg" | "png" | "webp";
+ format?: "avif" | "jpeg" | "png" | "webp" | "svg";
  q?: number;
  /** Opaque output background, normalized to lowercase #rrggbb. Requires format. */
  bg?: string;
- /** Inset on each edge, as an integer percent (0–45) of the shorter final side.
+ /** Inset on each edge, as a percent (0–45, at most two decimal places) of the shorter final side.
   * Positive padding requires w, h, format and fit: "contain". */
  pad?: number;
+ /** Geometric SVG group ID; keeps the original canvas and ancestor transforms. */
+ layer?: string;
+ /** Filled shapes in this SVG group use darkColor for a dark color scheme. */
+ darkLayer?: string;
+ /** Lowercase #rrggbb, paired with darkLayer; requires format: "svg". */
+ darkColor?: string;
 };
 
 export type VardItem = {

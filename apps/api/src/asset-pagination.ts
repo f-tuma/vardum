@@ -24,6 +24,7 @@ export type AssetPageScope = {
   prefix: string;
   search?: string;
   limit: number;
+  archived?: boolean;
 };
 
 const positionSchema = z
@@ -62,6 +63,7 @@ function scopeSignature(scope: AssetPageScope, secret: string) {
         "cursor",
         search ? "search" : "browse",
         orderVersion,
+        ...(scope.archived ? ["archived"] : []),
       ]),
     )
     .digest("hex");
@@ -136,6 +138,7 @@ export type AssetPageRow = AssetPagePosition & {
   key: string | null;
   displayName: string | null;
   isPublic: boolean | null;
+  archivedAt: string | null;
   currentVersionId: string | null;
   mimeType: string | null;
   size: number | null;
@@ -163,7 +166,7 @@ export function assetPageSql(
   const { workspaceId, prefix, limit } = scope;
   const search = normalizedAssetSearch(scope.search);
   const needle = search ? literalAssetSearch(search) : null;
-  const includeFolders = position?.kindRank !== 1;
+  const includeFolders = !scope.archived && position?.kindRank !== 1;
   const folderCtes = !includeFolders
     ? sql``
     : needle
@@ -218,6 +221,7 @@ export function assetPageSql(
     WITH scoped_assets AS NOT MATERIALIZED (
       SELECT id, key, display_name FROM ${asset}
       WHERE workspace_id = ${workspaceId} AND starts_with(key, ${prefix})
+        AND archived_at IS ${scope.archived ? sql`NOT NULL` : sql`NULL`}
     ),
     ${folderCtes}
     candidates AS (
@@ -227,7 +231,7 @@ export function assetPageSql(
       WHERE ${
         needle
           ? sql`(key ILIKE ${needle} ESCAPE '\\' OR display_name ILIKE ${needle} ESCAPE '\\')`
-          : sql`position('/' IN substring(key FROM length(${prefix}) + 1)) = 0`
+          : scope.archived ? sql`true` : sql`position('/' IN substring(key FROM length(${prefix}) + 1)) = 0`
       }
     ),
     candidate_page AS MATERIALIZED (
@@ -243,7 +247,7 @@ export function assetPageSql(
     page_asset_inputs AS MATERIALIZED (
       SELECT a.id, a.key, a.display_name, a.is_public, a.current_version_id,
         current.mime_type, current.size::double precision AS size, current.width, current.height,
-        a.updated_at
+        a.updated_at, a.archived_at
       FROM consumed_page p
       JOIN ${asset} a ON p.kind_rank = 1 AND a.id = p.asset_id AND a.workspace_id = ${workspaceId}
       LEFT JOIN ${assetVersion} current
@@ -273,7 +277,7 @@ export function assetPageSql(
     SELECT p.kind_rank AS "kindRank", p.path, p.stable_identity AS "stableIdentity",
       a.id, a.key, a.display_name AS "displayName", a.is_public AS "isPublic",
       a.current_version_id AS "currentVersionId", a.mime_type AS "mimeType", a.size,
-      a.width, a.height, a.updated_at AS "updatedAt",
+      a.width, a.height, a.updated_at AS "updatedAt", a.archived_at AS "archivedAt",
       a.latest_version_id AS "latestVersionId", a.status, a.error,
       a.has_unfinished_uploads AS "hasUnfinishedUploads",
       w.slug, w.custom_domain AS "customDomain"

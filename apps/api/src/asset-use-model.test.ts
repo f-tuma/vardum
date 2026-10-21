@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createUseSchema, useCompatibilityIssue } from "./asset-use-model.js";
+import { createUseSchema, useCompatibilityIssue, useOutputMime } from "./asset-use-model.js";
 
 test("use format and suffix promises fail explicitly when source bytes change type", () => {
   assert.equal(useCompatibilityIssue("mobile/icon", "image/png", "image/svg+xml", { format: "png", w: 32 }), null);
@@ -19,4 +19,14 @@ test("known source dimensions reject impossible format-only outputs before redir
 
 test("auto-oriented metadata does not falsely reject a feasible rotated source", () => {
   assert.equal(useCompatibilityIssue("portrait", "image/png", "image/jpeg", { format: "png", w: 4096 }, { width: 100, height: 10000 }), null);
+});
+
+
+test("SVG uses preserve SVG MIME and suffixes and fail when a source becomes raster", () => {
+  assert.equal(useOutputMime("image/svg+xml", { format: "svg" }), "image/svg+xml");
+  assert.equal(useCompatibilityIssue("web/mark.svg", "image/svg+xml", "image/svg+xml", { format: "svg" }), null);
+  assert.equal(useCompatibilityIssue("web/mark-neutral", "image/svg+xml", "image/svg+xml", { format: "svg", layer: "neutral-arm" }), null);
+  assert.match(useCompatibilityIssue("web/mark", "image/svg+xml", "image/png", { format: "svg" })!, /SVG source/);
+  assert.match(useCompatibilityIssue("web/mark.png", "image/png", "image/png", { format: "png", layer: "neutral-arm" })!, /SVG source/);
+  assert.match(useCompatibilityIssue("web/mark.png", "image/svg+xml", "image/svg+xml", { format: "svg" })!, /extension/);
 });

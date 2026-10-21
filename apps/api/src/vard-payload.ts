@@ -210,6 +210,7 @@ function outputMimeType(
 ) {
   if (!transformation?.format)
     return transformation && source === "image/svg+xml" ? "image/png" : source;
+  if (transformation.format === "svg") return "image/svg+xml";
   return transformation.format === "jpeg"
     ? "image/jpeg"
     : `image/${transformation.format}`;

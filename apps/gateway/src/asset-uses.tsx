@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
+import { OutputSvg, outputMime } from "@/components/output-svg";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton } from "@/components/copy-button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -130,13 +131,18 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   const [quality, setQuality] = useState(String(use?.transformation?.q ?? 80));
   const [background, setBackground] = useState(use?.transformation?.bg);
   const [padding, setPadding] = useState(use?.transformation?.pad);
+  const [vector, setVector] = useState<Partial<TransformationInput>>({
+    layer: use?.transformation?.layer, darkLayer: use?.transformation?.darkLayer, darkColor: use?.transformation?.darkColor,
+  });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [removing, setRemoving] = useState(false);
   const transformation: TransformationInput | null = format === "original" ? null : {
     format, ...(width ? { w: Number(width) } : {}), ...(height ? { h: Number(height) } : {}),
-    ...(width || height ? { fit } : {}), q: Number(quality), ...(background !== undefined ? { bg: background } : {}), ...(padding !== undefined ? { pad: padding } : {}),
+    ...(format === "svg" ? { fit: "contain" as const, darkLayer: vector.darkLayer, darkColor: vector.darkColor }
+      : { ...(width || height ? { fit } : {}), q: Number(quality) }),
+    layer: vector.layer, ...(background !== undefined ? { bg: background } : {}), ...(padding !== undefined ? { pad: padding } : {}),
   };
   const settled = useDebouncedValue(JSON.stringify(transformation));
   const transformPreview = useQuery({
@@ -170,7 +176,7 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
       <Badge variant="secondary">Latest ready version · {source.isPublic ? "Public" : "Private"}</Badge>
     </div>
     <form onSubmit={save} className="flex flex-col gap-4">
-      <div className="flex aspect-16/10 max-h-56 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells"><AssetThumb url={preview} mimeType={format === "original" ? source.mimeType : `image/${format}`} label={`Preview of ${name}`} controls /></div>
+      <div className="flex aspect-16/10 max-h-56 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells"><AssetThumb url={preview} mimeType={format === "original" ? source.mimeType : outputMime(format)} label={`Preview of ${name}`} controls /></div>
       {use?.availabilityError ? <Alert variant="destructive"><TriangleAlertIcon /><AlertTitle>Saved use unavailable</AlertTitle><AlertDescription>{use.availabilityError}</AlertDescription></Alert> : null}
       <FieldGroup>
         <Field><FieldLabel htmlFor={`${id}-name`}>Use name</FieldLabel><Input id={`${id}-name`} value={name} required maxLength={255} readOnly={!workspace.canEdit} onChange={(event) => { setName(event.target.value); if (!keyEdited) setKey(defaultUsePath(prefix, event.target.value)); }} /></Field>
@@ -179,17 +185,20 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field><FieldLabel htmlFor={`${id}-format`}>Output format</FieldLabel><NativeSelect id={`${id}-format`} value={format} disabled={!workspace.canEdit} onChange={(event) => setFormat(event.target.value as typeof format)}>
             <NativeSelectOption value="original">Original</NativeSelectOption>
+            {source.mimeType === "image/svg+xml" ? <NativeSelectOption value="svg">SVG</NativeSelectOption> : null}
             {["png", "webp", "jpeg", "avif"].map((value) => <NativeSelectOption key={value} value={value} disabled={!source.mimeType?.startsWith("image/")}>{value.toUpperCase()}</NativeSelectOption>)}
           </NativeSelect></Field>
           <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-width`}>Width</FieldLabel><Input id={`${id}-width`} type="number" min="1" max="4096" value={width} disabled={format === "original" || !workspace.canEdit} placeholder="Auto" onChange={(event) => setWidth(event.target.value)} /></Field>
           <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-height`}>Height</FieldLabel><Input id={`${id}-height`} type="number" min="1" max="4096" value={height} disabled={format === "original" || !workspace.canEdit} placeholder="Auto" onChange={(event) => setHeight(event.target.value)} /></Field>
-          <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-fit`}>Fit</FieldLabel><NativeSelect id={`${id}-fit`} value={fit} disabled={format === "original" || Boolean(padding) || !workspace.canEdit} onChange={(event) => setFit(event.target.value as typeof fit)}>
+          <Field data-disabled={format === "original" || format === "svg"}><FieldLabel htmlFor={`${id}-fit`}>Fit</FieldLabel><NativeSelect id={`${id}-fit`} value={format === "svg" ? "contain" : fit} disabled={format === "original" || format === "svg" || Boolean(padding) || !workspace.canEdit} onChange={(event) => setFit(event.target.value as typeof fit)}>
             {["inside", "cover", "contain", "fill", "outside"].map((value) => <NativeSelectOption key={value} value={value}>{value}</NativeSelectOption>)}
           </NativeSelect></Field>
-          <Field data-disabled={format === "original"}><FieldLabel htmlFor={`${id}-quality`}>Quality</FieldLabel><Input id={`${id}-quality`} type="number" min="1" max="100" required value={quality} disabled={format === "original" || !workspace.canEdit} onChange={(event) => setQuality(event.target.value)} /></Field>
+          <Field data-disabled={format === "original" || format === "svg"}><FieldLabel htmlFor={`${id}-quality`}>Quality</FieldLabel><Input id={`${id}-quality`} type="number" min="1" max="100" required value={quality} disabled={format === "original" || format === "svg" || !workspace.canEdit} onChange={(event) => setQuality(event.target.value)} /></Field>
         </div>
         <OutputSafeArea id={`${id}-safe-area`} transformation={transformation} onChange={(pad) => { setPadding(pad); if (pad) setFit("contain"); }} disabled={format === "original" || !workspace.canEdit} />
         <OutputBackground id={`${id}-background`} value={format === "original" ? undefined : background} onChange={setBackground} disabled={format === "original" || !workspace.canEdit} />
+        {source.mimeType === "image/svg+xml" && transformation ? <OutputSvg id={`${id}-svg`} value={transformation}
+          onChange={(patch) => setVector((current) => ({ ...current, ...patch }))} disabled={!workspace.canEdit} /> : null}
         {transformPreview.isError && format !== "original" ? <FieldError>{transformPreview.error.message}</FieldError> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
         {conflict ? <Button type="button" variant="outline" onClick={async () => { await invalidate(); onClose(); }}>Close and reload settings</Button> : null}

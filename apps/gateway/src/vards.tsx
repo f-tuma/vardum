@@ -18,6 +18,7 @@ import { AssetPageControls } from "@/components/asset-page-controls";
 import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
+import { OutputSvg, outputMime } from "@/components/output-svg";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -1424,7 +1425,7 @@ function VardItemDialog({
             <div className="flex h-40 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells">
               <AssetThumb
                 url={outputPreview}
-                mimeType={showingSource ? preview.mimeType : draft.transformation?.format ? `image/${draft.transformation.format}`
+                mimeType={showingSource ? preview.mimeType : draft.transformation?.format ? outputMime(draft.transformation.format)
                   : transformed && preview.mimeType === "image/svg+xml" ? "image/png" : preview.mimeType}
                 label={`${showingSource ? "Source" : "Output"} preview of ${item.key}`}
                 controls
@@ -1454,7 +1455,7 @@ function VardItemDialog({
                 disabled={!editable}
                 onChange={(event) => {
                   const format = event.target.value;
-                  const mimeType = format === "original" ? preview.mimeType : `image/${format}`;
+                  const mimeType = format === "original" ? preview.mimeType : outputMime(format as NonNullable<TransformationInput["format"]>);
                   change({
                     ...(mimeType ? { outputPath: mediaOutputPath(draft.outputPath, mimeType) } : {}),
                     writable: false,
@@ -1464,11 +1465,14 @@ function VardItemDialog({
                         : {
                             ...draft.transformation,
                             format: format as NonNullable<TransformationInput["format"]>,
+                            ...(format === "svg" ? { fit: "contain" as const, q: undefined }
+                              : { darkLayer: undefined, darkColor: undefined }),
                           },
                   });
                 }}
               >
                 <NativeSelectOption value="original">Original file</NativeSelectOption>
+                {preview.mimeType === "image/svg+xml" ? <NativeSelectOption value="svg">SVG</NativeSelectOption> : null}
                 <NativeSelectOption value="avif">AVIF</NativeSelectOption>
                 <NativeSelectOption value="jpeg">JPEG</NativeSelectOption>
                 <NativeSelectOption value="png">PNG</NativeSelectOption>
@@ -1510,7 +1514,7 @@ function VardItemDialog({
                   <NativeSelect
                     id={`${id}-fit`}
                     value={draft.transformation?.fit ?? "inside"}
-                    disabled={!editable || Boolean(draft.transformation?.pad) || (!draft.transformation?.w && !draft.transformation?.h)}
+                    disabled={!editable || draft.transformation?.format === "svg" || Boolean(draft.transformation?.pad) || (!draft.transformation?.w && !draft.transformation?.h)}
                     onChange={(event) =>
                       changeTransformation({ fit: event.target.value as TransformationInput["fit"] })
                     }
@@ -1529,7 +1533,7 @@ function VardItemDialog({
                     type="number"
                     min={1}
                     max={100}
-                    disabled={!editable}
+                    disabled={!editable || draft.transformation?.format === "svg"}
                     value={draft.transformation?.q ?? ""}
                     onChange={(event) => changeTransformation({ q: numberOrUndefined(event.target.value) })}
                   />
@@ -1542,6 +1546,9 @@ function VardItemDialog({
 
             {transformed ? <OutputBackground id={`${id}-background`} value={draft.transformation?.bg}
               onChange={(bg) => changeTransformation({ bg })} disabled={!editable || !draft.transformation?.format} /> : null}
+
+            {transformed && preview.mimeType === "image/svg+xml" ? <OutputSvg id={`${id}-svg`} value={draft.transformation!}
+              onChange={changeTransformation} disabled={!editable} /> : null}
 
             <Field orientation="horizontal">
               <FieldContent>

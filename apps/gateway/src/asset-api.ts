@@ -96,6 +96,8 @@ export type DeliverySummary = {
 
 export type AssetSummary = {
   isPublic: boolean;
+  archivedAt?: string | null;
+  hasUnfinishedUploads?: boolean;
   id: string;
   key: string;
   displayName: string;
@@ -663,11 +665,21 @@ export function listAssetPage(
   cursor: string | null,
   limit = 50,
   signal?: AbortSignal,
+  archived = false,
 ) {
   const query = new URLSearchParams({ pagination: "cursor", prefix, limit: String(limit) });
   if (search.trim()) query.set("search", search.trim());
   if (cursor !== null) query.set("cursor", cursor);
+  if (archived) query.set("archived", "true");
   return request<AssetPage>("/api/workspaces/" + workspaceId + "/assets?" + query, { signal });
+}
+
+export function setAssetArchived(workspaceId: string, asset: AssetSummary, archived: boolean) {
+  return request<{ id: string; archivedAt: string | null }>(`/api/workspaces/${workspaceId}/assets/${asset.id}/archive`, {
+    method: "PATCH", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ archived, expectedCurrentVersionId: asset.currentVersionId,
+      expectedArchivedAt: asset.archivedAt ?? null }),
+  });
 }
 
 export function listAssetVersions(workspaceId: string, assetId: string) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { Pool } from "pg";
+import type { FastifyInstance } from "fastify";
 import sharp from "sharp";
 import { supportedImageMimeTypes } from "@vardum/shared";
 
@@ -11,7 +12,10 @@ export async function checkImagePipeline(
   t: TestContext,
   admin: Pool,
   objects: Map<string, Buffer>,
+  app: FastifyInstance,
 ) {
+  const { checkSvgDerivatives } = await import("./svg-derivatives.fixture.js");
+  await t.test("bounded SVG derivative delivery", svgTest => checkSvgDerivatives(svgTest, admin, objects, app));
   const { processAsset } = await import("../src/asset-processor.js");
   const { getImageVariant } = await import("../src/image-variant.js");
   const { thumbnailTransformation } = await import("../src/asset-thumbnail.js");

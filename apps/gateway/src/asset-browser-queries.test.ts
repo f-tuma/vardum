@@ -29,6 +29,21 @@ function asset(
   };
 }
 
+test("archive discovery keeps active source-picker results in a separate cache", async (t) => {
+  const client = new QueryClient();
+  t.after(() => client.clear());
+  t.mock.method(globalThis, "fetch", async (raw: string) => {
+    const archived = new URL(raw, "http://test").searchParams.get("archived") === "true";
+    return Response.json({ folders: [], assets: [asset(archived ? "old-source" : "master")], nextCursor: null });
+  });
+  const active = assetBrowserQueryOptions("ws");
+  const archive = assetBrowserQueryOptions("ws", "", "", 50, true);
+  const [activePage, archivePage] = await Promise.all([client.fetchInfiniteQuery(active), client.fetchInfiniteQuery(archive)]);
+  assert.equal(activePage.pages[0]!.assets[0]!.id, "master");
+  assert.equal(archivePage.pages[0]!.assets[0]!.id, "old-source");
+  assert.equal(client.getQueryData(active.queryKey), activePage);
+});
+
 test("loads beyond 100 items, keeps prior pages on failure and retries the same cursor", async (t) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

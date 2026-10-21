@@ -408,7 +408,7 @@ async function findCustomWorkspace(hostname: string) {
 
 function deliveryFilename(
   filename: string,
-  format?: "avif" | "jpeg" | "png" | "webp",
+  format?: Transformation["format"],
 ) {
   if (!format) return filename;
   const basename = filename.replace(/\.[^.]+$/, "");

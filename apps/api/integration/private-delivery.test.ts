@@ -340,7 +340,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
 
   await t.test("image pipeline under the production database role", async (imageTest) => {
     const { checkImagePipeline } = await import("./image-pipeline.fixture.js");
-    await checkImagePipeline(imageTest, admin!, objects);
+    await checkImagePipeline(imageTest, admin!, objects, app);
   });
 
   const cookies: Record<string, string> = {};
@@ -454,6 +454,10 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   await t.test("linked library uses", async (usesTest) => {
     const { checkAssetUses } = await import("./asset-uses.fixture.js");
     await checkAssetUses(usesTest, app, admin!, objects, cookies);
+  });
+  await t.test("archived library sources", async (archiveTest) => {
+    const { checkAssetArchive } = await import("./asset-archive.fixture.js");
+    await checkAssetArchive(archiveTest, { app, admin: admin!, objects, cookies }, keyHeaders);
   });
   const shapes = [
     { url: immutable, status: 200 },
@@ -1578,6 +1582,11 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
           admin: admin!, app, objects, objectTypes, origin, root,
           key: bulkKeys[0]!.key, run,
         });
+      });
+      await cliTest.test("archived sources retain frozen CLI outputs", async (archiveTest) => {
+        const { checkArchivedFrozen } = await import("./asset-archive.fixture.js");
+        await checkArchivedFrozen(archiveTest, { admin: admin!, app, objects, cookies, origin, root,
+          key: bulkKeys[0]!.key, run });
       });
       await cliTest.test(
         "folder CLI normal/frozen updates, new/removed/moved members, rule deletion and explicit stale deletion",

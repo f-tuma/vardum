@@ -2,6 +2,8 @@ import { isVideoMimeType, uploadAccept } from "@vardum/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
   EllipsisIcon,
   ExternalLinkIcon,
   GlobeIcon,
@@ -16,6 +18,7 @@ import { toast } from "sonner";
 import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
+import { OutputSvg } from "@/components/output-svg";
 import { DeliveryChart } from "@/components/delivery-chart";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -83,6 +86,7 @@ import {
   retryAssetVersion,
   renameAsset,
   setAssetVisibility,
+  setAssetArchived,
   type AssetSummary,
   type TransformationInput,
 } from "./asset-api";
@@ -156,7 +160,7 @@ function AssetDetailPage({
   const linked = useLibraryUses(workspace.id, "", "", asset.id);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [dialog, setDialog] = useState<"delete" | "visibility" | "version" | "rename" | null>(null);
+  const [dialog, setDialog] = useState<"delete" | "visibility" | "version" | "rename" | "archive" | null>(null);
   const [preview, setPreview] = useState<{ versionId: string | null; url: string } | null>(null);
   const path = assetDeliveryPath(workspace.slug, asset);
   const originalPreviewUrl = assetPreviewUrl(workspace.slug, asset, path);
@@ -169,6 +173,16 @@ function AssetDetailPage({
   const isVideo = isVideoMimeType(asset.mimeType);
   const origin = assetOrigin(asset.key, fromPrefix, fromSearch);
   const folder = origin.prefix;
+  const canEditSource = workspace.canEdit && !asset.archivedAt;
+  const sourceWorkspace = asset.archivedAt ? { ...workspace, canEdit: false } : workspace;
+
+  async function changeArchiveState() {
+    await setAssetArchived(workspace.id, asset, !asset.archivedAt);
+    await Promise.all(["asset", "assets", "audit", "workspace-overview"].map((key) =>
+      queryClient.invalidateQueries({ queryKey: [key, workspace.id] })));
+    toast.success(asset.archivedAt ? "Source unarchived" : "Source archived");
+    setDialog(null);
+  }
 
   async function changeVisibility() {
     await setAssetVisibility(workspace.id, asset.id, !asset.isPublic);
@@ -204,6 +218,7 @@ function AssetDetailPage({
           badge={
             <>
               {badge}
+              {asset.archivedAt && <Badge variant="secondary">Archived</Badge>}
               <Badge variant="outline">
                 {asset.isPublic ? <GlobeIcon data-icon="inline-start" /> : <LockIcon data-icon="inline-start" />}
                 {asset.isPublic ? "Public" : "Private"}
@@ -226,7 +241,8 @@ function AssetDetailPage({
                   </a>
                 </>
               )}
-              {workspace.canEdit && (
+              {workspace.canEdit && asset.archivedAt && <Button variant="outline" onClick={() => setDialog("archive")}><ArchiveRestoreIcon data-icon="inline-start" />Unarchive</Button>}
+              {canEditSource && (
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={<Button variant="outline" size="icon" aria-label="More actions" />}
@@ -247,6 +263,9 @@ function AssetDetailPage({
                       Make {asset.isPublic ? "private" : "public"}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
+                    <DropdownMenuItem disabled={asset.hasUnfinishedUploads} onClick={() => setDialog("archive")}>
+                      <ArchiveIcon />Archive source
+                    </DropdownMenuItem>
                     <DropdownMenuItem variant="destructive" onClick={() => setDialog("delete")}>
                       <Trash2Icon />
                       Delete asset
@@ -257,6 +276,8 @@ function AssetDetailPage({
             </>
           }
         />
+
+        {asset.archivedAt && <Alert><ArchiveIcon /><AlertTitle>Archived source</AlertTitle><AlertDescription>This source is read-only. Its URLs, versions and existing Vards remain available. Unarchive it to make changes.</AlertDescription></Alert>}
 
         {asset.error && (
           <Alert variant="destructive">
@@ -292,7 +313,7 @@ function AssetDetailPage({
           </div>
 
           <div className="flex flex-col gap-6">
-            {workspace.canEdit && (
+            {canEditSource && (
               <Card>
                 <CardContent>
                   <Field orientation="horizontal">
@@ -313,7 +334,7 @@ function AssetDetailPage({
                 </CardContent>
               </Card>
             )}
-            {asset.currentVersionId && !isVideo && (
+            {!asset.archivedAt && asset.currentVersionId && !isVideo && (
               <TransformationCard
                 key={`${asset.currentVersionId}:${asset.isPublic}`}
                 workspaceId={workspace.id}
@@ -324,7 +345,7 @@ function AssetDetailPage({
               />
             )}
             <VersionHistory
-              workspace={workspace}
+              workspace={sourceWorkspace}
               assetId={asset.id}
               currentVersionId={asset.currentVersionId}
               onUpload={() => setDialog("version")}
@@ -332,20 +353,20 @@ function AssetDetailPage({
             <DeliveryCard workspaceId={workspace.id} assetId={asset.id} />
           </div>
         </div>
-        <LinkedUses key={asset.currentVersionId} workspace={workspace} source={asset} listing={linked} />
+        <LinkedUses key={asset.currentVersionId} workspace={sourceWorkspace} source={asset} listing={linked} />
       </Page>
 
-      {dialog === "rename" && (
+      {canEditSource && dialog === "rename" && (
         <RenameAssetDialog asset={asset} workspaceId={workspace.id} onClose={() => setDialog(null)} />
       )}
       <NewVersionDialog
-        open={dialog === "version"}
+        open={Boolean(canEditSource) && dialog === "version"}
         workspaceId={workspace.id}
         assetId={asset.id}
         onClose={() => setDialog(null)}
       />
       <ConfirmDialog
-        open={dialog === "visibility"}
+        open={Boolean(canEditSource) && dialog === "visibility"}
         tone="neutral"
         title={asset.isPublic ? "Make this asset private?" : "Make this asset public?"}
         description={
@@ -358,7 +379,16 @@ function AssetDetailPage({
         onConfirm={changeVisibility}
       />
       <ConfirmDialog
-        open={dialog === "delete"}
+        open={dialog === "archive"}
+        tone="neutral"
+        title={asset.archivedAt ? "Unarchive this source?" : "Archive this source?"}
+        description={asset.archivedAt ? "This source will appear in the library and source pickers again." : "The source becomes read-only and moves to the archive. Its URLs, versions and existing Vards continue working."}
+        confirmLabel={asset.archivedAt ? "Unarchive" : "Archive source"}
+        onCancel={() => setDialog(null)}
+        onConfirm={changeArchiveState}
+      />
+      <ConfirmDialog
+        open={Boolean(canEditSource) && dialog === "delete"}
         title={`Delete “${asset.displayName}”?`}
         description="All versions and generated variants are deleted permanently. Remove linked uses first."
         confirmLabel="Delete asset"
@@ -637,7 +667,7 @@ function formatForMimeType(mimeType: string | null): DisplayFormat {
 function isOutputFormat(
   format: DisplayFormat,
 ): format is NonNullable<TransformationInput["format"]> {
-  return ["avif", "jpeg", "png", "webp"].includes(format);
+  return ["avif", "jpeg", "png", "webp", "svg"].includes(format);
 }
 
 function TransformationCard({
@@ -661,12 +691,15 @@ function TransformationCard({
   const [background, setBackground] = useState<string | undefined>();
   const [padding, setPadding] = useState<number | undefined>();
   const [fit, setFit] = useState<TransformationInput["fit"]>("inside");
-  const outputTransformation = useMemo(() => background !== undefined || Boolean(padding) ? {
+  const [vector, setVector] = useState<Partial<TransformationInput>>({});
+  const outputTransformation = useMemo(() => background !== undefined || Boolean(padding) || vector.layer || vector.darkLayer || vector.darkColor !== undefined ? {
     ...transformation,
     format: isOutputFormat(format) ? format : "png" as const,
     bg: background,
     pad: padding,
-  } : transformation, [background, padding, format, transformation]);
+    layer: vector.layer,
+    ...(format === "svg" ? { fit: "contain" as const, q: undefined, darkLayer: vector.darkLayer, darkColor: vector.darkColor } : {}),
+  } : transformation, [background, padding, format, transformation, vector]);
   const [settledTransformation, setSettledTransformation] =
     useState<TransformationInput | null>(null);
 
@@ -714,7 +747,7 @@ function TransformationCard({
       setTransformation(null);
       return;
     }
-    if (selectedFormat === "svg" || nextPadding && !isOutputFormat(selectedFormat)) {
+    if (nextPadding && !isOutputFormat(selectedFormat)) {
       selectedFormat = "png";
       setFormat("png");
     }
@@ -723,9 +756,9 @@ function TransformationCard({
       w: nextWidth,
       h: nextHeight,
       pad: nextPadding,
-      fit: nextPadding ? "contain" : nextWidth || nextHeight ? String(form.get("fit") ?? fit) as TransformationInput["fit"] : undefined,
+      fit: nextPadding || selectedFormat === "svg" ? "contain" : nextWidth || nextHeight ? String(form.get("fit") ?? fit) as TransformationInput["fit"] : undefined,
       format: outputFormat,
-      q: outputFormat ? nextQuality : undefined,
+      q: outputFormat && selectedFormat !== "svg" ? nextQuality : undefined,
     });
   }
 
@@ -765,7 +798,7 @@ function TransformationCard({
               </Field>
               <Field>
                 <FieldLabel htmlFor={`${id}-fit`}>Fit</FieldLabel>
-                <NativeSelect id={`${id}-fit`} name="fit" value={fit} disabled={Boolean(padding)} onChange={(event) => setFit(event.target.value as TransformationInput["fit"])}>
+                <NativeSelect id={`${id}-fit`} name="fit" value={format === "svg" ? "contain" : fit} disabled={Boolean(padding) || format === "svg"} onChange={(event) => setFit(event.target.value as TransformationInput["fit"])}>
                   <NativeSelectOption value="inside">Inside</NativeSelectOption>
                   <NativeSelectOption value="cover">Cover</NativeSelectOption>
                   <NativeSelectOption value="contain">Contain</NativeSelectOption>
@@ -781,7 +814,7 @@ function TransformationCard({
                   value={format}
                   onChange={(event) => setFormat(event.target.value as DisplayFormat)}
                 >
-                  {sourceFormat === "svg" && <NativeSelectOption value="svg" disabled={background !== undefined || Boolean(padding)}>SVG</NativeSelectOption>}
+                  {sourceFormat === "svg" && <NativeSelectOption value="svg">SVG</NativeSelectOption>}
                   {sourceFormat === "gif" && <NativeSelectOption value="gif" disabled={background !== undefined || Boolean(padding)}>GIF</NativeSelectOption>}
                   {sourceFormat === "tiff" && <NativeSelectOption value="tiff" disabled={background !== undefined || Boolean(padding)}>TIFF</NativeSelectOption>}
                   <NativeSelectOption value="webp">WebP</NativeSelectOption>
@@ -799,7 +832,7 @@ function TransformationCard({
                   min="1"
                   max="100"
                   defaultValue="80"
-                  disabled={!isOutputFormat(format)}
+                  disabled={!isOutputFormat(format) || format === "svg"}
                 />
               </Field>
             </div>
@@ -814,6 +847,8 @@ function TransformationCard({
                 setTransformation((current) => ({ ...current, format: "png" }));
               }
             }} />
+            {sourceFormat === "svg" ? <OutputSvg id={`${id}-svg`} value={outputTransformation ?? { format: "svg" }}
+              onChange={(patch) => setVector((current) => ({ ...current, ...patch }))} /> : null}
             <Field>
               <FieldLabel htmlFor={`${id}-url`}>URL</FieldLabel>
               <InputGroup>
