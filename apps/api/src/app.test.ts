@@ -298,6 +298,8 @@ test("the OpenAPI document is generated from the route schemas", async () => {
   assert.match(transform.layer.pattern, /A-Za-z/);
   assert.equal(transform.darkLayer.type, "string");
   assert.equal(transform.darkColor.type, "string");
+  assert.deepEqual(transform.render.enum, ["v2"]);
+  assert.equal(Object.hasOwn(transform.render, "default"), false);
   const pad = transform.pad;
   assert.match(pad.description, /Positive padding requires explicit w, h, format and fit "contain"/);
   assert.deepEqual(pad.anyOf.find((branch: { type: string }) => branch.type === "number"),

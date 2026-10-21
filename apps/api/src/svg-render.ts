@@ -239,6 +239,10 @@ export function renderSvg(bytes: Buffer, transformation: Transformation, maxOutp
 
 /** SVG-only options must fail before cache lookup, even after a source changes. */
 export function svgSourceIssue(mimeType: string, transformation: Transformation) {
+  if (transformation.render === "v2" && (!transformation.bg || !transformation.format || transformation.format === "svg"))
+    return "Render v2 requires a raster output format and background";
+  if (transformation.render === "v2" && mimeType !== "image/svg+xml")
+    return "Render v2 requires an SVG source";
   return (transformation.format === "svg" || transformation.layer || transformation.darkLayer || transformation.darkColor) && mimeType !== "image/svg+xml"
     ? "SVG output and layer selection require an SVG source" : null;
 }

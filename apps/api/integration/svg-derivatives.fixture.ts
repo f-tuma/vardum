@@ -68,9 +68,33 @@ export async function checkSvgDerivatives(t: TestContext, admin: Pool, objects: 
     assert.equal(response.statusCode, 422, response.body);
     assert.equal(response.headers["cache-control"], "private, no-store");
   }
+  const background = { w: 180, h: 180, fit: "contain", format: "png", q: 100, pad: 14, bg: "#204060" } as const;
+  const v2 = { ...background, render: "v2" } as const;
+  const legacyUrl = transformedVersionUrl("demo", key, versionId, background);
+  const v2Url = transformedVersionUrl("demo", key, versionId, v2);
+  const legacyRaster = await app.inject({ url: legacyUrl }), v2Raster = await app.inject({ url: v2Url });
+  assert.equal(legacyRaster.statusCode, 200, legacyRaster.body);
+  assert.equal(v2Raster.statusCode, 200, v2Raster.body);
+  assert.notDeepEqual(v2Raster.rawPayload, legacyRaster.rawPayload, "v2 does not reuse the legacy derivative");
+  for (const spec of [background, v2]) {
+    const identity = canonicalizeTransformation(spec);
+    const cacheKey = `derived/v1/${versionId}/${createHash("sha256").update(`v1:${identity}`).digest("hex")}.png`;
+    const hit = await getImageVariant(sourceRecord, spec);
+    assert.equal(hit.cacheHit, true);
+    assert.ok(objects.has(cacheKey), "each signed render identity has its own stored object");
+  }
+  const tampered = new URL(v2Url, "https://example.test"); tampered.searchParams.delete("render");
+  assert.equal((await app.inject({ url: tampered.pathname + tampered.search })).statusCode, 403);
+  await admin.query("UPDATE vard_item SET transformation=$1 WHERE id=$2", [JSON.stringify(background), itemId]);
+  const legacyFingerprint = (await app.inject({ url: `/v/${vardId}` })).json().items[0].fingerprint;
+  await admin.query("UPDATE vard_item SET transformation=$1 WHERE id=$2", [JSON.stringify(v2), itemId]);
+  const v2Fingerprint = (await app.inject({ url: `/v/${vardId}` })).json().items[0].fingerprint;
+  assert.equal(v2Fingerprint, `${legacyFingerprint}&render=v2`);
+  assert.deepEqual((await app.inject({ url: legacyUrl })).rawPayload, legacyRaster.rawPayload, "captured legacy URLs retain their bytes after upgrading the recipe");
   // A source type guard runs even before an already stored SVG derivative hit.
   await admin.query("UPDATE asset_version SET mime_type='image/png' WHERE id=$1", [versionId]);
   assert.equal((await app.inject({ url })).statusCode, 422);
+  assert.equal((await app.inject({ url: v2Url })).statusCode, 422, "v2 source validation precedes its existing cache hit");
   await admin.query("UPDATE asset_version SET mime_type='image/svg+xml' WHERE id=$1", [versionId]);
   const unsafe = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><script>alert(1)</script></svg>');
   objects.set(storageKey, unsafe);

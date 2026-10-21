@@ -5,10 +5,10 @@ changing the final output dimensions. It is a number from 0 to 45 with at most t
 of the shorter final side reserved on **each** edge. For positive padding,
 provide both `w` and `h`, an explicit `format`, and `fit: "contain"`.
 
-For example, a transparent logo can produce an opaque 1024×1024 app icon:
+For example, a transparent SVG logo can produce an opaque 1024×1024 app icon:
 
 ```json
-{ "w": 1024, "h": 1024, "fit": "contain", "format": "png", "bg": "#050507", "pad": 16 }
+{ "w": 1024, "h": 1024, "fit": "contain", "format": "png", "bg": "#050507", "pad": 16, "render": "v2" }
 ```
 
 Values such as `12.80`, `26.57` and `16.70` reserve exactly 131, 272 and
@@ -32,6 +32,10 @@ transparent padding in PNG, WebP, AVIF or SVG. JPEG cannot preserve transparency
 an explicit background for predictable opaque icons. Animated output retains
 per-frame geometry and timing for formats that support animation. SVG output
 keeps vector geometry; see [bounded SVG derivatives](svg-derivatives.md).
+The example selects v2 for an SVG source so its vector is rasterized at the final
+inner size before background compositing. Omit `render` for raster sources and
+transparent or SVG output. Existing recipes retain their renderer when opened
+or saved; add v2 explicitly to upgrade an existing SVG background recipe.
 
 Padding is available on linked library uses, Vard manual outputs and source
 transform previews. It changes only the output recipe; the source bytes and

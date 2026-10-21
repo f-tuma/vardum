@@ -7,6 +7,7 @@ import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
 import { OutputSvg, outputMime } from "@/components/output-svg";
+import { withOutputRenderer } from "./output-renderer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton } from "@/components/copy-button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -138,12 +139,12 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const transformation: TransformationInput | null = format === "original" ? null : {
+  const transformation: TransformationInput | null = withOutputRenderer(format === "original" ? null : {
     format, ...(width ? { w: Number(width) } : {}), ...(height ? { h: Number(height) } : {}),
     ...(format === "svg" ? { fit: "contain" as const, darkLayer: vector.darkLayer, darkColor: vector.darkColor }
       : { ...(width || height ? { fit } : {}), q: Number(quality) }),
     layer: vector.layer, ...(background !== undefined ? { bg: background } : {}), ...(padding !== undefined ? { pad: padding } : {}),
-  };
+  }, source.mimeType, use?.transformation);
   const settled = useDebouncedValue(JSON.stringify(transformation));
   const transformPreview = useQuery({
     queryKey: ["use-preview", workspace.id, source.id, source.currentVersionId, source.isPublic, source.customDomain, settled],

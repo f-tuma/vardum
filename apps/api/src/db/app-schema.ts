@@ -332,6 +332,7 @@ export type VardTransformation = {
   layer?: string;
   darkLayer?: string;
   darkColor?: string;
+  render?: "v2";
 };
 
 export const vardItem = pgTable(

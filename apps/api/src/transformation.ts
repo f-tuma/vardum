@@ -18,6 +18,7 @@ const fields = {
   layer: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/).describe("Select one geometric SVG group by XML ID, keeping its source canvas and ancestor transforms.").optional(),
   darkLayer: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/).describe("SVG group whose filled shapes receive darkColor in a dark color scheme. Requires SVG output.").optional(),
   darkColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).toLowerCase().optional(),
+  render: z.literal("v2").describe("Opt-in SVG-to-raster background renderer. Requires an SVG source, raster format and bg. Omit to retain the legacy renderer.").optional(),
 };
 const baseSchema = z.object(fields).strict();
 export type Transformation = z.infer<typeof baseSchema>;
@@ -52,6 +53,7 @@ export function canonicalizeTransformation(input: Transformation) {
   if (input.layer) query.set("layer", input.layer);
   if (input.darkLayer) query.set("darkLayer", input.darkLayer);
   if (input.darkColor) query.set("darkColor", input.darkColor.toLowerCase());
+  if (input.render) query.set("render", input.render);
   return query.toString();
 }
 
@@ -132,6 +134,8 @@ function signature(workspaceSlug: string, key: string, canonical: string) {
 }
 
 function transformationIssue(input: Transformation) {
+  if (input.render && (!input.bg || !input.format || input.format === "svg"))
+    return "Render v2 requires a raster output format and background";
   if (input.format === "svg" && input.fit && input.fit !== "contain")
     return 'SVG output supports fit "contain" only';
   if (input.format === "svg" && input.q !== undefined)

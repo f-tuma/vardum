@@ -3,6 +3,7 @@ import sharp from "sharp";
 import { config } from "./config.js";
 import { renderSvg, svgInputByteLimit, svgSourceIssue } from "./svg-render.js";
 import { applyImageTransformation } from "./image-transform.js";
+import { renderSvgRasterBackground } from "./svg-raster-background.js";
 import { CapacityError } from "./resource-budget.js";
 import { withTransformBudget, outputPixels } from "./transform-budget.js";
 import { getObject, putDerivedObject, readBoundedObject } from "./storage.js";
@@ -74,6 +75,7 @@ async function generate(
   outputFormat: Transformation["format"],
   signal: AbortSignal,
 ) {
+  const deadline = Date.now() + config.TRANSFORM_TIMEOUT_SECONDS * 1000;
   const boundedSignal = AbortSignal.any([
     signal,
     AbortSignal.timeout(config.TRANSFORM_TIMEOUT_SECONDS * 1000),
@@ -99,6 +101,14 @@ async function generate(
     animated: true,
     limitInputPixels: 100_000_000,
   }).timeout({ seconds: config.TRANSFORM_TIMEOUT_SECONDS });
+  if (transformation.render === "v2") {
+    const result = await renderSvgRasterBackground(image, transformation, outputFormat, {
+      signal: boundedSignal, deadline, maxOutputPixels: config.TRANSFORM_MAX_OUTPUT_PIXELS,
+    });
+    boundedSignal.throwIfAborted();
+    await putDerivedObject(storageKey, result, mimeType, boundedSignal);
+    return;
+  }
   const metadata = await image.metadata();
   if (
     !metadata.width ||

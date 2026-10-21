@@ -29,4 +29,7 @@ test("SVG uses preserve SVG MIME and suffixes and fail when a source becomes ras
   assert.match(useCompatibilityIssue("web/mark", "image/svg+xml", "image/png", { format: "svg" })!, /SVG source/);
   assert.match(useCompatibilityIssue("web/mark.png", "image/png", "image/png", { format: "png", layer: "neutral-arm" })!, /SVG source/);
   assert.match(useCompatibilityIssue("web/mark.png", "image/svg+xml", "image/svg+xml", { format: "svg" })!, /extension/);
+  const v2 = { format: "png", bg: "#050507", render: "v2" } as const;
+  assert.equal(useCompatibilityIssue("web/mark.png", "image/png", "image/svg+xml", v2), null);
+  assert.match(useCompatibilityIssue("web/mark.png", "image/png", "image/png", v2)!, /requires an SVG source/);
 });

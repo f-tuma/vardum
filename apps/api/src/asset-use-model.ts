@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { outputPixels } from "./output-pixels.js";
 import { assetKey } from "./asset-key.js";
 import { transformationSchema, type Transformation } from "./transformation.js";
+import { svgSourceIssue } from "./svg-render.js";
 
 // Persist an explicit format so later source MIME changes cannot silently change
 // a linked URL's output type. Original uses instead keep their initial MIME.
@@ -37,8 +38,8 @@ export function useCompatibilityIssue(
       return "The current source is not a transformable image";
     if (!transformation.format || outputMimeType !== useOutputMime(sourceMime, transformation))
       return "The saved output format is unavailable";
-    if ((transformation.format === "svg" || transformation.layer || transformation.darkLayer) && sourceMime !== "image/svg+xml")
-      return "SVG output and layer selection require an SVG source";
+    const svgIssue = svgSourceIssue(sourceMime, transformation);
+    if (svgIssue) return svgIssue;
     // Metadata can reject an impossible output without reading source bytes.
     // Stored dimensions may be auto-oriented; reject only if both orientations
     // exceed budget. The renderer validates actual geometry and all frames.

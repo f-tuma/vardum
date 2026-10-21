@@ -19,6 +19,7 @@ import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
 import { OutputSvg, outputMime } from "@/components/output-svg";
+import { withOutputRenderer } from "./output-renderer";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -1400,7 +1401,7 @@ function VardItemDialog({
 
   function changeTransformation(patch: Partial<TransformationInput>) {
     change({
-      transformation: draft.transformation ? { ...draft.transformation, ...patch } : null,
+      transformation: withOutputRenderer(draft.transformation ? { ...draft.transformation, ...patch } : null, preview.mimeType, item.transformation),
     });
   }
 
@@ -1462,12 +1463,12 @@ function VardItemDialog({
                     transformation:
                       format === "original"
                         ? null
-                        : {
+                        : withOutputRenderer({
                             ...draft.transformation,
                             format: format as NonNullable<TransformationInput["format"]>,
                             ...(format === "svg" ? { fit: "contain" as const, q: undefined }
                               : { darkLayer: undefined, darkColor: undefined }),
-                          },
+                          }, preview.mimeType, item.transformation),
                   });
                 }}
               >
