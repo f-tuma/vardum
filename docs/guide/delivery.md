@@ -36,6 +36,7 @@ Add parameters and a signature:
 | `pad` | 0–45%, at most two decimal places per edge; positive values require `w`, `h`, `format`, `fit=contain` |
 | `layer` | Select one geometric SVG group by bounded XML ID |
 | `darkLayer`, `darkColor` | SVG group and six-digit fill color for dark mode, together; needs `format=svg` |
+| `render` | Explicit `v2` for SVG sources with a raster `format` and `bg`; rasterizes before background compositing. Omission retains the legacy renderer. |
 | `sig` | Required |
 
 - Change any value without re-signing and you get `403`.

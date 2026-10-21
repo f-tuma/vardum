@@ -146,7 +146,9 @@ test("item saves retain the full original baseline across refetch and remain ope
 });
 
 test("a solid background is saved on the output while literal pins and other mappings are retained", async (t) => {
-  const { calls } = await render(t);
+  const { calls } = await render(t, { editor: { ...original, items: [
+    { ...original.items[0], versionId: "missing-pin", sourceMimeType: "image/svg+xml" }, original.items[1],
+  ] } });
   await click(fileButton());
   const pane = dialog();
   const format = pane.querySelector("select")!;
@@ -166,9 +168,24 @@ test("a solid background is saved on the output while literal pins and other map
   assert.equal(body.expectedRevision, revision);
   assert.equal(items[0]!.versionId, "missing-pin");
   assert.equal(items[0]!.id, original.items[0]!.id);
-  assert.deepEqual(items[0]!.transformation, { format: "png", bg: "#050507" });
+  assert.deepEqual(items[0]!.transformation, { format: "png", bg: "#050507", render: "v2" });
   assert.deepEqual(items[1]!.transformation, original.items[1]!.transformation);
   assert.equal(items[0]!.writable, false);
+});
+
+test("saving an existing SVG background recipe preserves its legacy renderer omission", async (t) => {
+  const transformation = { format: "png", bg: "#050507", w: 1024, h: 1024, fit: "contain", pad: 12.8 } as const;
+  const { calls } = await render(t, { editor: { ...original, items: [
+    { ...original.items[0], versionId: "missing-pin", sourceMimeType: "image/svg+xml", transformation }, original.items[1],
+  ] } });
+  await click(fileButton());
+  const pane = dialog();
+  await change(field("Width", pane), "180");
+  await change(field("Project path", pane), "edited.png");
+  await submit(button("Save", pane).closest("form")!);
+  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  assert.deepEqual(items[0]!.transformation, { ...transformation, w: 180 });
+  assert.equal(Object.hasOwn(items[0]!.transformation as object, "render"), false);
 });
 
 test("safe area locks contain, blocks incomplete or invalid canvas settings, and saves the full output recipe", async (t) => {

@@ -19,6 +19,7 @@ import { AssetThumb } from "@/components/asset-thumb";
 import { OutputBackground, validOutputBackground } from "@/components/output-background";
 import { OutputSafeArea, validOutputSafeArea } from "@/components/output-safe-area";
 import { OutputSvg } from "@/components/output-svg";
+import { withOutputRenderer } from "./output-renderer";
 import { DeliveryChart } from "@/components/delivery-chart";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton, CopyIconButton } from "@/components/copy-button";
@@ -692,14 +693,14 @@ function TransformationCard({
   const [padding, setPadding] = useState<number | undefined>();
   const [fit, setFit] = useState<TransformationInput["fit"]>("inside");
   const [vector, setVector] = useState<Partial<TransformationInput>>({});
-  const outputTransformation = useMemo(() => background !== undefined || Boolean(padding) || vector.layer || vector.darkLayer || vector.darkColor !== undefined ? {
+  const outputTransformation = useMemo(() => withOutputRenderer(background !== undefined || Boolean(padding) || vector.layer || vector.darkLayer || vector.darkColor !== undefined ? {
     ...transformation,
     format: isOutputFormat(format) ? format : "png" as const,
     bg: background,
     pad: padding,
     layer: vector.layer,
     ...(format === "svg" ? { fit: "contain" as const, q: undefined, darkLayer: vector.darkLayer, darkColor: vector.darkColor } : {}),
-  } : transformation, [background, padding, format, transformation, vector]);
+  } : transformation, sourceMimeType), [background, padding, format, transformation, vector, sourceMimeType]);
   const [settledTransformation, setSettledTransformation] =
     useState<TransformationInput | null>(null);
 

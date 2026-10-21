@@ -81,10 +81,42 @@ sandboxed original-delivery path.
 
 ## Identity and retained output
 
+For a new SVG-to-raster recipe with an opaque background, explicitly select
+`render: "v2"`:
+
+```json
+{ "format": "png", "w": 1024, "h": 1024, "fit": "contain", "pad": 12.8, "bg": "#050507", "render": "v2" }
+```
+
+This rasterizes the vector at the requested size with transparent padding, then
+composites the background and encodes in a separate stage. A lossless raw canvas
+keeps alpha and geometry between stages. It avoids enlarging a native-size SVG
+raster after flattening, which can blur edges and expand visible artwork bounds.
+Whole-source bounds and existing transparent margins are retained. All raster
+formats and resize fits remain available; the existing positive-padding rules
+still apply. `render: "v2"` requires an SVG source, explicit raster format and
+`bg`; it is rejected for SVG output, raster sources and animated raster content.
+Regular SVG rasterization retains its current source support. Only recipes with
+`layer` use the passive geometric subset described above.
+
+The field has no schema default. Its explicit presence is signed and changes
+the derivative key and Vard fingerprint. Omitting it retains the exact legacy
+canonical string, cache key and renderer, including for existing background
+recipes. Opening or saving an existing recipe does not upgrade it. The dashboard
+automatically includes v2 for newly authored SVG background recipes in transform
+previews, linked uses and Vard outputs; it has no separate renderer control.
+Upgrade a saved recipe deliberately through the API/MCP by adding the field.
+Captured legacy URLs and frozen locks continue selecting the legacy recipe.
+
+Both stages share the transformation deadline and admission slot; the complete
+raw canvas is bounded by the existing output pixel limit. Source read and input
+pixel limits still apply. Deploy the API to every serving instance before
+authoring v2 recipes, since older strict schemas reject `render`.
+
 `layer`, `darkLayer`, `darkColor`, SVG format and positive decimal padding all
 participate in canonical signing, derivative cache identity and Vard fingerprints.
 SVG canonical queries omit quality. Existing raster canonical queries and zero
-padding retain their exact previous identity and pipeline.
+padding retain their exact previous identity and pipeline when `render` is omitted.
 
 Captured URLs and frozen locks retain their selected parameters. The existing
 [derived-output preservation contract](adr/0001-derived-output-preservation.md)

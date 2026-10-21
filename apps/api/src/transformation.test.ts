@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import {
   canonicalizeTransformation,
   signTransformation,
@@ -9,6 +10,32 @@ import {
   transformedVersionUrl,
   verifyTransformation,
 } from "./transformation.js";
+
+test("render v2 is explicit, signed and isolated from unchanged legacy identities", () => {
+  const legacy = { w: 1024, h: 1024, fit: "contain", format: "png", bg: "#050507", pad: 12.8 } as const;
+  assert.deepEqual(transformationSchema.parse(legacy), legacy);
+  assert.equal(Object.hasOwn(transformationSchema.parse(legacy), "render"), false);
+  const canonical = "w=1024&h=1024&fit=contain&format=png&q=80&bg=%23050507&pad=12.8";
+  assert.equal(canonicalizeTransformation(legacy), canonical);
+  const spec = transformationSchema.parse({ ...legacy, render: "v2" });
+  assert.equal(canonicalizeTransformation(spec), `${canonical}&render=v2`);
+  const cacheHash = (input: typeof spec) => createHash("sha256").update(`v1:${canonicalizeTransformation(input)}`).digest("hex");
+  assert.notEqual(cacheHash(spec), cacheHash(legacy));
+  const url = new URL(transformedVersionUrl("workspace", "master", "version", spec), "https://example.test");
+  const parsed = transformationQuerySchema.parse(Object.fromEntries(url.searchParams));
+  assert.equal(parsed.render, "v2");
+  assert.equal(verifyTransformation("workspace", "master", parsed, parsed.sig), true);
+  assert.equal(verifyTransformation("workspace", "master", legacy, parsed.sig), false);
+  assert.equal(verifyTransformation("workspace", "master", spec, signTransformation("workspace", "master", legacy)), false);
+  for (const input of [
+    { ...legacy, render: "v1" }, { ...legacy, render: null }, { ...legacy, render: true },
+    { ...legacy, render: "" }, { ...legacy, render: "v2", format: "svg" },
+    { ...legacy, render: "v2", bg: undefined }, { ...legacy, render: "v2", format: undefined },
+  ]) {
+    assert.equal(transformationSchema.safeParse(input).success, false, JSON.stringify(input));
+    assert.equal(transformationQuerySchema.safeParse({ ...input, sig: "fixture" }).success, false, JSON.stringify(input));
+  }
+});
 
 test("transformations are canonical and signatures reject tampering", () => {
   const transformation = transformationSchema.parse({

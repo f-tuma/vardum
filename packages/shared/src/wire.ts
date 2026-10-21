@@ -20,6 +20,8 @@ export type Transformation = {
  darkLayer?: string;
  /** Lowercase #rrggbb, paired with darkLayer; requires format: "svg". */
  darkColor?: string;
+ /** Opt-in SVG-to-raster background renderer; omission retains legacy rendering. */
+ render?: "v2";
 };
 
 export type VardItem = {
