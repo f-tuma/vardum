@@ -5,7 +5,7 @@ import type { Transformation } from "./transformation.js";
 export function applyImageTransformation(
   image: Sharp,
   transformation: Transformation,
-  outputFormat: Transformation["format"],
+  outputFormat: Exclude<Transformation["format"], "svg">,
 ) {
   if (transformation.bg) {
     // Flatten uses the working color space. Convert before compositing so

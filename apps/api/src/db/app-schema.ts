@@ -191,6 +191,7 @@ export const asset = pgTable(
     key: text("key").notNull(),
     displayName: text("display_name").notNull(),
     isPublic: boolean("is_public").default(false).notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     currentVersionId: uuid("current_version_id").references(
       (): AnyPgColumn => assetVersion.id,
       { onDelete: "set null" },
@@ -324,10 +325,13 @@ export type VardTransformation = {
   w?: number;
   h?: number;
   fit?: "cover" | "contain" | "fill" | "inside" | "outside";
-  format?: "avif" | "jpeg" | "png" | "webp";
+  format?: "avif" | "jpeg" | "png" | "webp" | "svg";
   q?: number;
   bg?: string;
   pad?: number;
+  layer?: string;
+  darkLayer?: string;
+  darkColor?: string;
 };
 
 export const vardItem = pgTable(

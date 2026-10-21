@@ -127,6 +127,13 @@
       "when": 1792162853587,
       "tag": "0017_asset_uses",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792572592076,
+      "tag": "0018_asset_archive",
+      "breakpoints": true
     }
   ]
 }

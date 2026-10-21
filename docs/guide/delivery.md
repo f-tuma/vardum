@@ -29,9 +29,13 @@ Add parameters and a signature:
 | Parameter | Values |
 | --- | --- |
 | `w`, `h` | 1–4096 px |
-| `fit` | `cover` `contain` `fill` `inside` `outside` (default `inside`) |
-| `format` | `avif` `jpeg` `png` `webp` (SVG defaults to `png`) |
-| `q` | 1–100, default 80, needs `format` |
+| `fit` | `cover` `contain` `fill` `inside` `outside` (default `inside`, SVG output: `contain` only) |
+| `format` | `avif` `jpeg` `png` `webp` `svg` (SVG source defaults to `png` when format is omitted) |
+| `q` | 1–100, default 80, needs a raster `format` |
+| `bg` | Opaque six-digit hex color; needs `format` |
+| `pad` | 0–45%, at most two decimal places per edge; positive values require `w`, `h`, `format`, `fit=contain` |
+| `layer` | Select one geometric SVG group by bounded XML ID |
+| `darkLayer`, `darkColor` | SVG group and six-digit fill color for dark mode, together; needs `format=svg` |
 | `sig` | Required |
 
 - Change any value without re-signing and you get `403`.
@@ -45,6 +49,10 @@ Add parameters and a signature:
   [preservation contract](../adr/0001-derived-output-preservation.md).
 - Rotating `TRANSFORM_SECRET` breaks every signed URL, including locked ones.
 - Video has no variants.
+- SVG output and group selection require an SVG source. Unsupported source markup
+  or missing groups return `422`; [bounded SVG derivatives](../svg-derivatives.md)
+  describes the supported dialect. A URL without a transformation delivers the
+  original SVG bytes and behavior unchanged.
 
 ## Private files
 

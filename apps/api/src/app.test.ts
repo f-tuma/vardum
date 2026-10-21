@@ -292,14 +292,19 @@ test("the OpenAPI document is generated from the route schemas", async () => {
     "path parameters must come from the Zod schema",
   );
   assert.equal(document.paths["/api/openapi.json"], undefined);
-  const pad = document.paths["/api/workspaces/{workspaceId}/assets/{assetId}/transform-url"]
-    .post.requestBody.content["application/json"].schema.properties.pad;
-  assert.match(pad.description, /Positive padding requires explicit w, h, raster format and fit "contain"/);
-  assert.deepEqual(pad.anyOf.find((branch: { type: string }) => branch.type === "integer"),
-    { type: "integer", minimum: 0, maximum: 45 });
+  const transform = document.paths["/api/workspaces/{workspaceId}/assets/{assetId}/transform-url"]
+    .post.requestBody.content["application/json"].schema.properties;
+  assert.ok(transform.format.enum.includes("svg"));
+  assert.match(transform.layer.pattern, /A-Za-z/);
+  assert.equal(transform.darkLayer.type, "string");
+  assert.equal(transform.darkColor.type, "string");
+  const pad = transform.pad;
+  assert.match(pad.description, /Positive padding requires explicit w, h, format and fit "contain"/);
+  assert.deepEqual(pad.anyOf.find((branch: { type: string }) => branch.type === "number"),
+    { type: "number", minimum: 0, maximum: 45 });
   const padPattern = new RegExp(pad.anyOf.find((branch: { type: string }) => branch.type === "string").pattern);
-  for (const value of ["0", "15", "045"]) assert.equal(padPattern.test(value), true);
-  for (const value of ["-1", "46", "046", "1.5", ""]) assert.equal(padPattern.test(value), false);
+  for (const value of ["0", "15", "045", "12.80", "26.57"]) assert.equal(padPattern.test(value), true);
+  for (const value of ["-1", "46", "046", "1.501", ""]) assert.equal(padPattern.test(value), false);
 
   await app.close();
 });

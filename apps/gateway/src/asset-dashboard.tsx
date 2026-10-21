@@ -2,6 +2,7 @@ import { mediaStem, uploadAccept } from "@vardum/shared";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  ArchiveIcon,
   CloudDownloadIcon,
   CopyIcon,
   EllipsisIcon,
@@ -119,11 +120,70 @@ export function AssetDashboard({
   prefix: string;
   fromPrefix?: string;
 }) {
+  const [archiveOpen, setArchiveOpen] = useState(false);
   if (assetId)
     return (
       <AssetDetail workspace={workspace} assetId={assetId} fromPrefix={fromPrefix} fromSearch={search} />
     );
-  return <AssetBrowser workspace={workspace} search={search} prefix={prefix} />;
+  return archiveOpen
+    ? <AssetArchive workspace={workspace} onClose={() => setArchiveOpen(false)} />
+    : <AssetBrowser workspace={workspace} search={search} prefix={prefix} onArchive={() => setArchiveOpen(true)} />;
+}
+
+function AssetArchive({ workspace, onClose }: { workspace: WorkspaceRef; onClose: () => void }) {
+  const [search, setSearch] = useState("");
+  const needle = useDebouncedValue(search.trim());
+  const listing = useInfiniteQuery(assetBrowserQueryOptions(workspace.id, "", needle, 50, true));
+  const { assets } = flattenAssetPages(listing.data?.pages);
+  const readOnlyWorkspace = { ...workspace, canEdit: false };
+  return (
+    <>
+      <AppHeader crumbs={[
+        workspaceCrumb(workspace),
+        { label: "Assets", link: <Link to="/workspaces/$workspaceId/assets" params={{ workspaceId: workspace.id }} search={{ prefix: "" }} onClick={onClose} /> },
+        { label: "Archive" },
+      ]} />
+      <Page id="main">
+        <PageHeader
+          title="Archive"
+          description="Archived sources retain their URLs and versions. Open a source to inspect it or unarchive it."
+          actions={<Button variant="outline" onClick={onClose}>Back to assets</Button>}
+        />
+        <Input type="search" aria-label="Search archived sources" placeholder="Search archived sources" value={search} onChange={(event) => setSearch(event.target.value)} />
+        {listing.isPending ? (
+          <PageSkeleton />
+        ) : listing.isError && !listing.data ? (
+          <Alert variant="destructive">
+            <AlertTitle>Archive could not load</AlertTitle>
+            <AlertDescription>{listing.error.message}</AlertDescription>
+          </Alert>
+        ) : assets.length ? (
+          <ul aria-label="Archived sources" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {assets.map((asset) => <AssetTile key={asset.id} asset={asset} workspace={readOnlyWorkspace} prefix="" search="" />)}
+          </ul>
+        ) : (
+          <Empty variant="outline">
+            <EmptyHeader>
+              <EmptyTitle>No archived sources</EmptyTitle>
+              <EmptyDescription>{search ? "No archived sources match this search." : "Archive a source from its detail page."}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+        {listing.data && (
+          <AssetPageControls
+            loaded={assets.length}
+            hasMore={listing.hasNextPage}
+            fetching={listing.isFetching}
+            loadingMore={listing.isFetchingNextPage}
+            error={listing.isError ? listing.error.message : undefined}
+            nextPageError={listing.isFetchNextPageError}
+            onMore={() => { void listing.fetchNextPage({ cancelRefetch: false }); }}
+            onRetry={() => { void listing.refetch(); }}
+          />
+        )}
+      </Page>
+    </>
+  );
 }
 
 /** Crumbs for a folder path: each segment opens that folder. */
@@ -180,10 +240,12 @@ function AssetBrowser({
   workspace,
   search,
   prefix,
+  onArchive,
 }: {
   workspace: WorkspaceRef;
   search: string;
   prefix: string;
+  onArchive: () => void;
 }) {
   const navigate = useNavigate();
   const uploader = useUploader(workspace.id);
@@ -280,8 +342,9 @@ function AssetBrowser({
                   : `${loaded} ${loaded === 1 ? "item" : "items"}${assets.hasNextPage ? " loaded" : ""}`
             }
             actions={
-              workspace.canEdit && (
-                <>
+              <>
+                <Button variant="outline" onClick={onArchive}><ArchiveIcon data-icon="inline-start" />Archive</Button>
+                {workspace.canEdit && <>
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       render={<Button variant="outline" size="icon" aria-label="More actions" />}
@@ -304,8 +367,8 @@ function AssetBrowser({
                     <UploadIcon data-icon="inline-start" />
                     Upload
                   </Button>
-                </>
-              )
+                </>}
+              </>
             }
           />
 

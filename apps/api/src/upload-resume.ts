@@ -36,6 +36,7 @@ export async function admitUploadIntent(
   await lockWorkspaceContent(tx, workspaceId);
   const [target] = await tx.select().from(asset).where(eq(asset.id, assetId)).for("update");
   if (!target) return null;
+  if (target.archivedAt) throw new UploadIntentConflict("Asset is archived; unarchive it before making changes");
 
   if (intent.id) {
     const [replay] = await tx.select().from(assetVersion).where(eq(assetVersion.id, intent.id));

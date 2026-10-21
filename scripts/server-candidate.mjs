@@ -22,7 +22,7 @@ const migrationTags = [
   "0004_slimy_stellaris", "0005_greedy_magdalene", "0006_robust_fallen_one", "0007_optimal_annihilus",
   "0008_marvelous_centennial", "0009_asset_visibility", "0010_vard_folder_rules", "0011_asset_ingest_recovery",
   "0012_worker_heartbeat", "0013_upload_cleanup", "0014_upload_cleanup_fairness", "0015_upload_request_checksum",
-  "0016_known_usage_inventory", "0017_asset_uses",
+  "0016_known_usage_inventory", "0017_asset_uses", "0018_asset_archive",
 ];
 const sourcePackagePaths = ["apps/cli", "apps/mcp", "packages/shared"];
 const sources = { postgres: "postgres:17-alpine", rustfs: "rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c", "rustfs-init": "amazon/aws-cli:2.36.47" };
@@ -466,7 +466,7 @@ export async function prepareCandidate(directory, { execute = run, allowDirty = 
 
 export function validateMigrationJournal(journal) {
   assert.ok(objectValue(journal) && Array.isArray(journal.entries), "Invalid migration journal");
-  assert.equal(journal.entries.length, migrationTags.length, "Candidate requires migrations through 0017");
+  assert.equal(journal.entries.length, migrationTags.length, "Candidate requires migrations through 0018");
   let previous = 0;
   for (const [index, entry] of journal.entries.entries()) {
     assert.equal(entry.idx, index, "Invalid migration index/order");

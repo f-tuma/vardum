@@ -684,7 +684,7 @@ server.tool(
               .record(z.unknown())
               .nullable()
               .describe(
-                "Optional transformation parameters (w, h, fit, format, q, bg, pad) or null. bg is an opaque #rrggbb background and requires an explicit raster format. pad is an integer 0–45 percent inset per edge of the shorter final side; positive pad requires w, h, an explicit raster format and fit contain. Omit bg for transparent padding.",
+                "Optional transformation parameters (w, h, fit, format, q, bg, pad, layer, darkLayer, darkColor) or null. bg is an opaque #rrggbb background and requires an explicit output format. pad is a 0–45 percent inset per edge, with at most two decimals; positive pad requires w, h, a format and fit contain. SVG output requires a passive geometric SVG source, contain fit and no q. layer selects a named SVG group while preserving its canvas. darkLayer plus darkColor adapts one SVG group to dark mode. Omit bg for transparent padding.",
               ),
           })
           .strict(),

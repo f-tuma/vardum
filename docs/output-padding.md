@@ -1,15 +1,19 @@
 # Output padding
 
 An optional `transformation.pad` adds centered space around an image without
-changing the final output dimensions. It is an integer from 0 to 45: the percent
+changing the final output dimensions. It is a number from 0 to 45 with at most two decimal places: the percent
 of the shorter final side reserved on **each** edge. For positive padding,
-provide both `w` and `h`, an explicit raster `format`, and `fit: "contain"`.
+provide both `w` and `h`, an explicit `format`, and `fit: "contain"`.
 
 For example, a transparent logo can produce an opaque 1024×1024 app icon:
 
 ```json
 { "w": 1024, "h": 1024, "fit": "contain", "format": "png", "bg": "#050507", "pad": 16 }
 ```
+
+Values such as `12.80`, `26.57` and `16.70` reserve exactly 131, 272 and
+171 pixels per edge on a 1024×1024 canvas. Trailing zeroes normalize in signed
+queries (`12.80` becomes `12.8`); existing integer recipes keep their identity.
 
 This reserves `floor(1024 × 16 / 100) = 163` pixels on every edge, then fits the
 complete source into a centered 698×698 inner box while preserving its aspect
@@ -24,9 +28,10 @@ pixels round down. Tiny outputs may have a zero-pixel inset; the inner box alway
 remains at least one pixel wide and high. No source is cropped or stretched.
 
 With `bg`, transparent pixels and padding use that opaque color. Omit `bg` for
-transparent padding in PNG, WebP or AVIF. JPEG cannot preserve transparency; choose
+transparent padding in PNG, WebP, AVIF or SVG. JPEG cannot preserve transparency; choose
 an explicit background for predictable opaque icons. Animated output retains
-per-frame geometry and timing for formats that support animation.
+per-frame geometry and timing for formats that support animation. SVG output
+keeps vector geometry; see [bounded SVG derivatives](svg-derivatives.md).
 
 Padding is available on linked library uses, Vard manual outputs and source
 transform previews. It changes only the output recipe; the source bytes and

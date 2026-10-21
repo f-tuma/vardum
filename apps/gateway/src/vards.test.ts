@@ -188,7 +188,7 @@ test("safe area locks contain, blocks incomplete or invalid canvas settings, and
   assert.equal(fit.disabled, true);
   await change(field("Safe area (%)", pane), "46");
   assert.equal(button("Save", pane).disabled, true);
-  assert.match(pane.textContent!, /whole percentage from 0 to 45/);
+  assert.match(pane.textContent!, /at most two decimal places/);
   assert.equal(mutations(calls).length, 0);
   await change(field("Safe area (%)", pane), "20");
   assert.equal(button("Save", pane).disabled, false);
@@ -211,6 +211,27 @@ test("a transformed pin without a current source keeps an explicitly labelled se
   assert.equal(image.getAttribute("src"), "/w/workspace/__v/retained-pin/logo.svg");
   assert.match(pane.textContent!, /Output preview unavailable; showing the selected source version/);
   assert.equal(calls.some(({ path }) => path.endsWith("/transform-url")), false);
+});
+
+test("native-size SVG saves selected and adaptive layers without a raster quality parameter", async (t) => {
+  const { calls } = await render(t, { editor: { ...original, items: [
+    { ...original.items[0], versionId: "missing-pin", sourceMimeType: "image/svg+xml" }, original.items[1],
+  ] } });
+  await click(fileButton());
+  const pane = dialog();
+  const format = pane.querySelector("select")!;
+  await act(async () => { format.value = "svg"; format.dispatchEvent(new Event("change", { bubbles: true })); });
+  await settle();
+  assert.equal(field("Quality", pane).disabled, true);
+  await click(button("SVG layers and theme", pane));
+  await change(field("Layer ID", pane), "neutral-arm");
+  const adaptiveLabel = [...pane.querySelectorAll("label")].find((label) => label.textContent === "Adapt a layer in dark mode")!;
+  await click(document.getElementById(adaptiveLabel.htmlFor)!);
+  await change(field("Dark-mode color", pane), "#e8e4d9");
+  await submit(button("Save", pane).closest("form")!);
+  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  assert.deepEqual(items[0]!.transformation, { format: "svg", fit: "contain", layer: "neutral-arm", darkLayer: "neutral-arm", darkColor: "#e8e4d9" });
+  assert.deepEqual(items[1]!.transformation, original.items[1]!.transformation);
 });
 
 test("typed stale item conflict preserves the draft, does not retry, and deliberate reload fetches fresh editor and preview", async (t) => {

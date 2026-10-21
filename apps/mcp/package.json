@@ -24,7 +24,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@vardum/shared": "workspace:^",
     "zod": "^3.24.0"
   },

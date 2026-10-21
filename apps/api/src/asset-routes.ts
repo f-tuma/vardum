@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { supportedMimeTypes, videoMimeSet } from "@vardum/shared";
-import { and, asc, count, desc, eq, isNotNull, lt, max, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNotNull, isNull, lt, max, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { fromDrizzle } from "pg-boss";
@@ -733,6 +733,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             limit: z.coerce.number().int().min(1).max(100).default(50),
             prefix: assetPrefix,
             search: z.string().trim().max(255).optional(),
+            archived: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
             ...assetPaginationQuery,
           })
           .refine((query) => !query.cursor || query.pagination === "cursor", {
@@ -758,6 +759,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           prefix: request.query.prefix,
           search: normalizedAssetSearch(request.query.search),
           limit: request.query.limit,
+          archived: request.query.archived,
         };
         const position = decodeAssetCursor(
           request.query.cursor,
@@ -788,6 +790,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
                   key: item.key!,
                   displayName: item.displayName!,
                   isPublic: item.isPublic!,
+                  archivedAt: item.archivedAt ? new Date(item.archivedAt) : null,
                   currentVersionId: item.currentVersionId,
                   mimeType: item.mimeType,
                   size: item.size,
@@ -848,6 +851,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
             key: asset.key,
             displayName: asset.displayName,
             isPublic: asset.isPublic,
+            archivedAt: asset.archivedAt,
             currentVersionId: asset.currentVersionId,
             hasUnfinishedUploads: sql<boolean>`exists (
               select 1 from ${assetVersion} unfinished
@@ -867,14 +871,15 @@ export function registerAssetRoutes(app: FastifyInstance) {
             and(
               eq(asset.workspaceId, workspaceId),
               startsWithPrefix,
+              request.query.archived ? isNotNull(asset.archivedAt) : isNull(asset.archivedAt),
               needle
                 ? sql`(${asset.key} ilike ${needle} escape '\\' or ${asset.displayName} ilike ${needle} escape '\\')`
-                : sql`position('/' in ${remainder}) = 0`,
+                : request.query.archived ? undefined : sql`position('/' in ${remainder}) = 0`,
             ),
           )
           .orderBy(asc(asset.key))
           .limit(request.query.limit);
-        const assetFolders = needle
+        const assetFolders = needle || request.query.archived
           ? []
           : await transaction
               .selectDistinct({ name: folderName })
@@ -883,11 +888,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
                 and(
                   eq(asset.workspaceId, workspaceId),
                   startsWithPrefix,
+                  isNull(asset.archivedAt),
                   sql`position('/' in ${remainder}) > 0`,
                 ),
               )
               .limit(100);
-        const explicitFolders = needle
+        const explicitFolders = needle || request.query.archived
           ? []
           : await transaction
               .selectDistinct({ name: explicitFolderName })
@@ -975,8 +981,15 @@ export function registerAssetRoutes(app: FastifyInstance) {
             key: asset.key,
             displayName: asset.displayName,
             isPublic: asset.isPublic,
+            archivedAt: asset.archivedAt,
             currentVersionId: asset.currentVersionId,
             mimeType: assetVersion.mimeType,
+            hasUnfinishedUploads: sql<boolean>`exists (
+              select 1 from ${assetVersion} unfinished
+              where unfinished.asset_id = ${asset.id} and unfinished.workspace_id = ${workspaceId}
+                and (unfinished.status in ('pending', 'processing') or
+                  (unfinished.status = 'failed' and unfinished.retryable))
+            )`,
             size: assetVersion.size,
             width: assetVersion.width,
             height: assetVersion.height,
@@ -1038,11 +1051,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const result = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
-          .select({ displayName: asset.displayName })
+          .select({ displayName: asset.displayName, archivedAt: asset.archivedAt })
           .from(asset)
           .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
           .for("update");
         if (!target) return null;
+        if (target.archivedAt) return { archived: true as const };
         if (request.body.expectedDisplayName !== undefined &&
             target.displayName !== request.body.expectedDisplayName &&
             target.displayName !== request.body.displayName)
@@ -1067,7 +1081,62 @@ export function registerAssetRoutes(app: FastifyInstance) {
       });
       if (result && "conflict" in result)
         return reply.code(409).send({ error: "Asset name changed; reload and try again" });
+      if (result && "archived" in result)
+        return reply.code(409).send({ error: "Asset is archived; unarchive it before making changes" });
       return result ?? reply.code(404).send({ error: "Asset not found" });
+    },
+  );
+
+  api.patch(
+    "/api/workspaces/:workspaceId/assets/:assetId/archive",
+    {
+      schema: {
+        params: assetParams,
+        body: z.object({
+          archived: z.boolean(),
+          expectedCurrentVersionId: z.uuid().nullable(),
+          expectedArchivedAt: z.iso.datetime().nullable(),
+        }).strict(),
+      },
+    },
+    async (request, reply) => {
+      reply.header("cache-control", "private, no-store");
+      const { workspaceId, assetId } = request.params;
+      const authorization = await authorizeAsset(request, workspaceId, ["read", "update"]);
+      if (!("principal" in authorization))
+        return reply.code(authorization.statusCode).send({ error: authorization.error });
+      const result = await inWorkspace(workspaceId, async (transaction) => {
+        await lockWorkspaceContent(transaction, workspaceId);
+        const [target] = await transaction.select().from(asset)
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId))).for("update");
+        if (!target) return { missing: true as const };
+        if (target.currentVersionId !== request.body.expectedCurrentVersionId ||
+            (target.archivedAt?.toISOString() ?? null) !== request.body.expectedArchivedAt)
+          return { conflict: "Asset changed; reload before changing its archive state" };
+        if (Boolean(target.archivedAt) === request.body.archived)
+          return { id: assetId, archivedAt: target.archivedAt };
+        if (request.body.archived) {
+          // All admission, completion and retry paths share the content lock.
+          // Refuse unfinished work so a queued worker cannot promote bytes later.
+          const [unfinished] = await transaction.select({ id: assetVersion.id }).from(assetVersion)
+            .where(and(eq(assetVersion.assetId, assetId), sql`(${assetVersion.status} in ('pending', 'processing') or (${assetVersion.status} = 'failed' and ${assetVersion.retryable}))`)).limit(1);
+          if (unfinished) return { conflict: "Finish unfinished uploads before archiving this asset" };
+        }
+        const archivedAt = request.body.archived ? new Date() : null;
+        await transaction.update(asset).set({ archivedAt, updatedBy: authorization.principal.reference })
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)));
+        await transaction.insert(auditEvent).values({
+          workspaceId, actorType: authorization.principal.actorType, actorId: authorization.principal.actorId,
+          action: archivedAt ? "asset.archived" : "asset.unarchived", targetType: "asset", targetId: assetId,
+          metadata: { key: target.key, displayName: target.displayName, currentVersionId: target.currentVersionId,
+            previousArchivedAt: target.archivedAt?.toISOString() ?? null, archivedAt: archivedAt?.toISOString() ?? null },
+          requestId: request.id,
+        });
+        return { id: assetId, archivedAt };
+      });
+      if ("missing" in result) return reply.code(404).send({ error: "Asset not found" });
+      if ("conflict" in result) return reply.code(409).send({ error: result.conflict });
+      return result;
     },
   );
 
@@ -1092,11 +1161,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const result = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
-          .select({ isPublic: asset.isPublic })
+          .select({ isPublic: asset.isPublic, archivedAt: asset.archivedAt })
           .from(asset)
           .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
           .for("update");
         if (!target) return null;
+        if (target.archivedAt) return { archived: true as const };
         if (target.isPublic !== request.body.isPublic) {
           await transaction
             .update(asset)
@@ -1123,6 +1193,8 @@ export function registerAssetRoutes(app: FastifyInstance) {
         }
         return { isPublic: request.body.isPublic };
       });
+      if (result && "archived" in result)
+        return reply.code(409).send({ error: "Asset is archived; unarchive it before making changes" });
       return result ?? reply.code(404).send({ error: "Asset not found" });
     },
   );
@@ -1144,11 +1216,12 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const deleted = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceContent(transaction, workspaceId);
         const [target] = await transaction
-          .select({ key: asset.key, displayName: asset.displayName })
+          .select({ key: asset.key, displayName: asset.displayName, archivedAt: asset.archivedAt })
           .from(asset)
           .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
           .for("update");
         if (!target) return null;
+        if (target.archivedAt) return { archived: true as const };
         const [linked] = await transaction.select({ count: count() }).from(assetUse).where(and(
           eq(assetUse.workspaceId, workspaceId), eq(assetUse.sourceAssetId, assetId),
         ));
@@ -1191,6 +1264,8 @@ export function registerAssetRoutes(app: FastifyInstance) {
 
       if (deleted && "sourceInUse" in deleted)
         return reply.code(409).send({ code: "source_in_use", error: `Remove the ${deleted.count} linked uses before deleting this source`, useCount: deleted.count });
+      if (deleted && "archived" in deleted)
+        return reply.code(409).send({ error: "Asset is archived; unarchive it before making changes" });
       return deleted
         ? reply.code(204).send()
         : reply.code(404).send({ error: "Asset not found" });
@@ -1227,9 +1302,10 @@ export function registerAssetRoutes(app: FastifyInstance) {
           await lockWorkspaceContent(transaction, workspaceId);
           if (request.body.id) {
             const [existing] = await transaction.select({
-              id: asset.id, key: asset.key, displayName: asset.displayName, isPublic: asset.isPublic,
+              id: asset.id, key: asset.key, displayName: asset.displayName, isPublic: asset.isPublic, archivedAt: asset.archivedAt,
             }).from(asset).where(eq(asset.id, request.body.id));
             if (existing) {
+              if (existing.archivedAt) throw new UploadIntentConflict("Asset is archived; unarchive it before making changes");
               if (existing.key !== request.body.key)
                 throw new UploadIntentConflict("Asset request ID belongs to a different key");
               return { ...existing, replayed: true };
@@ -1412,11 +1488,13 @@ export function registerAssetRoutes(app: FastifyInstance) {
             key: asset.key,
             displayName: asset.displayName,
             currentVersionId: asset.currentVersionId,
+            archivedAt: asset.archivedAt,
           })
           .from(asset)
           .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)))
           .for("update");
         if (!target) return { error: "Asset not found" as const };
+        if (target.archivedAt) return { conflict: "Asset is archived; unarchive it before making changes" as const };
 
         const [version] = await transaction
           .select({
@@ -1551,6 +1629,10 @@ export function registerAssetRoutes(app: FastifyInstance) {
       const result = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceBudget(transaction, workspaceId);
         await lockWorkspaceContent(transaction, workspaceId);
+        const [target] = await transaction.select({ archivedAt: asset.archivedAt }).from(asset)
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId))).for("update");
+        if (!target) return { code: 404, error: "Asset not found" };
+        if (target.archivedAt) return { code: 409, error: "Asset is archived; unarchive it before making changes" };
         const [version] = await transaction
           .select()
           .from(assetVersion)
@@ -1616,6 +1698,9 @@ export function registerAssetRoutes(app: FastifyInstance) {
       }
 
       const pending = await inWorkspace(workspaceId, async (transaction) => {
+        const [target] = await transaction.select({ archivedAt: asset.archivedAt }).from(asset)
+          .where(and(eq(asset.workspaceId, workspaceId), eq(asset.id, assetId)));
+        if (target?.archivedAt) return "archived" as const;
         const [row] = await transaction
           .select()
           .from(assetVersion)
@@ -1628,6 +1713,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
           );
         return row ?? null;
       });
+      if (pending === "archived") return reply.code(409).send({ error: "Asset is archived; unarchive it before making changes" });
       if (!pending) return reply.code(404).send({ error: "Version not found" });
       if (pending.status === "ready" || pending.status === "processing") {
         return reply.code(pending.status === "ready" ? 200 : 202).send({
@@ -1675,12 +1761,14 @@ export function registerAssetRoutes(app: FastifyInstance) {
             filename: assetVersion.filename,
             key: asset.key,
             displayName: asset.displayName,
+            archivedAt: asset.archivedAt,
           })
           .from(assetVersion)
           .innerJoin(asset, eq(asset.id, assetVersion.assetId))
           .where(eq(assetVersion.id, versionId))
           .for("update");
         if (!current) return null;
+        if (current.archivedAt) return "archived" as const;
         if (current.status !== "pending") return current.status;
         if (uploadDeadline(current.createdAt).getTime() < Date.now()) {
           await expirePending(transaction, versionId);
@@ -1713,6 +1801,7 @@ export function registerAssetRoutes(app: FastifyInstance) {
       });
 
       if (!status) return reply.code(404).send({ error: "Version not found" });
+      if (status === "archived") return reply.code(409).send({ error: "Asset is archived; unarchive it before making changes" });
       if (status === "failed") {
         return reply.code(409).send({ error: "Version processing failed" });
       }

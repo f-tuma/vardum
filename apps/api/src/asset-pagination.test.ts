@@ -51,6 +51,15 @@ test("asset cursor preserves folder and asset tuples and is reusable in its scop
   );
 });
 
+test("archive and active library cursors cannot cross their discovery scopes", () => {
+  const archived = { ...scope, archived: true };
+  const normalCursor = encodeAssetCursor(scope, item, secret);
+  const archiveCursor = encodeAssetCursor(archived, item, secret);
+  assert.equal(decodeAssetCursor(normalCursor, archived, secret), "invalid");
+  assert.equal(decodeAssetCursor(archiveCursor, scope, secret), "invalid");
+  assert.deepEqual(decodeAssetCursor(archiveCursor, archived, secret), item);
+});
+
 test("asset cursor rejects altered signatures, malformed input, and other scopes", () => {
   const cursor = encodeAssetCursor(scope, item, secret);
   for (const invalid of [

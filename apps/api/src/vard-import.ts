@@ -121,7 +121,7 @@ export function registerVardImportRoutes(app: FastifyInstance) {
         const context = await importContext(tx, workspaceId, vardId);
         if (!context) return null;
         const rows = await tx.select({
-          id: asset.id, key: asset.key, currentVersionId: asset.currentVersionId,
+          id: asset.id, key: asset.key, currentVersionId: asset.currentVersionId, archivedAt: asset.archivedAt,
           versionId: assetVersion.id, status: assetVersion.status, checksum: assetVersion.checksum,
           mimeType: assetVersion.mimeType, size: assetVersion.size,
           unfinished: sql<boolean>`exists (select 1 from ${assetVersion} av where av.asset_id = ${asset.id}
@@ -144,6 +144,8 @@ export function registerVardImportRoutes(app: FastifyInstance) {
           const ready = existing?.status === "ready";
           const skip = ready && !existing.unfinished && existing.checksum === file.checksum &&
             existing.mimeType === file.mimeType && existing.size === file.size;
+          if (existing?.archivedAt && !skip)
+            throw new VardResolutionError("Asset is archived; unarchive it before importing changes");
           return { ...file, versionId: ready ? existing.versionId : null,
             libraryAction: existing ? (skip ? "skip" as const : "update" as const) : "new" as const,
             ...mappings[index]! };

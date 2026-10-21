@@ -21,7 +21,7 @@ export const createUseSchema = useSettingsSchema.extend({
 }).strict();
 
 export function useOutputMime(sourceMime: string, transformation: Transformation | null) {
-  return transformation?.format ? `image/${transformation.format}` : sourceMime;
+  return transformation?.format === "svg" ? "image/svg+xml" : transformation?.format ? `image/${transformation.format}` : sourceMime;
 }
 
 export function useCompatibilityIssue(
@@ -35,8 +35,10 @@ export function useCompatibilityIssue(
   if (transformation) {
     if (!(supportedImageMimeTypes as readonly string[]).includes(sourceMime))
       return "The current source is not a transformable image";
-    if (!transformation.format || outputMimeType !== `image/${transformation.format}`)
+    if (!transformation.format || outputMimeType !== useOutputMime(sourceMime, transformation))
       return "The saved output format is unavailable";
+    if ((transformation.format === "svg" || transformation.layer || transformation.darkLayer) && sourceMime !== "image/svg+xml")
+      return "SVG output and layer selection require an SVG source";
     // Metadata can reject an impossible output without reading source bytes.
     // Stored dimensions may be auto-oriented; reject only if both orientations
     // exceed budget. The renderer validates actual geometry and all frames.

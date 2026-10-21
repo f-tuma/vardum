@@ -1,11 +1,11 @@
 import { infiniteQueryOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { listAssetPage, listAssetVersions, listAssetUses, type AssetPage } from "./asset-api";
 
-export function assetBrowserQueryOptions(workspaceId: string, prefix = "", search = "", limit = 50) {
+export function assetBrowserQueryOptions(workspaceId: string, prefix = "", search = "", limit = 50, archived = false) {
   const needle = search.trim();
   return infiniteQueryOptions({
-    queryKey: ["assets", workspaceId, "cursor-v1", prefix, needle, limit],
-    queryFn: ({ pageParam, signal }) => listAssetPage(workspaceId, prefix, needle, pageParam, limit, signal),
+    queryKey: ["assets", workspaceId, "cursor-v1", prefix, needle, limit, ...(archived ? ["archived"] : [])],
+    queryFn: ({ pageParam, signal }) => listAssetPage(workspaceId, prefix, needle, pageParam, limit, signal, archived),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: 30_000,
