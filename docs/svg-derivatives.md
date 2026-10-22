@@ -79,6 +79,34 @@ recipes. SVG delivery with no transformation continues returning the exact
 original bytes, including its original styles and encoding, through the existing
 sandboxed original-delivery path.
 
+## Raster canvas admission
+
+SVG raster requests check the loader canvas, the resized canvas before cropping,
+and the final output before rendering. This also applies after `layer` selection.
+The source and intermediate canvas budget is 100 million pixels; a loaded SVG
+side must not exceed 32,767 pixels. The final canvas uses the configured output
+pixel limit, including contain bars and safe-area padding. A small cropped output
+does not make a very large intermediate canvas safe.
+
+Sharp's input metadata rounds SVG dimensions to integers, while its SVG loader
+can scale the original fractional dimensions. Admission therefore uses conservative
+bounds around the unknown fractions. A request can return `422` even when its
+actual output would fit a very tight limit: for example, a 1.1×10 SVG requested at
+height 128 renders 14×128, but metadata 1×10 alone cannot prove that exact boundary.
+The error asks for smaller dimensions or a re-exported SVG canvas. Legacy
+background rendering disables loader scaling and retains its separate geometry.
+These bounds follow the pinned
+[Sharp resize pipeline](https://github.com/lovell/sharp/blob/v0.35.5/src/pipeline.cc)
+and [shrink calculation](https://github.com/lovell/sharp/blob/v0.35.5/src/common.cc).
+
+Admission does not change the source, resize parameters, encoders, signed URLs,
+fingerprints or derivative keys. Accepted requests retain the same rendered bytes.
+Existing stored derivatives are served before these geometry checks; an unsafe
+cache miss fails without replacing a retained output or updating a frozen lock.
+The bounds cover canvas pixels, not arbitrary SVG document complexity or all native
+decoder memory use. Existing input-byte, concurrency and deadline limits remain
+necessary.
+
 ## Identity and retained output
 
 For a new SVG-to-raster recipe with an opaque background, explicitly select

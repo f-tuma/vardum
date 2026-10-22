@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { renderSvg, svgInputByteLimit, svgSourceIssue } from "./svg-render.js";
 import { applyImageTransformation } from "./image-transform.js";
 import { renderSvgRasterBackground } from "./svg-raster-background.js";
+import { assertSvgRasterBudget, svgRasterLimitError } from "./svg-raster-bounds.js";
 import { CapacityError } from "./resource-budget.js";
 import { withTransformBudget, outputPixels } from "./transform-budget.js";
 import { getObject, putDerivedObject, readBoundedObject } from "./storage.js";
@@ -109,8 +110,14 @@ async function generate(
     await putDerivedObject(storageKey, result, mimeType, boundedSignal);
     return;
   }
-  const metadata = await image.metadata();
-  if (
+  const metadata = await image.metadata().catch(error => {
+    throw source.mimeType === "image/svg+xml" ? svgRasterLimitError(error) : error;
+  });
+  if (metadata.format === "svg") {
+    assertSvgRasterBudget(metadata, transformation,
+      transformation.bg ? "legacy-background" : "svg-loader-scale",
+      config.TRANSFORM_MAX_OUTPUT_PIXELS);
+  } else if (
     !metadata.width ||
     !metadata.height ||
     outputPixels(
@@ -126,7 +133,9 @@ async function generate(
     );
 
   boundedSignal.throwIfAborted();
-  const result = await applyImageTransformation(image, transformation, outputFormat).toBuffer();
+  const result = await applyImageTransformation(image, transformation, outputFormat).toBuffer().catch(error => {
+    throw metadata.format === "svg" ? svgRasterLimitError(error) : error;
+  });
   boundedSignal.throwIfAborted();
   await putDerivedObject(storageKey, result, mimeType, boundedSignal);
 }

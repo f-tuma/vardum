@@ -212,6 +212,99 @@ export async function checkDerivativePreservation(
     assert.equal(await readFile(lockPath, "utf8"), locked);
   });
 
+  await t.test("new SVG geometry rejection preserves frozen files and locks while retained bytes still restore", async (svgTest) => {
+    const { config } = await import("../src/config.js");
+    // This fixture and its parent await subtests sequentially. Lower the live
+    // limit only around bounded 14x128 outputs, restoring it even on failure.
+    const previousLimit = config.TRANSFORM_MAX_OUTPUT_PIXELS;
+    try {
+      for (const renderer of ["legacy", "v2"] as const) {
+        const svgAssetId = randomUUID(), svgVersionId = randomUUID(), svgVardId = randomUUID(), svgItemId = randomUUID();
+        const svgKey = `preservation/fractional-${renderer}/${svgAssetId}`;
+        const svgStorageKey = `originals/ws/${svgAssetId}/${svgVersionId}/source`;
+        const dimensions = renderer === "legacy" ? 'viewBox="0 0 1.1 10"' : 'width="1.1" height="10" viewBox="0 0 1.1 10"';
+        const svgSource = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" ${dimensions}><rect width="1.1" height="10" fill="#c8553d" fill-opacity="0.5"/></svg>`);
+        const svgSpec = renderer === "legacy"
+          ? { h: 128, format: "png" as const }
+          : { h: 128, format: "png" as const, bg: "#204060", render: "v2" as const };
+        const svgCanonical = `h=128&fit=inside&format=png&q=80${renderer === "v2" ? "&bg=%23204060&render=v2" : ""}`;
+        const svgDerivedKey = `derived/v1/${svgVersionId}/${digest(Buffer.from(`v1:${svgCanonical}`))}.png`;
+        const svgUrl = transformedVersionUrl("demo", svgKey, svgVersionId, svgSpec);
+        assert.equal(svgUrl, `/w/demo/__v/${svgVersionId}/${svgKey}?${svgCanonical}&sig=${createHmac("sha256", "isolated-test-transform-secret-at-least-32-characters").update(`demo/${svgKey}?${svgCanonical}`).digest("base64url")}`);
+        const svgProject = { path: join(root, `svg-bounds-frozen-${renderer}`), key };
+        const svgOutput = join(svgProject.path, "assets/fractional.png");
+        const svgLockPath = join(svgProject.path, ".vardum.lock");
+        svgTest.after(async () => {
+          await admin.query("DELETE FROM vard WHERE id=$1", [svgVardId]);
+          await admin.query("DELETE FROM asset WHERE id=$1", [svgAssetId]);
+          for (const objectKey of objects.keys()) {
+            if (objectKey === svgStorageKey || objectKey.startsWith(`derived/v1/${svgVersionId}/`)) {
+              objects.delete(objectKey); objectTypes.delete(objectKey);
+            }
+          }
+        });
+        config.TRANSFORM_MAX_OUTPUT_PIXELS = previousLimit;
+        objects.set(svgStorageKey, svgSource); objectTypes.set(svgStorageKey, "image/svg+xml");
+        await admin.query("INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES ($1,'ws',$2,'Frozen fractional SVG','fixture','fixture')", [svgAssetId, svgKey]);
+        await admin.query("INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,width,height,created_by,updated_by) VALUES ($1,'ws',$2,1,'ready',$3,'fractional.svg','image/svg+xml',$4,$5,1,10,'fixture','fixture')", [svgVersionId, svgAssetId, svgStorageKey, svgSource.length, digest(svgSource)]);
+        await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [svgVersionId, svgAssetId]);
+        await admin.query("INSERT INTO vard(id,workspace_id,name,created_by,updated_by) VALUES ($1,'ws','Frozen fractional SVG','fixture','fixture')", [svgVardId]);
+        await admin.query("INSERT INTO vard_item(id,workspace_id,vard_id,asset_id,output_path,transformation,created_by,updated_by) VALUES ($1,'ws',$2,$3,'assets/fractional.png',$4,'fixture','fixture')", [svgItemId, svgVardId, svgAssetId, JSON.stringify(svgSpec)]);
+        const generated = await app.inject({ url: svgUrl, headers });
+        assert.equal(generated.statusCode, 200, generated.body);
+        const captured = Buffer.from(generated.rawPayload);
+        const svgMetadata = await sharp(captured).metadata();
+        assert.equal(svgMetadata.width, 14); assert.equal(svgMetadata.height, 128);
+        assert.deepEqual(objects.get(svgDerivedKey), captured);
+        await mkdir(svgProject.path);
+        await writeFile(join(svgProject.path, "vardum.json"), JSON.stringify({ schema: 1, server: origin, workspace: "ws", vard: svgVardId }));
+        assert.equal(JSON.parse((await run(svgProject, "pull")).stdout).changed, 1);
+        const svgLocked = await readFile(svgLockPath, "utf8");
+        const svgSnapshot = JSON.parse(svgLocked);
+        assert.equal(svgSnapshot.schema, 2);
+        assert.equal(svgSnapshot.items[svgItemId].fingerprint, `${svgVersionId}:${svgCanonical}`);
+        assert.equal(svgSnapshot.items[svgItemId].downloadUrl, new URL(svgUrl, origin).href);
+        assert.equal(svgSnapshot.items[svgItemId].checksum, digest(captured));
+        assert.deepEqual(await readFile(svgOutput), captured);
+        await admin.query("DELETE FROM vard WHERE id=$1", [svgVardId]);
+
+        objects.delete(svgDerivedKey); // Leave all unrelated retained derivatives intact.
+        config.TRANSFORM_MAX_OUTPUT_PIXELS = 1664;
+        const unavailable = await app.inject({ url: svgUrl, headers });
+        assert.equal(unavailable.statusCode, 422, unavailable.body);
+        assert.equal(unavailable.headers["cache-control"], "private, no-store");
+        assert.match(unavailable.json().error, /SVG.*(?:limits|pixel|render)/i);
+        assert.match(unavailable.json().error, /smaller|re-export/i);
+        assert.equal(objects.has(svgDerivedKey), false, "rejected cache miss writes no derived object");
+        const sentinel = Buffer.from(`local ${renderer} file must survive new SVG admission`);
+        await writeFile(svgOutput, sentinel);
+        await assert.rejects(run(svgProject, "pull", "--frozen", "--force"), (error: unknown) => {
+          assert.ok(error instanceof Error && "stderr" in error && "code" in error);
+          assert.equal(error.code, 1);
+          const failure = JSON.parse(String(error.stderr));
+          assert.match(failure.error, /422/);
+          assert.equal(failure.actions.length, 1); assert.equal(failure.actions[0].applied, false);
+          return true;
+        });
+        assert.deepEqual(await readFile(svgOutput), sentinel);
+        assert.equal(await readFile(svgLockPath, "utf8"), svgLocked);
+        assert.equal(objects.has(svgDerivedKey), false, "failed frozen download cannot publish a replacement");
+        assert.deepEqual(objects.get(svgStorageKey), svgSource);
+
+        objects.set(svgDerivedKey, captured); // Restore the actual captured encoded object.
+        objectTypes.set(svgDerivedKey, "image/png");
+        objects.delete(svgStorageKey);
+        assert.equal(JSON.parse((await run(svgProject, "pull", "--frozen", "--force")).stdout).changed, 1);
+        assert.deepEqual(await readFile(svgOutput), captured);
+        assert.equal(await readFile(svgLockPath, "utf8"), svgLocked, "retained restore never relocks the captured recipe");
+        assert.deepEqual(objects.get(svgDerivedKey), captured);
+        assert.equal(objects.has(svgStorageKey), false, "retained cached output restores without reading or revalidating SVG geometry");
+      }
+    } finally {
+      config.TRANSFORM_MAX_OUTPUT_PIXELS = previousLimit;
+    }
+  });
+
   async function frozenFailure(message: RegExp) {
     await assert.rejects(run(project, "pull", "--frozen", "--force"), (error: unknown) => {
       assert.ok(error instanceof Error && "stderr" in error && "code" in error);
