@@ -1,10 +1,14 @@
 import { TOWER_ROWS, type TowerTone } from "@/components/sign-in-tower-data";
 
 const toneClass: Record<TowerTone, string> = {
-  dim: "text-muted-foreground/35",
-  line: "text-muted-foreground",
-  violet: "text-chart-1",
-  violetBright: "text-brand",
+  dim: "text-tower-dim",
+  line: "text-tower-line",
+  text: "text-tower-text",
+  accent: "text-tower-accent",
+  accentBright: "text-tower-accent-bright",
+  ok: "text-tower-ok",
+  okDim: "text-tower-ok-dim",
+  warn: "text-tower-warn",
 };
 
 /** The site's hero tower as one still character grid. Decorative. */

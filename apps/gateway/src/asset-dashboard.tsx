@@ -633,7 +633,7 @@ function FolderTile({
 }) {
   return (
     <li className="relative flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-muted">
-      <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-primary" />
+      <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-brand" />
       <FolderLink workspace={workspace} folder={folder} />
       <FolderActions workspace={workspace} folder={folder} />
     </li>
@@ -849,7 +849,7 @@ function AssetTable({
               <TableCell>
                 <span className="relative flex items-center gap-3">
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted">
-                    <FolderIcon aria-hidden="true" className="size-4 text-primary" />
+                    <FolderIcon aria-hidden="true" className="size-4 text-brand" />
                   </span>
                   <FolderLink workspace={workspace} folder={folder} />
                 </span>

@@ -305,7 +305,9 @@ function OverviewContent({
                       <Item key={event.id} size="xs" render={link ?? undefined}>
                         <ItemContent>
                           <ItemTitle>
-                            {activityLabels[event.action] ?? event.action}
+                            <span data-ready={event.action === "asset.version_processed"} className="data-[ready=true]:text-success">
+                              {activityLabels[event.action] ?? event.action}
+                            </span>
                             <span className="truncate font-normal text-muted-foreground">
                               {target.subject}
                             </span>

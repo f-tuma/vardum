@@ -775,7 +775,7 @@ function OutputGrid({
             className="flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left text-sm transition-colors outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
             onClick={() => onOpenFolder(folder.prefix)}
           >
-            <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-primary" />
+            <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-brand" />
             <span className="min-w-0 flex-1 truncate font-mono">
               {folder.name}
               <span className="text-muted-foreground">/</span>
@@ -803,7 +803,7 @@ function OutputGrid({
                 <span className="truncate font-mono text-xs">
                   {item.outputPath.slice(prefix.length)}
                 </span>
-                <span className="text-xs text-muted-foreground">{itemBadge(item)}</span>
+                <span data-pinned={Boolean(item.versionId && !item.transformation)} className="text-xs text-muted-foreground data-[pinned=true]:text-warning">{itemBadge(item)}</span>
               </span>
             </button>
           </li>
@@ -1684,7 +1684,7 @@ function AssetPicker({
                 className="flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left text-sm transition-colors outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
                 onClick={() => setPrefix(folder.prefix)}
               >
-                <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-primary" />
+                <FolderIcon aria-hidden="true" className="size-5 shrink-0 text-brand" />
                 <span className="min-w-0 flex-1 truncate font-mono">
               {folder.name}
               <span className="text-muted-foreground">/</span>
@@ -1748,7 +1748,7 @@ function PickerAsset({
           </span>
           {added && (
             <span className="absolute top-2 left-2">
-              <Badge variant="secondary">Added</Badge>
+              <Badge variant="success">Added</Badge>
             </span>
           )}
         </span>
