@@ -52,11 +52,12 @@ is open; this report does not infer provider/runtime acceptance or clear the
 recipe implementation dependency. VARD-17 still requires a real new person.
 
 VARD-78 production card acceptance and VARD-77 public npm onboarding are recorded
-complete in the planner. Public CLI 0.8.2/shared 0.4.1/MCP 0.4.1 publication and
-verified Setup pin promotion are complete; see
-[0.8.2 release evidence](client-release-0.8.2.md). A source README merge alone
-still does not update an already published npm archive. Existing versions,
-release archives and tags remain immutable.
+complete in the planner. Public CLI 0.8.3/shared 0.4.2/MCP 0.4.2 publication,
+independent public recipe verification and gateway source Setup pin promotion
+are recorded in [0.8.3 release evidence](client-release-0.8.3.md#publication-evidence).
+Recipes require the matching API and worker; deployment and first-human acceptance
+remain separate. A source README merge alone does not update an already published
+npm archive. Existing versions, release archives and tags remain immutable.
 
 Runtime, provider and server-release acceptance remain independent tasks
 (VARD-6, VARD-7 through VARD-13 and their security follow-ups). This roadmap

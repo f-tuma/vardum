@@ -27,8 +27,8 @@ vardum push-folder ./images               # pick a folder, review, confirm
 
 ## Complete plan (CLI 0.8.0)
 
-Use published **CLI 0.8.2** for the complete folder plan introduced in 0.8.0. See
-[release evidence and upgrade order](../client-release-0.8.2.md) and
+Use published **CLI 0.8.3** for the complete folder plan introduced in 0.8.0. See
+[release evidence and upgrade order](../client-release-0.8.3.md#upgrade-order) and
 [release status](../npm-release.md).
 
 - Every source file is classified as **New**, **Update** or **Skip**, including
