@@ -594,7 +594,7 @@ function VersionHistory({
                   <ItemContent>
                     <ItemTitle>
                       v{version.number}
-                      {version.current && <Badge>Current</Badge>}
+                      {version.current && <Badge variant="success">Current</Badge>}
                       {version.status === "processing" && <Spinner />}
                       {version.status === "failed" && <Badge variant="destructive">Failed</Badge>}
                     </ItemTitle>
