@@ -245,7 +245,9 @@ try {
       const candidates = [...app.toString("utf8").matchAll(/(?:src|href)=["'](\/app\/(?:assets\/[^"']+|favicon\.svg))["']/g)].map((match) => match[1]);
       assert.ok(candidates.some(path => path.endsWith(".js")), "Built index must reference app-prefixed JavaScript");
       assert.ok(candidates.some(path => path.endsWith(".css")), "Built index must reference app-prefixed CSS");
-      assert.ok(candidates.includes("/app/favicon.svg"), "App favicon must use its base path");
+      const favicon = app.toString("utf8").match(/<link\b[^>]*\brel=["']icon["'][^>]*\bhref=["']([^"']+)["']/)?.[1];
+      assert.match(favicon ?? "", /^\/app\/assets\/vardum-logo-[A-Za-z0-9_-]{8}\.svg$/, "App favicon must reference its content-hashed SVG asset");
+      assert.ok(candidates.includes(favicon), "App favicon must be included in the static asset checks");
       for (const path of candidates) {
         assert.match(path, /^\/app\/(?:assets\/[A-Za-z0-9_./-]+|favicon\.svg)$/);
         assert.ok(!path.split("/").some((part) => part === "." || part === ".."));
