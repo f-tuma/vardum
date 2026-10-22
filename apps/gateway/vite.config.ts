@@ -10,7 +10,6 @@ export default defineConfig({
     alias: { "@": path.resolve(import.meta.dirname, "./src") },
   },
   server: {
-    allowedHosts: ["vite.f-tuma.dev"],
     proxy: {
       "/api": { target: "http://localhost:3000", changeOrigin: true },
       "^/w(?:/|$)": { target: "http://localhost:3000", changeOrigin: true },

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "repository": "github:frgtn-dot-dev/vardum",
+  "repository": "github:f-tuma/vardum",
   "packageManager": "pnpm@12.4.2",
   "type": "module",
   "engines": {
