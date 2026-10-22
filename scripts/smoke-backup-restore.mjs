@@ -215,10 +215,6 @@ export async function checkBackupRestore({
           vard.id,
         );
         assert.equal(JSON.parse((await command("pull")).stdout).changed, 3);
-        const lock = await readFile(join(project, ".vardum.lock"), "utf8");
-        const files = new Map();
-        for (const item of Object.values(JSON.parse(lock).items))
-          files.set(item.path, await readFile(join(project, item.path)));
         const historyBefore = await api(
           `/api/workspaces/${workspaceId}/assets/${assetId}/versions`,
         );
@@ -241,6 +237,55 @@ export async function checkBackupRestore({
         const linkedPath = new URL(linkedBefore.uses[0].previewUrl, base).pathname.replace(/\/__v\/[^/]+\/.*$/, "/reuse/restored-logo.png");
         const linkedBytes = Buffer.from(await (await fetch(`${base}${linkedPath}`, { headers: { cookie } })).arrayBuffer());
         assert.deepEqual(linkedBytes, signedBytes);
+        const editorPath = `/api/workspaces/${workspaceId}/vards/${vard.id}/editor`;
+        const definition = await api(`${editorPath}?definitionSchema=2`);
+        const linkedDefinitionBefore = await api(`${editorPath}/items`, {
+          definitionSchema: 2, expectedRevision: definition.revision,
+          items: [
+            ...definition.items.map(({ id, outputPath, binding }) => ({ id, outputPath, binding })),
+            { id: null, outputPath: "assets/linked.png", binding: { kind: "use", assetUseId: linkedUse.id } },
+          ],
+        }, "PUT");
+        assert.equal(linkedDefinitionBefore.storedDefinitionSchema, 2);
+        const linkedItem = linkedDefinitionBefore.items.find((item) => item.outputPath === "assets/linked.png");
+        assert.deepEqual(linkedItem.binding, { kind: "use", assetUseId: linkedUse.id });
+        const manifestPath = `/api/workspaces/${workspaceId}/vards/${vard.id}/manifest`;
+        const linkedManifestBefore = await api(manifestPath);
+        const resolvedLinked = linkedManifestBefore.items.find((item) => item.id === linkedItem.id);
+        assert.equal(resolvedLinked.assetId, assetId);
+        assert.equal(resolvedLinked.writable, false);
+        assert.ok(resolvedLinked.versionId);
+        assert.ok(resolvedLinked.sourceChecksum);
+        assert.deepEqual(Buffer.from(await (await fetch(new URL(resolvedLinked.downloadUrl, base), { headers: { cookie } })).arrayBuffer()), linkedBytes);
+        const linkedState = async (stack) => JSON.parse(await sql(stack, `SELECT json_build_object(
+          'vard',(SELECT row_to_json(v) FROM vard v WHERE id='${vard.id}'),
+          'items',(SELECT json_agg(i ORDER BY i.id) FROM vard_item i WHERE vard_id='${vard.id}'),
+          'use',(SELECT row_to_json(u) FROM asset_use u WHERE id='${linkedUse.id}'),
+          'source',(SELECT row_to_json(a) FROM asset a WHERE id='${assetId}'),
+          'version',(SELECT row_to_json(v) FROM asset_version v WHERE id='${resolvedLinked.versionId}')
+        )`));
+        const linkedStateBefore = await linkedState(source);
+        assert.equal(linkedStateBefore.vard.definition_schema, 2);
+        assert.ok(linkedStateBefore.items.every((item) => item.definition_schema === 2));
+        const storedLinked = linkedStateBefore.items.find((item) => item.id === linkedItem.id);
+        assert.equal(storedLinked.workspace_id, workspaceId);
+        assert.equal(storedLinked.asset_id, assetId);
+        assert.equal(storedLinked.asset_use_id, linkedUse.id);
+        assert.equal(storedLinked.version_id, null);
+        assert.equal(storedLinked.transformation, null);
+        assert.equal(storedLinked.writable, false);
+        assert.equal(linkedStateBefore.use.source_asset_id, assetId);
+        assert.equal(linkedStateBefore.version.checksum, resolvedLinked.sourceChecksum);
+        assert.equal(JSON.parse((await command("pull")).stdout).changed, 1);
+        const lock = await readFile(join(project, ".vardum.lock"), "utf8");
+        const parsedLock = JSON.parse(lock);
+        assert.equal(parsedLock.schema, 2);
+        assert.equal(parsedLock.items[linkedItem.id].versionId, resolvedLinked.versionId);
+        assert.equal(parsedLock.items[linkedItem.id].checksum, checksum(linkedBytes));
+        const files = new Map();
+        for (const item of Object.values(parsedLock.items))
+          files.set(item.path, await readFile(join(project, item.path)));
+        assert.deepEqual(files.get("assets/linked.png"), linkedBytes);
 
         // Include a real durable job that cannot finish until the restored worker starts.
         await compose(source, "stop", "worker");
@@ -353,6 +398,7 @@ export async function checkBackupRestore({
           await readFile(join(backup, "backup.json"), "utf8"),
         );
         await assertWritersStopped(source);
+        assert.deepEqual(await linkedState(source), linkedStateBefore, "backup snapshot preserves marker2 parent/child and use/source/version tuple/settings");
         // This historical ready version already points at worker-sealed bytes.
         // Restoring it must preserve that exact key, independently of staging.
         const sealedBefore = await versionRow(source, versionId);
@@ -444,6 +490,7 @@ export async function checkBackupRestore({
           "old liveness must not survive restore",
         );
         await assertWritersStopped(target);
+        assert.deepEqual(await linkedState(target), linkedStateBefore, "restore preserves exact marker2 rows and linked settings before application startup");
         const sealedRestored = await versionRow(target, versionId);
         assert.deepEqual(sealedRestored, sealedBefore, "ready version identity, checksum and exact sealed key survive restore");
         await assertStoredObject(target, sealedRestored.storage_key, sealedRestored.mime_type, pinnedBytes, sealedHeaders);
@@ -483,6 +530,11 @@ export async function checkBackupRestore({
         const linkedAfter = await api(`/api/workspaces/${workspaceId}/asset-uses?sourceAssetId=${assetId}`);
         assert.deepEqual(linkedAfter, linkedBefore, "linked use identity, settings and source relation survive restore");
         assert.deepEqual(Buffer.from(await (await fetch(`${base}${linkedPath}`, { headers: { cookie } })).arrayBuffer()), linkedBytes);
+        assert.deepEqual(await api(`${editorPath}?definitionSchema=2`), linkedDefinitionBefore, "schema2 literal binding and configuration revision survive restore");
+        assert.deepEqual(await api(manifestPath), linkedManifestBefore, "resolved version, canonical signed URL, source checksum and fingerprint survive restore");
+        const restoredLinked = await fetch(new URL(resolvedLinked.downloadUrl, base), { headers: { cookie } });
+        assert.equal(restoredLinked.status, 200);
+        assert.deepEqual(Buffer.from(await restoredLinked.arrayBuffer()), linkedBytes);
 
         // A new signature may be issued, but identity, reservation and the
         // original expiry must stay fixed. Denied content changes do no work.
@@ -637,7 +689,7 @@ export async function checkBackupRestore({
         await rm(join(project, "assets"), { recursive: true });
         assert.equal(
           JSON.parse((await command("pull", "--frozen")).stdout).changed,
-          3,
+          4,
         );
         assert.equal(
           await readFile(join(project, ".vardum.lock"), "utf8"),
@@ -645,6 +697,9 @@ export async function checkBackupRestore({
         );
         for (const [path, bytes] of files)
           assert.deepEqual(await readFile(join(project, path)), bytes);
+        console.log(JSON.stringify({ check: "schema2-use-backup-restore", storedDefinitionSchema: 2,
+          parentChildMarkers: true, sourceUseTuple: true, literalRevision: true, immutableResolution: true,
+          frozenLockUnchanged: true, linkedOutputSha256: checksum(linkedBytes) }));
         assert.equal(
           JSON.parse((await command("pull")).stdout).changed,
           0,
