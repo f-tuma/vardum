@@ -9,6 +9,7 @@ import { checkVardFolderOldA } from "./smoke-vard-folder-old-a.mjs";
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const svg = color => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="${color}"/></svg>`);
 const cli080Integrity = "sha512-nry3FLJtuWw/P5jyi9WQGxwebE4/m+tG9LjzJJVZDGN1Phdw15wCR9/uGwQvSEg4xHKoIzr7trLeD8kgrvZkWA==";
+const isAuthOrganizationId = value => typeof value === "string" && /^[A-Za-z0-9]{32}$/.test(value);
 
 /** Actual public clients; only the numeric, loopback-owned production smoke. */
 export async function checkVardFolderPublicClients({ base, cookie }) {
@@ -35,6 +36,7 @@ export async function checkVardFolderPublicClients({ base, cookie }) {
   assert.deepEqual(Object.keys(beforeBatch).sort(), ["release.json", "vardum-cli-0.8.3.tgz", "vardum-mcp-0.4.2.tgz", "vardum-shared-0.4.2.tgz"]);
   try {
     await verifyPublishedRelease(release, async ({ root, cli, publicRegistry }) => {
+      phase = "folder callback prerequisites";
       assert.equal(publicRegistry, true); assert.equal(cli.version, "0.8.3");
       const capabilities = await api("/api/capabilities");
       assert.equal(capabilities.vardDefinitionSchema, 2); assert.equal(capabilities.vardFolderUses, 1);
@@ -49,7 +51,7 @@ export async function checkVardFolderPublicClients({ base, cookie }) {
       assert.equal(postgres.Config.Labels["com.docker.compose.project"], project); assert.equal(postgres.Config.Labels["com.docker.compose.service"], "postgres");
       const sql = async query => (await docker("exec", postgresId, "psql", "-X", "-U", "varda", "-d", "varda", "-At", "-v", "ON_ERROR_STOP=1", "-c", query)).stdout.trim();
       const organization = await api("/api/auth/organization/create", { name: "Owned folder acceptance", slug: `folder-${randomUUID()}` });
-      assert.match(organization.id, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+      assert.ok(isAuthOrganizationId(organization.id), "Expected a Better Auth organization ID");
       const literalState = async ws => JSON.parse(await sql(`SELECT jsonb_build_object(
         'vards',(SELECT coalesce(jsonb_agg(to_jsonb(v) ORDER BY id),'[]') FROM vard v WHERE workspace_id='${ws}'),
         'items',(SELECT coalesce(jsonb_agg(to_jsonb(i) ORDER BY id),'[]') FROM vard_item i WHERE workspace_id='${ws}'),

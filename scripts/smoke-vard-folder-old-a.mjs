@@ -7,12 +7,13 @@ import { run } from "./release-packages.mjs";
 
 const oldAImage = "sha256:54019288d3b2a2ca320523aae4ace3d22a4e8032a330fbf2753b5b2023a44617";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const isAuthOrganizationId = value => typeof value === "string" && /^[A-Za-z0-9]{32}$/.test(value);
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const svg = color => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="${color}"/></svg>`);
 
 /** Exact A HTTP binary, with only its real pool observed by a signal wrapper. */
 export async function checkVardFolderOldA({ base, cookie, organizationId, oldImage }) {
-  assert.equal(oldImage, oldAImage); assert.match(organizationId, uuid);
+  assert.equal(oldImage, oldAImage); assert.ok(isAuthOrganizationId(organizationId), "Expected a Better Auth organization ID");
   const project = process.env.SMOKE_COMPOSE_PROJECT; assert.match(project ?? "", /^vardum-smoke-\d+$/);
   const origin = new URL(base); assert.equal(origin.origin, base); assert.equal(origin.protocol, "http:");
   assert.ok(["localhost", "127.0.0.1"].includes(origin.hostname));
