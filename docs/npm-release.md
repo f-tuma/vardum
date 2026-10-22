@@ -19,6 +19,12 @@ MCP guidance remains **0.4.1**. Production Copy setup requires the matching
 gateway deployment. Source pin promotion does not change immutable package
 archives or establish server/runtime or Musubi pilot acceptance.
 
+The **VARD-112 candidate** is CLI **0.8.3**, MCP **0.4.2** and shared **0.4.2**.
+It packages public recipe types and MCP help for backgrounds, safe area, SVG
+layers/adaptive colors and the explicit v2 renderer. It is not yet published
+or independently verified. Existing onboarding and gateway pins remain above.
+See [candidate notes and server requirements](client-release-0.8.3.md).
+
 Published CLI 0.8.1 remains immutable, with its
 [October 11 evidence](client-release-0.8.1.md#publication-evidence) preserved.
 
@@ -279,6 +285,31 @@ It also calls every advertised MCP tool, reads resources and checks read-key and
 cross-workspace denials. A real browser authorization screen remains a separate
 UI check. The auth/RLS/private-delivery database integrations run in CI/release too.
 
+### Installed recipe proof for the 0.8.3 candidate
+
+In addition to the existing installed-client lifecycle, the full candidate
+production smoke checks the new shared declarations from an external TypeScript
+consumer, installed MCP help and guarded recipe edits, actual rendered output,
+and installed CLI frozen restoration after live changes. Historical public
+compatibility clients keep their separate baseline; their editor skip does not
+verify the new public MCP.
+
+For a previously checked candidate directory, the narrow mode reuses the
+production stack startup and cleanup without repacking or repeating the complete
+backup/runtime suite:
+
+```sh
+SMOKE_INSTALLED_RECIPES_ONLY=1 SMOKE_RECIPE_REGISTRY=candidate \
+  SMOKE_RELEASE_DIR="$PWD/artifacts/npm" bash scripts/smoke-production.sh
+```
+
+The directory must contain the exact three archives and `release.json` from the
+selected run. The mode rejects missing archives and combinations with historical
+`SMOKE_PUBLIC_CLIENTS` or server-candidate mode. After publication, the same proof
+uses `SMOKE_RECIPE_REGISTRY=public` and verifies registry bytes against that
+explicit batch before independent public installs. Do not substitute `latest`,
+a source binary or the historical public compatibility batch.
+
 ## Publish
 
 Publication is a separate, deliberate action. The GitHub `Release` workflow runs
@@ -293,7 +324,8 @@ serialized and cannot cancel an in-progress publication.
 For a safe hosted check of this release path, manually dispatch `Release` from the
 candidate branch with `validation_only=true`. This explicit mode runs the same
 validation and preserves its tested archives, then downloads them in a separate
-read-only job to verify manifests, SHA-512 hashes and independent CLI/MCP installs.
+read-only job to verify manifests, SHA-512 hashes, independent CLI/MCP installs
+and the targeted recipe proof against the downloaded batch.
 It cannot enter the `npm` environment or publish packages or a GitHub release, even
 when dispatched from a matching tag. Manual dispatch defaults to `validation_only=true` and `release_mode=source`.
 Publishing source archives requires explicitly setting `validation_only=false`
@@ -499,7 +531,10 @@ tag. The final tag run creates a separate batch and publishes its own exact test
 archives. Recover a failed publisher only with `gh run rerun ORIGINAL_TAG_RUN_ID
 --repo f-tuma/vardum --failed`; a fresh dispatch or full rerun repacks. Verify
 actual registry bytes, independent public installs and all four GitHub release
-assets before advertising the new version.
+assets before advertising the new version. For the 0.8.3 recipe batch, also require
+the separate read-only `verify-public-recipes` job to pass. That job checks the
+same tag-run artifact and performs installed public type/help/guarded-recipe and
+frozen checks; it has no npm environment or OIDC write permission.
 
 For published CLI 0.8.2/MCP 0.4.1, verify backend migration `0015` and all applicable
 capabilities in the [upgrade order](client-release-0.8.2.md#upgrade-order).

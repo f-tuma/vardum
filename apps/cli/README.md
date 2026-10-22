@@ -4,11 +4,13 @@ The CLI materializes a workspace **Vard** into a project. Create a Vard in the
 web UI, select its assets and output paths, then run `vardum init` in the target
 repository to create `vardum.json`.
 
-This README describes [CLI **0.8.2**](https://www.npmjs.com/package/@vardum/cli/v/0.8.2).
-It keeps schema **2** frozen snapshots, the complete folder-upload plan and
-resumable uploads. The matching client batch uses shared **0.4.1** and MCP **0.4.1**.
-This patch adds explicit adoption of existing matching files; it does not change
-the snapshot schema. Shared and MCP 0.4.1 remain the compatible published packages.
+This README describes [CLI **0.8.3**](https://www.npmjs.com/package/@vardum/cli/v/0.8.3).
+It keeps schema **2** frozen snapshots, explicit adoption of existing matching
+files, the complete folder-upload plan and resumable uploads. The matching client
+batch uses [shared **0.4.2**](https://www.npmjs.com/package/@vardum/shared/v/0.4.2)
+and [MCP **0.4.2**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.2), with public
+recipe types and MCP help for backgrounds, safe area and SVG rendering.
+The CLI sync behavior and snapshot schema are unchanged in this patch.
 
 ## First project
 
@@ -25,7 +27,7 @@ The exact installation below does not require access to the source repository.
    and authorize your machine:
 
    ```sh
-   npm install --save-dev --save-exact @vardum/cli@0.8.2
+   npm install --save-dev --save-exact @vardum/cli@0.8.3
    npx --no-install vardum init
    npx --no-install vardum login
    npx --no-install vardum pull
@@ -93,6 +95,22 @@ atomically, not as a filesystem transaction that excludes arbitrary future edits
 If a process crashes, confirm it is stopped before removing the retained
 `.vardum.snapshot.mutex`. Old output files absent from the current manifest stay
 on disk but cease to be tracked, as with a normal pull without deletion.
+
+## Output recipes
+
+Configure output recipes in the web app or MCP, then use ordinary `vardum pull`
+to review their new outputs. Shared 0.4.2 exposes `bg`, `pad`, `layer`,
+`darkLayer`, `darkColor`, `format: "svg"` and optional `render: "v2"`.
+The matching server must implement these recipes; a client update alone does
+not enable them. `vardEditRevision: 1` describes guarded editing, not renderer
+feature support.
+
+For a new SVG-to-raster output with an opaque background, explicitly choose
+`render: "v2"`. Omitting it preserves the existing renderer identity. Safe-area
+`pad` is a percent inset on each edge; positive padding requires both dimensions,
+an output format and `fit: "contain"`. Existing recipes and frozen snapshots
+are not automatically upgraded. Frozen restoration still requires retained,
+reachable bytes whose checksums match the committed lock.
 
 ## Backend requirements
 
@@ -317,7 +335,7 @@ cleanup. Review `vardum status --delete` before that updating pull if needed.
 ## Reproducible asset consumption
 
 **Minimum compatible CLI for schema 2: 0.6.0**. Pin the exact tested version in CI. Older clients, including published 0.5.0,
-cannot safely maintain schema 2 snapshots. CLI 0.8.2 consumes existing schema 2
+cannot safely maintain schema 2 snapshots. CLI 0.8.3 consumes existing schema 2
 snapshots without migration, as published CLI 0.7.0 does. Keep the exact tested CLI pinned;
 a source version bump or passing tests do not publish future versions.
 

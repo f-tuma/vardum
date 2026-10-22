@@ -2,6 +2,29 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# A downloaded release must never fall back to packing different client bytes.
+# Validate before the cleanup trap (which invokes Docker), candidate load, or startup.
+recipe_only="${SMOKE_INSTALLED_RECIPES_ONLY:-0}"
+if [[ "$recipe_only" != 0 && "$recipe_only" != 1 ]]; then
+  echo "SMOKE_INSTALLED_RECIPES_ONLY must be 0 or 1" >&2
+  exit 1
+fi
+if [[ "$recipe_only" == 1 ]]; then
+  if [[ "${SMOKE_PUBLIC_CLIENTS:-}" == 1 || -n "${SMOKE_SERVER_CANDIDATE:-}" ]]; then
+    echo "Recipe proof requires an explicit release, not compatibility/server-candidate mode" >&2
+    exit 1
+  fi
+  if [[ -z "${SMOKE_RELEASE_DIR:-}" || ! -d "$SMOKE_RELEASE_DIR" ]]; then
+    echo "Recipe proof requires an existing SMOKE_RELEASE_DIR" >&2
+    exit 1
+  fi
+  if [[ "${SMOKE_RECIPE_REGISTRY:-}" != candidate && "${SMOKE_RECIPE_REGISTRY:-}" != public ]]; then
+    echo "Recipe proof requires SMOKE_RECIPE_REGISTRY=candidate or public" >&2
+    exit 1
+  fi
+  export SMOKE_RELEASE_DIR="$(realpath "$SMOKE_RELEASE_DIR")"
+  node scripts/release-packages.mjs check "$SMOKE_RELEASE_DIR"
+fi
 project="vardum-smoke-${GITHUB_RUN_ID:-$$}"
 export WEB_PORT="${WEB_PORT:-18080}"
 export S3_PORT="${S3_PORT:-19000}"
@@ -63,7 +86,9 @@ trap cleanup EXIT
 
 # Test the same archives that the release workflow will publish. Standalone
 # smoke runs prepare their own disposable candidate archives.
-if [[ "${SMOKE_PUBLIC_CLIENTS:-}" == 1 ]]; then
+if [[ "$recipe_only" == 1 ]]; then
+  : # Exact release was checked before any Docker command.
+elif [[ "${SMOKE_PUBLIC_CLIENTS:-}" == 1 ]]; then
   unset SMOKE_RELEASE_DIR
 elif [[ -z "${SMOKE_RELEASE_DIR:-}" ]]; then
   temporary_release="$(mktemp -d)"
@@ -93,6 +118,12 @@ fi
 curl --fail --silent "${APP_URL}/health" >/dev/null
 curl --fail --silent "${APP_URL}/ready" >/dev/null
 curl --fail --silent "${APP_URL}/" >/dev/null
+
+# The narrow downloaded/public proof shares this stack lifecycle, not the full suite.
+if [[ "$recipe_only" == 1 ]]; then
+  SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node scripts/smoke-installed-recipes-entry.mjs
+  exit 0
+fi
 
 # Run deployed checks, including the public npm first-project onboarding consumer.
 SMOKE_URL="${APP_URL}" SMOKE_COMPOSE_PROJECT="$project" node "$(dirname "$0")/smoke-test.js"
