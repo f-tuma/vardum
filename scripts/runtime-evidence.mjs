@@ -203,8 +203,23 @@ function gatewayReport(input) {
     if (raw.templateSource !== undefined) base.modes[mode].templateSource = oneOf(raw.templateSource, ["none", "image", "bind"]);
     for (const field of ["apiDnsRecovery", "marketingDnsRecovery"]) if (raw[field]) base.modes[mode][field] = { passed: bool(raw[field].passed), recoveredMs: bounded(raw[field].recoveredMs) };
   }
-  return { ...base, reportedStatus: status, platform: "linux/amd64",
-    appHashes: input.app ? { indexSha256: sha(input.app.indexSha256), assetSha256: sha(input.app.assetSha256) } : null,
+  let appHashes = null;
+  if (input.app) {
+    object(input.app);
+    appHashes = { indexSha256: sha(input.app.indexSha256), ...optional(input.app, ["assetSha256"], sha) };
+    if (input.app.staticFiles !== undefined) {
+      const files = list(input.app.staticFiles, 1000);
+      assert.ok(files.length > 0);
+      appHashes.staticFiles = files.map(file => {
+        object(file);
+        const bytes = bounded(file.bytes);
+        assert.ok(bytes > 0);
+        return { sha256: sha(file.sha256), bytes };
+      });
+    }
+    assert.ok(appHashes.staticFiles || appHashes.assetSha256);
+  }
+  return { ...base, reportedStatus: status, platform: "linux/amd64", appHashes,
     coldStart: input.coldStart ? { passed: bool(input.coldStart.passed), ...optional(input.coldStart, ["apiRecoveredMs", "marketingRecoveredMs"], bounded) } : null };
 }
 async function checkoutSource(expectedCommit, execute) {
@@ -280,7 +295,7 @@ export async function writeRuntimeEvidence({ runtimeDirectory, outputDirectory, 
   if (scanner) summary.nativeVersions.scanner = scanner;
   const gatewayComplete = directory => {
     const data = summary.reports[`${directory}/gateway-config-evidence.json`]?.data;
-    return data?.reportedStatus === "passed" && data.templateSha256 && data.coldStartPassed && modes.every(mode => data.modes[mode]?.passed && data.modes[mode].checks > 0 && data.modes[mode].passedChecks === data.modes[mode].checks && data.modes[mode].effectiveConfigSha256 && data.modes[mode].initialRoutingPassed && data.modes[mode].apiDnsRecovery?.passed && (mode !== "marketing" || data.modes[mode].marketingDnsRecovery?.passed));
+    return data?.reportedStatus === "passed" && data.templateSha256 && data.appHashes && data.coldStartPassed && modes.every(mode => data.modes[mode]?.passed && data.modes[mode].checks > 0 && data.modes[mode].passedChecks === data.modes[mode].checks && data.modes[mode].effectiveConfigSha256 && data.modes[mode].initialRoutingPassed && data.modes[mode].apiDnsRecovery?.passed && (mode !== "marketing" || data.modes[mode].marketingDnsRecovery?.passed));
   };
   const tls = summary.reports["runtime-tls/summary.json"].data;
   const nativeVersionsComplete = Boolean(summary.nativeVersions.api && summary.nativeVersions.gateway && summary.nativeVersions.nginx && summary.nativeVersions.scanner);

@@ -68,8 +68,8 @@ function gateway(dokploy = false) {
     modes: Object.fromEntries(["standard", "marketing", "fallback"].map(mode => [mode, { image: id(mode === "standard" || !dokploy ? "gateway" : "dokploy"),
       templateSource: mode === "standard" ? "none" : dokploy ? "image" : "bind", effectiveConfigSha256: hash(`${mode} ${secret}\n`), initialRoutingPassed: true, passed: true,
       apiDnsRecovery: { recoveredMs: 250, passed: true, before: secret, after: secret }, ...(mode === "marketing" ? { marketingDnsRecovery: { recoveredMs: 300, passed: true } } : {}),
-      checks: [{ passed: true, path: secret, upstreamResponse: { password: secret } }], base: secret, container: secret }])),
-    app: { indexSha256: hash("index"), assetSha256: hash("asset"), assetPath: secret }, coldStart: { passed: true, apiRecoveredMs: 50, marketingRecoveredMs: 100, dnsQueries: [{ stdout: secret, stderr: secret }] },
+      checks: ["app", "redirect", "missing"].map(expected => ({ expected, passed: true, path: secret, upstreamResponse: { password: secret } })), base: secret, container: secret }])),
+    app: { indexSha256: hash("index"), staticFiles: ["js", "css", "favicon", "font"].map((name, index) => ({ path: secret, sha256: hash(name), bytes: index + 1, extra: secret })) }, coldStart: { passed: true, apiRecoveredMs: 50, marketingRecoveredMs: 100, dnsQueries: [{ stdout: secret, stderr: secret }] },
     owner: secret, commands: [{ args: [secret], error: secret }], error: secret };
 }
 async function successfulReports(f) {
@@ -115,11 +115,90 @@ test("actual writer-shaped fields survive reconstruction and only three safe fil
     assert.equal(summary.reports["runtime-tls/summary.json"].data.runtimeInventory.pgBoss.dbSha256, hash("db-module"));
     assert.equal(summary.reports["dokploy-gateway-config/gateway-config-evidence.json"].data.modes.marketing.marketingDnsRecovery.recoveredMs, 300);
     assert.equal(summary.reports["dokploy-gateway-config/gateway-config-evidence.json"].data.coldStart.apiRecoveredMs, 50);
+    for (const directory of ["gateway-config", "dokploy-gateway-config"]) {
+      const data = summary.reports[`${directory}/gateway-config-evidence.json`].data;
+      assert.deepEqual(data.appHashes, { indexSha256: hash("index"), staticFiles: ["js", "css", "favicon", "font"].map((name, index) => ({ sha256: hash(name), bytes: index + 1 })) });
+      for (const mode of ["standard", "marketing", "fallback"]) {
+        assert.equal(data.modes[mode].checks, 3); assert.equal(data.modes[mode].passedChecks, 3);
+      }
+    }
     assert.equal(summary.reportHashes["nginx-effective.txt"], hash(secret));
     for (const name of ["unknown.json", "api.tar", "cache/db/trivy.db", "built-index.html"]) assert.equal(summary.reportHashes[name], undefined);
     assert.equal(summary.deployedChecks.avifEncodeDecode, "not-individually-recorded");
   } finally { await f.close(); }
 });
+test("legacy single-asset hashes remain compatible with the three-file projection", async () => {
+  const f = await fixture();
+  try {
+    await successfulReports(f); const report = gateway();
+    report.app = { indexSha256: hash("index"), assetSha256: hash("asset"), assetPath: secret };
+    await f.save("gateway-config/gateway-config-evidence.json", report);
+    const summary = await f.project();
+    assert.equal(summary.evidenceCompleteness, "complete");
+    assert.deepEqual(summary.reports["gateway-config/gateway-config-evidence.json"].data.appHashes, { indexSha256: hash("index"), assetSha256: hash("asset") });
+    await noSecrets(f);
+  } finally { await f.close(); }
+});
+for (const [label, app] of [["missing", undefined], ["null", null], ["false", false]]) {
+  test(`missing gateway app hashes keep a passed aggregate partial: ${label}`, async () => {
+    const f = await fixture();
+    try {
+      await successfulReports(f); const report = gateway();
+      if (app === undefined) delete report.app; else report.app = app;
+      await f.save("gateway-config/gateway-config-evidence.json", report);
+      const summary = await f.project(); const projected = summary.reports["gateway-config/gateway-config-evidence.json"];
+      assert.equal(summary.evidenceCompleteness, "partial"); assert.equal(projected.status, "projected");
+      assert.equal(projected.data.reportedStatus, "passed"); assert.equal(projected.data.appHashes, null);
+      assert.equal(projected.data.images.api, id("api"));
+      assert.equal(summary.reports["dokploy-gateway-config/gateway-config-evidence.json"].status, "projected");
+      await noSecrets(f);
+    } finally { await f.close(); }
+  });
+}
+for (const passed of [undefined, false]) test(`an uncompleted gateway check remains partial despite a passed aggregate: ${passed}`, async () => {
+  const f = await fixture();
+  try {
+    await successfulReports(f); const report = gateway();
+    for (const mode of ["standard", "marketing", "fallback"]) {
+      for (const check of report.modes[mode].checks.filter(check => check.expected !== "app")) {
+        if (passed === undefined) delete check.passed; else check.passed = passed;
+      }
+    }
+    await f.save("gateway-config/gateway-config-evidence.json", report);
+    const summary = await f.project(); const data = summary.reports["gateway-config/gateway-config-evidence.json"].data;
+    assert.equal(summary.evidenceCompleteness, "partial"); assert.equal(data.reportedStatus, "passed");
+    for (const mode of ["standard", "marketing", "fallback"]) {
+      assert.equal(data.modes[mode].checks, 3); assert.equal(data.modes[mode].passedChecks, 1);
+    }
+    await noSecrets(f);
+  } finally { await f.close(); }
+});
+for (const problem of ["empty", "not-list", "too-many", "entry", "sha", "zero-bytes", "negative-bytes", "fractional-bytes", "string-bytes", "oversized-bytes", "no-assets", "invalid-legacy"]) {
+  test(`malformed gateway app hashes are rejected without exporting raw fields: ${problem}`, async () => {
+    const f = await fixture();
+    try {
+      await successfulReports(f); const report = gateway(); const files = report.app.staticFiles;
+      if (problem === "empty") report.app.staticFiles = [];
+      if (problem === "not-list") report.app.staticFiles = { path: secret };
+      if (problem === "too-many") report.app.staticFiles = Array.from({ length: 1001 }, () => files[0]);
+      if (problem === "entry") files[0] = null;
+      if (problem === "sha") files[0].sha256 = secret;
+      if (problem === "zero-bytes") files[0].bytes = 0;
+      if (problem === "negative-bytes") files[0].bytes = -1;
+      if (problem === "fractional-bytes") files[0].bytes = 1.5;
+      if (problem === "string-bytes") files[0].bytes = secret;
+      if (problem === "oversized-bytes") files[0].bytes = 1_000_000_001;
+      if (problem === "no-assets") delete report.app.staticFiles;
+      if (problem === "invalid-legacy") report.app.assetSha256 = secret;
+      await f.save("gateway-config/gateway-config-evidence.json", report);
+      const summary = await f.project();
+      assert.equal(summary.evidenceCompleteness, "partial");
+      assert.equal(summary.reports["gateway-config/gateway-config-evidence.json"].status, "missing-invalid-or-unsafe");
+      assert.equal(summary.reports["dokploy-gateway-config/gateway-config-evidence.json"].status, "projected");
+      await noSecrets(f);
+    } finally { await f.close(); }
+  });
+}
 for (const outcome of ["failure", "cancelled", "skipped"]) test(`${outcome} smoke outcome is independent of complete recorded evidence`, async () => {
   const f = await fixture();
   try { await successfulReports(f); const summary = await f.project({ acceptanceStatus: outcome, jobStatus: "failure" });

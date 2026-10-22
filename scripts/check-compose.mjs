@@ -27,6 +27,9 @@ const applicationProbe = String.raw`
     assert.equal(database.hostname, 'postgres');
     assert.equal(database.username, name === 'migrate' ? 'varda' : 'varda_app');
     assert.equal(config.BETTER_AUTH_URL, config.WEB_URL);
+    assert.equal(new URL(config.WEB_URL).pathname, '/', 'App/auth configuration must remain an origin without /app');
+    assert.equal(new URL(config.WEB_URL).search, '');
+    assert.equal(new URL(config.WEB_URL).hash, '');
     if (name !== 'api') continue;
     const storage = new S3Client({
       region: config.S3_REGION,
@@ -83,6 +86,7 @@ for (const file of ["compose.production.yml", "compose.dokploy.yml", "compose.do
       assert.ok(services[name].security_opt.includes("no-new-privileges:true"));
     }
     assert.equal(services.gateway.depends_on.api.condition, "service_healthy");
+    assert.deepEqual(services.gateway.healthcheck.test, ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/app/"], "Health must inspect the canonical app independently of marketing");
     if (dokploy) {
       for (const name of ["postgres", "migrate", "api", "worker"]) {
         assert.ok(!services[name].networks["dokploy-network"], `${name} must stay on the project network`);
@@ -94,6 +98,9 @@ for (const file of ["compose.production.yml", "compose.dokploy.yml", "compose.do
     }
     if (file === "compose.dokploy.yml") {
       assert.equal(services.gateway.build.target, "dokploy");
+      assert.equal(services.gateway.environment.API_UPSTREAM, "vardum-api-internal:3000");
+      assert.equal(services.gateway.environment.MARKETING_UPSTREAM, "127.0.0.1:8080");
+      assert.ok(services.api.networks.default.aliases.includes("vardum-api-internal"));
       assert.ok(!services.gateway.volumes?.length, "Gateway config must come from its image");
       assert.equal(services.migrate.image, services.api.image);
       assert.equal(services.worker.image, services.api.image);

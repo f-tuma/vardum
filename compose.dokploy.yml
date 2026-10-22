@@ -9,8 +9,8 @@
 #
 # An optional marketing site is its own Dokploy application
 # on dokploy-network with no domain of its own. Point MARKETING_UPSTREAM at its
-# service alias; nginx proxies `/` there and keeps /app for the product. Until
-# that application exists, leave it unset and the apex serves the app.
+# service alias; nginx proxies `/` there and keeps /app/ for the product. Until
+# that application exists, leave it unset and the apex redirects to /app/.
 #
 # Required environment (paste .env.dokploy.example into the Dokploy editor):
 #   APP_URL=https://vardum.example.com
@@ -218,17 +218,17 @@ services:
         VITE_UPLOAD_ORIGINS: ${VITE_UPLOAD_ORIGINS:-${S3_PUBLIC_ENDPOINT:-}}
     environment:
       API_UPSTREAM: vardum-api-internal:3000
-      # Unset until the marketing deployment exists: the apex then serves the
-      # app from nginx's own loopback server instead of blocking the deploy.
+      # Unset until marketing exists: the loopback fallback redirects the apex
+      # to /app/, so a missing marketing alias cannot block app startup.
       MARKETING_UPSTREAM: ${MARKETING_UPSTREAM:-127.0.0.1:8080}
     # The Dokploy image includes its template; no checkout bind mount is needed.
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      # /app, not /, so the probe fails on a broken client rather than on a
+      # /app/, not /, so the probe fails on a broken client rather than on a
       # marketing site that happens to be redeploying.
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/app"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/app/"]
       interval: 5s
       timeout: 5s
       retries: 10

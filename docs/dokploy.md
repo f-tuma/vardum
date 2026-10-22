@@ -31,12 +31,38 @@ name stable: it identifies its containers, named volumes and image tags.
    the same gateway. `CUSTOM_DOMAIN_TARGET` supplies DNS instructions in the UI;
    it does not provision Traefik routes or certificates.
 
-The apex serves the app by default; `/app` also opens it. To add a separate
-marketing site, attach it to `dokploy-network` under a unique alias and set
-`MARKETING_UPSTREAM=your-marketing-alias:80`. Give that site no competing Domain
-for the app hostname. The Dokploy gateway's nginx template is baked into its
-image, so there is no repository file mount to configure. Standard/dev gateway
-images continue to serve the app directly at `/`.
+The application lives at `/app/`, including its JavaScript, CSS, fonts and
+favicon. Without marketing, the apex redirects there. Standard, development
+and Dokploy gateway images use the same app base. API/auth endpoints, `/w/`,
+`/v/`, legacy `/assets/` delivery and health endpoints stay at the origin;
+`APP_URL`, `WEB_URL`, `BETTER_AUTH_URL` and CLI `server` must have no `/app` suffix.
+The Vite development entry is `http://localhost:5173/app/`.
+
+To serve marketing at the apex, attach that deployment to `dokploy-network`
+under its unique alias and set `MARKETING_UPSTREAM=<alias>:80`. The current
+`vardum-website` source declares service `web`, port `80`, alias
+`vardum-marketing`, so its documented setting is
+`MARKETING_UPSTREAM=vardum-marketing:80`. Confirm the running deployment actually
+has that alias and is healthy before changing the gateway setting. Give the
+marketing site no competing Domain for the app hostname. Preview Compose must
+keep one hostname on gateway:80, path `/`, without stripping `/app`. The nginx
+template is baked into the gateway image; no checkout bind mount is needed.
+
+Marketing receives `/`, its pages, `/docs/`, `/_astro/` and `/favicon.svg` with
+the original URI. `/app/` works even while marketing is unavailable, and the
+gateway healthcheck checks `/app/`. Old root UI links such as `/account`,
+`/workspaces/...`, `/reset-password`, `/accept-invitation` and the published CLI's
+`/cli-login?...` temporarily redirect to their `/app/` counterparts while
+preserving escaped paths and query parameters. Existing signed delivery URLs
+and CLI configuration do not change.
+
+Use a verified healthy marketing image for cutover. A fresh website build
+fetches documentation and can fail while its source repository is private;
+resolve that build source separately before relying on a fresh default build.
+To roll back only marketing, restore the recorded previous `MARKETING_UPSTREAM`;
+the loopback fallback opens `/app/`. Keep a compatible gateway/API pair for a
+code rollback: an older unprefixed router cannot open new `/app/...` email links
+without a separately tested compatibility gateway.
 
 ## Choose storage
 

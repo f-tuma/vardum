@@ -94,8 +94,8 @@ const mock = `
     const chunks = [];
     request.on('data', chunk => chunks.push(chunk));
     request.on('end', () => {
-      response.writeHead(200, { 'content-type': 'application/json', 'x-vardum-gateway-probe': marker });
-      response.end(JSON.stringify({ role, generation, address: request.socket.localAddress, path: request.url, method: request.method, body: Buffer.concat(chunks).toString('utf8'), host: request.headers.host, forwardedFor: request.headers['x-forwarded-for'], forwardedProto: request.headers['x-forwarded-proto'] }));
+      response.writeHead(200, { 'content-type': 'application/json', 'x-vardum-gateway-probe': marker, 'x-probe-request-uri': request.url, 'x-probe-request-method': request.method, 'set-cookie': ['probe_a=first; Path=/; HttpOnly', 'probe_b=second; Path=/; SameSite=Lax'] });
+      response.end(JSON.stringify({ role, generation, address: request.socket.localAddress, path: request.url, method: request.method, body: Buffer.concat(chunks).toString('utf8'), host: request.headers.host, forwardedFor: request.headers['x-forwarded-for'], forwardedProto: request.headers['x-forwarded-proto'], cookie: request.headers.cookie, range: request.headers.range }));
     });
   }).listen(3000, '0.0.0.0');
 `;
@@ -192,7 +192,7 @@ try {
   for (const role of ["api", "marketing"]) await startBackend(role);
   const gateways = [];
   let app;
-  let asset;
+  const staticFiles = new Map();
   for (const mode of ["standard", "marketing", "fallback"]) {
     const name = `${network}-gateway-${mode}`;
     const report = evidence.modes[mode] = { container: name, checks: [] };
@@ -237,22 +237,27 @@ try {
       const logs = await docker(["logs", name]);
       assert.ok((logs.stdout + logs.stderr).includes("20-envsubst-on-templates.sh"), "Normal nginx entrypoint must execute its template hook");
     }
-    const index = (await docker(["exec", name, "cat", "/usr/share/nginx/html/index.html"], { binary: true })).stdout;
+    const index = (await docker(["exec", name, "cat", "/usr/share/nginx/html/app/index.html"], { binary: true })).stdout;
     assert.ok(index.length > 0);
     if (!app) {
       app = index;
       await save("built-index.html", app);
-      const candidates = [...app.toString("utf8").matchAll(/(?:src|href)=["'](\/assets\/[^"']+)["']/g)].map((match) => match[1]);
-      const path = candidates.find((value) => /\.(?:js|css)(?:\?|$)/.test(value));
-      assert.ok(path, "Built app index must reference a static JS or CSS asset");
-      const pathname = new URL(path, base).pathname;
-      assert.match(pathname, /^\/assets\/[A-Za-z0-9_./-]+$/);
-      assert.ok(!pathname.split("/").some((part) => part === "." || part === ".."));
-      const bytes = (await docker(["exec", name, "cat", `/usr/share/nginx/html${pathname}`], { binary: true })).stdout;
-      assert.ok(bytes.length > 0);
-      asset = { path, bytes };
-      await save("built-asset.bin", bytes);
-      evidence.app = { indexSha256: hash(app), assetPath: path, assetSha256: hash(bytes) };
+      const candidates = [...app.toString("utf8").matchAll(/(?:src|href)=["'](\/app\/(?:assets\/[^"']+|favicon\.svg))["']/g)].map((match) => match[1]);
+      assert.ok(candidates.some(path => path.endsWith(".js")), "Built index must reference app-prefixed JavaScript");
+      assert.ok(candidates.some(path => path.endsWith(".css")), "Built index must reference app-prefixed CSS");
+      assert.ok(candidates.includes("/app/favicon.svg"), "App favicon must use its base path");
+      for (const path of candidates) {
+        assert.match(path, /^\/app\/(?:assets\/[A-Za-z0-9_./-]+|favicon\.svg)$/);
+        assert.ok(!path.split("/").some((part) => part === "." || part === ".."));
+        const bytes = (await docker(["exec", name, "cat", `/usr/share/nginx/html${path}`], { binary: true })).stdout;
+        assert.ok(bytes.length > 0);
+        staticFiles.set(path, bytes);
+      }
+      const styles = [...staticFiles].filter(([path]) => path.endsWith(".css")).map(([, bytes]) => bytes.toString("utf8")).join("\n");
+      const font = [...styles.matchAll(/url\(["']?(\/app\/assets\/[^)"']+\.woff2)["']?\)/g)][0]?.[1];
+      assert.ok(font, "Built CSS must reference an app-prefixed font");
+      staticFiles.set(font, (await docker(["exec", name, "cat", `/usr/share/nginx/html${font}`], { binary: true })).stdout);
+      evidence.app = { indexSha256: hash(app), staticFiles: [...staticFiles].map(([path, bytes]) => ({ path, sha256: hash(bytes), bytes: bytes.length })) };
     }
     assert.deepEqual(index, app, "All modes must serve the same built app");
     async function check(path, expected, options = {}, generation = "") {
@@ -262,8 +267,12 @@ try {
       assert.equal(response.status, 200, `${mode} ${path}: ${response.status}`);
       if (expected === "app" || expected === "asset") {
         assert.equal(response.headers.get("x-vardum-gateway-probe"), null, `${mode} ${path} must be served statically`);
-        assert.deepEqual(bytes, expected === "app" ? app : asset.bytes, `${mode} ${path} must match the built file`);
+        assert.deepEqual(bytes, expected === "app" ? app : staticFiles.get(path), `${mode} ${path} must match the built file`);
         if (expected === "app") assert.ok(check.contentType?.startsWith("text/html"));
+        else {
+          const mime = path.endsWith(".js") ? /^(?:application|text)\/javascript/ : path.endsWith(".css") ? /^text\/css/ : path.endsWith(".woff2") ? /^font\/woff2/ : /^image\/svg\+xml/;
+          assert.match(check.contentType ?? "", mime, "Built files must retain their MIME type");
+        }
       } else {
         assert.equal(response.headers.get("x-vardum-gateway-probe"), `${owner}:${expected}${generation ? `:${generation}` : ""}`, `${mode} ${path} must reach the designated upstream`);
         const body = JSON.parse(bytes.toString("utf8"));
@@ -272,6 +281,9 @@ try {
         assert.equal(body.path, path, "Proxy must preserve the path and query");
         assert.equal(body.method, options.method ?? "GET");
         assert.equal(body.body, options.body ?? "");
+        assert.equal(body.cookie, options.headers?.cookie);
+        assert.equal(body.range, options.headers?.range);
+        assert.deepEqual(response.headers.getSetCookie(), ["probe_a=first; Path=/; HttpOnly", "probe_b=second; Path=/; SameSite=Lax"]);
         if (!["/health", "/ready"].includes(path)) {
           assert.equal(body.host, new URL(base).host);
           assert.equal(body.forwardedProto, "http");
@@ -281,17 +293,56 @@ try {
       }
       check.passed = true;
     }
-    for (const path of ["/index.html", "/app", "/app/nested/route", "/account", "/account/profile", "/organizations", "/organizations/example", "/workspaces", "/workspaces/example", "/reset-password", "/reset-password/token", "/accept-invitation", "/accept-invitation/token", "/cli-login", "/cli-login/token"])
+    async function redirect(path, location) {
+      const { response } = await fetchBounded(base, path, { headers: { "x-forwarded-proto": "https" } });
+      const check = { path, expected: "redirect", status: response.status, location: response.headers.get("location") };
+      report.checks.push(check);
+      assert.equal(response.status, 307, `${mode} ${path}: legacy redirect must be temporary`);
+      assert.equal(response.headers.get("location"), location, "Redirect must remain relative and preserve raw path/query");
+      const target = await fetchBounded(base, location);
+      assert.equal(target.response.status, 200, "Redirect destination must resolve without another redirect");
+      assert.deepEqual(target.bytes, app);
+      check.passed = true;
+    }
+    async function missing(path) {
+      const { response, bytes } = await fetchBounded(base, path);
+      const check = { path, expected: "missing", status: response.status };
+      report.checks.push(check);
+      assert.equal(response.status, 404, `${mode} ${path} must fail closed`);
+      assert.notDeepEqual(bytes, app, "A missing static file must never return the SPA");
+      assert.equal(response.headers.get("x-vardum-gateway-probe"), null, "App static misses must not reach a proxy");
+      check.passed = true;
+    }
+    for (const path of ["/app/", "/app/index.html", "/app/account", "/app/workspaces/example/assets?prefix=brand%2F&q=icon", "/app/reset-password?token=a%2Fb%20c&error=invalid_token", "/app/accept-invitation?id=a%2Fb", "/app/cli-login?callback=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=a%2Bb&label=local%20CLI&workspace=one"])
       await check(path, "app");
-    await check(asset.path, "asset");
-    for (const path of ["/api/", "/api/probe?query=preserved", "/w/workspace/a%2Fb%20c?sig=a%2Bb%3D&path=%252F", "/api/auth/sign-in/email", "/health", "/ready", "/v/", "/v/version/probe?query=preserved", "/w/", "/w/workspace/probe?query=preserved", `/assets/missing-${owner}.js`])
+    await redirect("/app?invitation=a%2Fb&error=invalid_token", "/app/?invitation=a%2Fb&error=invalid_token");
+    for (const path of ["/account", "/account/profile", "/organizations", "/organizations/example", "/workspaces", "/workspaces/a%2Fb%20c/assets?prefix=brand%2F&q=icon", "/reset-password?token=a%2Fb%20c&error=invalid_token", "/reset-password/token", "/accept-invitation?id=a%2Fb%20c", "/accept-invitation/token", "/cli-login?callback=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=a%2Bb%3D&label=local%20CLI&workspace=one", "/cli-login/token"])
+      await redirect(path, `/app${path}`);
+    for (const path of staticFiles.keys()) await check(path, "asset");
+    for (const path of ["/app/assets", `/app/assets/missing-${owner}.js`, `/app/assets/missing-${owner}.css`, `/app/assets/missing-${owner}.woff2`]) await missing(path);
+    for (const path of ["/api", "/api/", "/api/probe?query=preserved", "/w", "/v", "/w/workspace/a%2Fb%20c?sig=a%2Bb%3D&path=%252F", "/api/auth/sign-in/email", "/health", "/ready", "/v/", "/v/version/probe?query=preserved", "/w/", "/w/workspace/probe?query=preserved", "/assets", `/assets/missing-${owner}.js`])
       await check(path, "api");
-    await check("/api/probe", "api", { method: "POST", headers: { "content-type": "application/json" }, body: '{"routing":"preserve-method-and-body"}' });
-    for (const path of ["/", "/unrelated/marketing/path?query=preserved"])
-      await check(path, mode === "marketing" ? "marketing" : "app");
+    await check("/api/probe", "api", { method: "POST", headers: { "content-type": "application/json", cookie: "fixture=session" }, body: '{"routing":"preserve-method-and-body"}' });
+    await check("/v/version/probe?sig=a%2Bb%3D", "api", { headers: { range: "bytes=0-7", cookie: "fixture=session" } });
+    const headPath = "/w/workspace/a%2Fb%20c?sig=a%2Bb%3D";
+    const head = await fetchBounded(base, headPath, { method: "HEAD", headers: { range: "bytes=0-7", cookie: "fixture=session" } });
+    assert.equal(head.response.status, 200);
+    assert.equal(head.bytes.length, 0);
+    assert.equal(head.response.headers.get("x-probe-request-uri"), headPath);
+    assert.equal(head.response.headers.get("x-probe-request-method"), "HEAD");
+    assert.equal(head.response.headers.getSetCookie().length, 2);
+    report.checks.push({ path: headPath, method: "HEAD", expected: "api", status: head.response.status, passed: true });
+    for (const path of ["/", "/?invitation=a%2Fb&error=invalid_token"]) {
+      if (mode === "marketing") await check(path, "marketing");
+      else await redirect(path, `/app/${path.slice(1)}`);
+    }
+    for (const path of ["/features", "/how-it-works", "/cli", "/agents", "/self-hosting", "/docs/guide", "/_astro/site.css", "/favicon.svg", "/index.html", "/appfoo", "/accounting", "/apiary", "/cli/login", "/unrelated/marketing/path?query=preserved"]) {
+      if (mode === "marketing") await check(path, "marketing");
+      else await missing(path);
+    }
     report.initialRoutingPassed = true;
     const identity = await gatewayIdentity(name);
-    gateways.push({ name, mode, base, report, check, identity });
+    gateways.push({ name, mode, base, report, check, redirect, identity });
   }
   const oldApi = await removeBackend("api");
   const newApi = await startBackend("api", "replacement");
@@ -302,7 +353,7 @@ try {
     for (const path of ["/api/probe?query=preserved", "/health", "/ready", "/v/version/probe?query=preserved", "/w/workspace/a%2Fb%20c?sig=a%2Bb%3D&path=%252F", `/assets/missing-${owner}.js`])
       await gateway.check(path, "api", {}, newApi.generation);
     await gateway.check("/api/probe", "api", { method: "POST", headers: { "content-type": "application/json" }, body: '{"replacement":"preserve-method-and-body"}' }, newApi.generation);
-    await gateway.check("/app", "app");
+    await gateway.check("/app/", "app");
     const after = await gatewayIdentity(gateway.name);
     assert.deepEqual(after, gateway.identity, "DNS recovery must not restart or reload nginx or its workers");
     gateway.report.apiDnsRecovery = { recoveredMs, before: gateway.identity, after, passed: true };
@@ -318,7 +369,7 @@ try {
       const after = await gatewayIdentity(gateway.name);
       assert.deepEqual(after, gateway.identity, "Marketing DNS recovery must not reload nginx");
       gateway.report.marketingDnsRecovery = { recoveredMs, before: gateway.identity, after, passed: true };
-    } else await gateway.check("/", "app");
+    } else await gateway.redirect("/", "/app/");
     gateway.report.passed = true;
     console.log(`Gateway ${gateway.mode} config: ${gateway.report.checks.length} HTTP assertions and changed-IP DNS recovery passed.`);
   }
@@ -336,7 +387,7 @@ try {
   const coldDeadline = Date.now() + 20_000;
   let coldApp;
   while (Date.now() < coldDeadline) {
-    try { coldApp = await fetchBounded(coldBase, "/app"); if (coldApp.response.status === 200) break; } catch { /* nginx startup */ }
+    try { coldApp = await fetchBounded(coldBase, "/app/"); if (coldApp.response.status === 200) break; } catch { /* nginx startup */ }
     await delay(250, undefined, { signal: cancellation.signal });
   }
   assert.equal(coldApp?.response.status, 200, "Absent upstream aliases must not prevent gateway startup");

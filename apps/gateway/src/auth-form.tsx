@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient } from "./auth-client";
+import { appAuthCallback, appPath, appUrl } from "./app-path";
 import { CapabilityNotice, useDeploymentCapabilities } from "./capabilities";
 
 const copy = {
@@ -53,7 +54,7 @@ export function AuthForm() {
     if (mode === "forgot") {
       const result = await authClient.requestPasswordReset({
         email,
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: appUrl("/reset-password"),
       });
       if (result.error)
         setError(result.error.message ?? "Password reset request failed");
@@ -70,6 +71,7 @@ export function AuthForm() {
             email,
             password,
             name: String(form.get("name")),
+            callbackURL: appAuthCallback(window.location),
           });
     if (result.error) {
       setError(result.error.message ?? "Authentication failed");
@@ -81,7 +83,7 @@ export function AuthForm() {
     );
     if (invitation) {
       window.location.assign(
-        `/accept-invitation?id=${encodeURIComponent(invitation)}`,
+        appPath(`/accept-invitation?id=${encodeURIComponent(invitation)}`),
       );
       return;
     }

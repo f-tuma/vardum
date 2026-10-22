@@ -6,11 +6,12 @@ that every native binary or runtime is free of vulnerabilities.
 
 ## Pinned inputs
 
-Verified against official catalogs on 3 October 2026:
+Nginx verified against official catalogs on 22 October 2026; the other inputs
+below retain their 3 October 2026 verification date:
 
 | Input | Official index digest | Linux/amd64 manifest |
 | --- | --- | --- |
-| Nginx 1.30.5 Alpine | `sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` | `sha256:8f84ed99befc3891b8f329c5c202785278a2cfb7c25107d57fb2a134a3117433` |
+| Nginx 1.30.6 Alpine 3.24 | `sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951` | `sha256:84ed8c0dd296c188bfc24ed506f46589e9285fb0b11cf3a04d91d524d3067e11` |
 | Node 22.23.3 Bookworm slim (build only) | `sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c` | `sha256:25330af3531fb5e23318554a0aa911125b6e91b1b777edf7655501d207c067a2` |
 | Distroless Node 22 Debian 13 nonroot (runtime, Node 22.23.3) | `sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c` | `sha256:7b0a2b9262b3d1d57e139e08fe11bccb0a7d426ca515eab0cd6abcaf2016ae5c` |
 | Trivy 0.75.0 | `sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa` | `sha256:9db099105405c648166e6b94155eb32f8da12673cf1f455207f7385cc9a77283` |
@@ -45,6 +46,30 @@ IDs, scan counts and package observations below remain dated evidence for
 their original images; the pin change does not transfer that certification
 to a new build or establish a production rollout. Exact-version failure,
 scanner policy and the other runtime findings remain unchanged.
+
+## Gateway base refresh: 22 October 2026
+
+The shared official Nginx base changes from 1.30.5 to the pinned 1.30.6 Alpine
+image above for both `runtime` and `dokploy`. Its vendor layers also change
+Alpine 3.24.2 to 3.24.3 and njs 1.0.1 to 1.0.2; all eight vendor image layers
+are different. The six existing exact APK pins remain unchanged and were
+available in the official Alpine 3.24 x86_64 catalog on 22 October. API, Node
+and application inputs are unchanged by this refresh.
+
+A fresh 22 October scanner database adds nginx findings against the previous
+`1.30.5-r1` images: HIGH CVE-2026-15176, CVE-2026-93479 and CVE-2026-97205;
+MEDIUM CVE-2026-90439, CVE-2026-95101 and CVE-2026-97629. The
+[Alpine 3.24 security database](https://secdb.alpinelinux.org/v3.24/main.json)
+assigns all six fixes to `1.30.6-r0`. The
+[official image source](https://github.com/nginx/docker-nginx/blob/4b9f658be76820b24e4ef4605413a5c08707a512/stable/alpine-slim/Dockerfile)
+and [nginx.org package catalog](https://nginx.org/packages/alpine/v3.24/main/x86_64/APKINDEX.tar.gz)
+identify the expected vendor package as `1.30.6-r1`; metadata alone does not
+prove installation or a clean scan. Acceptance of rebuilt images requires
+recorded package versions, fresh scans of both gateway targets and
+routing/production/restore checks bound to their new image IDs. Preserve prior
+evidence under its original image/source identities. This change introduces no
+scanner waiver or policy relaxation; libx11 and API Fastify findings remain
+separate assessments.
 
 ## Evidence and replay
 
@@ -134,15 +159,17 @@ old database current; each fresh candidate requires a fresh online database.
 
 The disposable probes use the tested immutable images with their normal inherited
 entrypoint. Each of the standard, marketing and loopback fallback configurations
-must pass nginx validation and 39 HTTP assertions, including exact static bundle
-bytes, every SPA route prefix, API/delivery/health routing, legacy assets,
-forwarded headers and method/body/query preservation.
+must pass nginx validation and 71 HTTP assertions, including built JavaScript,
+CSS, font and favicon checksums/MIME types, SPA deep links, relative legacy UI
+redirects, API/delivery/health routing, forwarded headers and exact method, body,
+query, cookie and range preservation. Missing app assets must return 404.
 
-The marketing template explicitly serves `/index.html` as a static file. A SPA
-`try_files` fallback internally redirects there; without the exact location, the
-catch-all marketing proxy incorrectly receives `/app` and other application
-routes. The probe verifies both direct index requests and SPA fallback behavior,
-while the apex and unrelated marketing paths still reach the marketing backend.
+The build lives physically under `/usr/share/nginx/html/app/`. Both gateway
+configurations keep the SPA fallback inside `/app/`, at `/app/index.html`; root
+`/index.html` and `/favicon.svg` belong to marketing. The probe verifies direct
+app index and deep-link requests, segment boundaries and escaped legacy paths.
+Without marketing, the apex redirects to `/app/`. Changed-IP and absent-alias
+startup probes verify API and marketing recovery without nginx reload.
 
 ## Vendor assessment and release gate
 
@@ -151,8 +178,15 @@ each relevant finding as fixed, absent from the effective configuration with
 specific evidence, or unresolved with impact and follow-up. Do not publish with
 unresolved material findings.
 
-Nginx 1.30.5 is outside currently version-fixed ranges in the
-[Nginx advisory table](https://nginx.org/en/security_advisories.html).
+As assessed on 22 October 2026, the
+[Nginx advisory table](https://nginx.org/en/security_advisories.html) lists
+1.30.6 as fixing CVE-2026-15176, CVE-2026-93479, CVE-2026-95101,
+CVE-2026-97629 and CVE-2026-97205; 1.30.5 is affected. Upstream lists
+CVE-2026-90439 as fixed in 1.30.5, while Alpine assigns all six fixes to
+1.30.6-r0. Preserve this metadata disagreement and the original scanner
+severities; it does not justify a waiver. Disposition requires actual package,
+scan and effective-configuration evidence for each rebuilt image.
+
 CVE-2009-4487 remains a version-independent logging limitation with no fixed
 version. Effective configs need separate assessment; compiled module presence
 does not establish use. Supplied configs do not terminate TLS or enable HTTP/2,

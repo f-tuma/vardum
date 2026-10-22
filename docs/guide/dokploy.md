@@ -4,7 +4,7 @@ The same stack on Dokploy, where Traefik already handles TLS.
 
 | File | Use |
 | --- | --- |
-| `compose.dokploy.yml` | Production; app at `/` and `/app` |
+| `compose.dokploy.yml` | Production; app at `/app/`, optional marketing at `/` |
 | `compose.dokploy.dev.yml` | Branch deployment; separate secrets and bucket |
 
 - Use **Docker Compose** mode with a Git source, not Docker Stack.
@@ -14,7 +14,7 @@ The same stack on Dokploy, where Traefik already handles TLS.
 
 1. Paste `.env.dokploy.example` into the Environment editor. Replace every
    domain, email, password and bucket credential.
-2. `APP_URL`: the HTTPS origin, without `/app`.
+2. `APP_URL`: the HTTPS origin, without `/app`; the app opens at `/app/`.
 3. Secrets: `openssl rand -hex 32` each; two different database passwords.
 4. **Domains**: app hostname → service `gateway`, port `80`, path `/`, HTTPS.
 5. Disable **Isolated Deployments** (the gateway joins `dokploy-network`).
@@ -61,6 +61,15 @@ internet
 ## Optional marketing site
 
 - Attach it to `dokploy-network` and set `MARKETING_UPSTREAM=<alias>:80`.
-- Give it no Domain of its own for the app hostname.
+  The current website source uses `vardum-marketing:80`; verify the live alias
+  and healthy image before using it.
+- Give it no Domain of its own for the app hostname; keep gateway's path `/`
+  and do not strip `/app`.
+- Without marketing, `/` redirects to `/app/`. App assets stay under `/app/`;
+  API and delivery URLs stay at the origin, without `/app`.
+- Old root UI links, including `/cli-login?...`, redirect with their query
+  intact. The gateway healthcheck uses `/app/` independently of marketing.
+- A code rollback needs a compatible gateway/API pair for new `/app/...` links;
+  restoring only the previous marketing setting keeps the new app base.
 
 Full guide: [docs/dokploy.md](../dokploy.md).

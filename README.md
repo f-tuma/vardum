@@ -69,6 +69,10 @@ Follow [self-hosting](docs/guide/self-hosting.md) or
 [operations runbook](docs/operations.md) for upgrades and backups. Server/runtime
 acceptance is tracked in the [readiness record](docs/production-readiness-2026-09-20.md#current-status).
 
+The web app runs at `/app/`. Dokploy can serve the marketing site at the apex;
+other deployments redirect the apex to the app. API, delivery and CLI server
+URLs keep the origin without an `/app` suffix.
+
 ## Local development
 
 Requires Node.js 22+, `pnpm@12.4.2` and Docker with Compose.
@@ -79,7 +83,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-The app opens at `http://localhost:5173`, the API at `http://localhost:3000`,
+The app opens at `http://localhost:5173/app/`, the API at `http://localhost:3000`,
 and local email is captured by Mailpit at `http://localhost:8025`.
 `pnpm dev` starts local database, storage and mail services and runs migrations.
 
