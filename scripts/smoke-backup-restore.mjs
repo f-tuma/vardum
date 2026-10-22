@@ -365,7 +365,7 @@ export async function checkBackupRestore({
         for (const item of folderManifestBefore.items) {
           const entry = parsedFolderLock.items[item.id], bytes = await readFile(join(folderProject, item.outputPath));
           assert.equal(entry.versionId, item.versionId); assert.equal(entry.fingerprint, item.fingerprint);
-          assert.equal(entry.downloadUrl, item.downloadUrl); assert.equal(entry.checksum, checksum(bytes));
+          assert.equal(entry.downloadUrl, new URL(item.downloadUrl, base).href); assert.equal(entry.checksum, checksum(bytes));
           assert.equal(item.sourceChecksum, folderStateBefore.version.checksum);
           folderFiles.set(item.outputPath, bytes);
         }

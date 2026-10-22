@@ -140,7 +140,7 @@ export async function checkVardFolderPublicClients({ base, cookie }) {
         assert.equal(parsed.schema, 2);
         const files = new Map();
         for (const item of capturedManifest.items) {
-          const entry = parsed.items[item.id]; assert.ok(entry); assert.equal(entry.versionId, item.versionId); assert.equal(entry.fingerprint, item.fingerprint); assert.equal(entry.downloadUrl, item.downloadUrl);
+          const entry = parsed.items[item.id]; assert.ok(entry); assert.equal(entry.versionId, item.versionId); assert.equal(entry.fingerprint, item.fingerprint); assert.equal(entry.downloadUrl, new URL(item.downloadUrl, base).href);
           const bytes = await readFile(join(project, entry.path)); assert.equal(entry.checksum, digest(bytes)); files.set(entry.path, bytes);
         }
         const decoded = await sharp(files.get("outputs/card.png")).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
