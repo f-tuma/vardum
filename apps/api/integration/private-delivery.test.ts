@@ -31,6 +31,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   let closeDatabase: (() => Promise<void>) | undefined;
   let stopQueue: (() => Promise<unknown>) | undefined;
   let destroyStorage: (() => void) | undefined;
+  let checkHistoricalReadyCleanup: ((objects: Map<string, Buffer>) => Promise<void>) | undefined;
   const objects = new Map<string, Buffer>();
   const objectTypes = new Map<string, string>();
   let storageReads = 0;
@@ -285,7 +286,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       }
       const beforeKeys = (await sql("SELECT * FROM apikey ORDER BY id")).rows;
       const { checkUploadIntegrityMigration } = await import("./upload-integrity-migration.fixture.js");
-      await checkUploadIntegrityMigration(t, admin!, migrations, root);
+      checkHistoricalReadyCleanup = await checkUploadIntegrityMigration(t, admin!, migrations, root);
       assert.deepEqual(
         (await sql("SELECT * FROM vard WHERE id=$1", [oldVardId])).rows[0],
         {
@@ -355,6 +356,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   await queue.startQueue();
   const { storage } = await import("../src/storage.js");
   destroyStorage = () => storage.destroy();
+  await checkHistoricalReadyCleanup!(objects);
   const { transformedVersionUrl } = await import("../src/transformation.js");
   const app = await buildApp();
   closeApp = () => app.close();

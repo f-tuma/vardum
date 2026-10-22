@@ -112,7 +112,7 @@ check is not an upgrade rehearsal for an existing volume.
 
 Apply `0019_upload_object_integrity.sql` before deploying the matching worker.
 It atomically records upload staging keys in a tenant-protected maintenance
-inventory, backfills unfinished versions, and guards the transition to ready.
+inventory, backfills all historical versions, and guards the transition to ready.
 Old workers cannot publish a client-writable key after this migration: their
 completion fails and must be retried by the updated worker. Update all worker
 replicas promptly. Rolling an image back across this boundary keeps reads and
@@ -141,7 +141,9 @@ read/write/list/delete and private-bucket acceptance; local RustFS coverage does
 not establish a live test against AWS or another remote provider.
 
 Legacy ready objects, physical keys, immutable URL identities, stored checksums
-and frozen locks remain untouched. This cannot revoke an already issued grant
+and frozen locks remain untouched. Their original keys are recorded for repeated
+cleanup after deletion, without treating a still-live original as disposable.
+This cannot revoke an already issued grant
 for a legacy ready object; grants issued before the upgrade keep their original
 expiry (up to 15 minutes, plus requests already in flight). New processing uses
 sealed keys. The database rejects reopening or rewriting a ready version.

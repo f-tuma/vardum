@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -8,13 +8,13 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import type { Pool, PoolClient } from "pg";
 
-/** Called in private-delivery's migration test before it applies the full journal. */
+/** Returns the historical cleanup check to run after runtime-role provisioning. */
 export async function checkUploadIntegrityMigration(
   t: TestContext,
   admin: Pool,
   migrations: string,
   root: string,
-) {
+): Promise<(objects: Map<string, Buffer>) => Promise<void>> {
   const previous = join(root, "upload-integrity-0018");
   await cp(migrations, previous, { recursive: true });
   const journalPath = join(previous, "meta/_journal.json");
@@ -50,7 +50,9 @@ export async function checkUploadIntegrityMigration(
   const processing = historical.find(({ status }) => status === "processing")!;
   const concurrentId = randomUUID();
   const versionIds = [...historical.map(({ id }) => id), concurrentId];
-  const checksum = "c".repeat(64);
+  const legacyBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="red"/></svg>');
+  const replayBytes = Buffer.from(legacyBytes.toString().replace('fill="red"', 'fill="tan"'));
+  const checksum = createHash("sha256").update(legacyBytes).digest("hex");
   const storageKey = (versionId: string) =>
     `originals/ws/${assetId}/${versionId}/source`;
   let migrationClient: PoolClient | undefined;
@@ -59,6 +61,19 @@ export async function checkUploadIntegrityMigration(
   let migration: Promise<void> | undefined;
   let writer: Promise<unknown> | undefined;
   let releaseBackfill = () => {};
+  let retainHistoricalData = false;
+  const cleanupFixture = async (objects?: Map<string, Buffer>) => {
+    if (objects) {
+      for (const key of objects.keys()) {
+        if (key.startsWith(`originals/ws/${assetId}/`)) objects.delete(key);
+      }
+    }
+    await admin.query("DELETE FROM vard WHERE id=$1", [vardId]);
+    await admin.query("DELETE FROM asset WHERE id=$1", [assetId]);
+    if ((await admin.query("SELECT to_regclass('public.asset_upload') AS relation")).rows[0].relation) {
+      await admin.query("DELETE FROM asset_upload WHERE version_id=ANY($1::uuid[])", [versionIds]);
+    }
+  };
   try {
     await admin.query(
       "INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES($1,'ws',$2,'Historical upload','fixture','fixture')",
@@ -70,7 +85,7 @@ export async function checkUploadIntegrityMigration(
           id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,
           checksum,expected_checksum,width,height,error,ingest_job_id,ingest_attempt_id,
           retryable,created_at,created_by,updated_at,updated_by
-        ) VALUES($1,'ws',$2,$3,$4,$5,'historical.svg','image/svg+xml',123,
+        ) VALUES($1,'ws',$2,$3,$4,$5,'historical.svg','image/svg+xml',$14,
           $6,$7,$8,$9,$10,$11,$12,$13,'2026-01-01T00:00:00Z','fixture',
           '2026-01-02T00:00:00Z','fixture')`,
         [
@@ -79,7 +94,7 @@ export async function checkUploadIntegrityMigration(
           version.status === "ready" ? 32 : null,
           version.status === "ready" ? 16 : null,
           version.status === "failed" ? "Historical retryable failure" : null,
-          version.jobId, version.attemptId, version.status === "failed",
+          version.jobId, version.attemptId, version.status === "failed", legacyBytes.length,
         ],
       );
     }
@@ -172,12 +187,12 @@ export async function checkUploadIntegrityMigration(
     const ledgerSql = "SELECT version_id,workspace_id,asset_id,storage_key,created_at FROM asset_upload WHERE version_id=ANY($1::uuid[]) ORDER BY version_id";
     const ledger = (await admin.query(ledgerSql, [versionIds])).rows;
     const trackedVersions = (await admin.query(
-      "SELECT id AS version_id,workspace_id,asset_id,storage_key,created_at FROM asset_version WHERE asset_id=$1 AND status <> 'ready' ORDER BY id", [assetId],
+      "SELECT id AS version_id,workspace_id,asset_id,storage_key,created_at FROM asset_version WHERE asset_id=$1 ORDER BY id", [assetId],
     )).rows;
-    assert.equal(ledger.length, 4, "three historical unfinished versions and the concurrent insert are tracked");
+    assert.equal(ledger.length, 5, "all four historical states and the concurrent insert are tracked");
     assert.deepEqual(ledger, trackedVersions);
-    assert.equal(ledger.some((row) => row.version_id === ready.id), false,
-      "the historical ready source is grandfathered without rewriting its object identity");
+    assert.equal(ledger.some((row) => row.version_id === ready.id), true,
+      "the historical ready source is tracked without rewriting its object identity");
     await assert.rejects(
       admin.query("UPDATE asset_version SET status='ready',checksum=$2 WHERE id=$1", [processing.id, checksum]),
       /must be sealed/,
@@ -192,16 +207,63 @@ export async function checkUploadIntegrityMigration(
     assert.deepEqual((await admin.query(ledgerSql, [versionIds])).rows, ledger,
       "tracked migrator reruns preserve the durable inventory");
     t.diagnostic("Historical 0018→0019 pending/processing/failed/ready upgrade and locked concurrent upload passed.");
+    retainHistoricalData = true;
+    return async (objects) => {
+      try {
+        const { cleanupUploadObjects } = await import("../src/upload-objects.js");
+        const { pool } = await import("../src/db/index.js");
+        assert.equal((await pool.query("SELECT current_user AS role")).rows[0].role, "varda_app",
+          "historical cleanup must use the provisioned runtime role");
+        assert.equal((await pool.query("SELECT * FROM asset_upload WHERE version_id=ANY($1::uuid[])", [versionIds])).rowCount, 0,
+          "the runtime connection has no unscoped access to the historical ledger");
+        const readyKey = storageKey(ready.id);
+        const now = Date.now();
+        objects.set(readyKey, legacyBytes);
+        await cleanupUploadObjects(new Date(now));
+        assert.deepEqual(objects.get(readyKey), legacyBytes,
+          "cleanup preserves the original bytes of a historical ready version");
+        assert.equal(createHash("sha256").update(objects.get(readyKey)!).digest("hex"), checksum);
+        assert.deepEqual(
+          (await admin.query("SELECT * FROM asset_version WHERE id=ANY($1::uuid[]) ORDER BY number", [historical.map(({ id }) => id)])).rows,
+          beforeVersions,
+          "runtime cleanup does not rewrite historical statuses, ready keys or checksums",
+        );
+        assert.deepEqual((await admin.query("SELECT * FROM asset WHERE id=$1", [assetId])).rows, beforeAsset);
+        assert.deepEqual((await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows, beforePin,
+          "current and pinned references survive historical ready cleanup");
+        assert.deepEqual((await admin.query(ledgerSql, [versionIds])).rows, ledger);
+
+        await admin.query("DELETE FROM vard WHERE id=$1", [vardId]);
+        await admin.query("DELETE FROM asset WHERE id=$1", [assetId]);
+        assert.equal((await admin.query("SELECT * FROM asset_version WHERE id=ANY($1::uuid[])", [versionIds])).rowCount, 0);
+        assert.deepEqual((await admin.query(ledgerSql, [versionIds])).rows, ledger,
+          "historical ready cleanup inventory survives metadata deletion");
+        // The asset-delete job has removed the original. A still valid old POST
+        // can complete afterwards, so the retained ledger must sweep it again.
+        assert.equal(objects.delete(readyKey), true);
+        assert.equal(replayBytes.length, legacyBytes.length);
+        assert.notEqual(createHash("sha256").update(replayBytes).digest("hex"), checksum);
+        objects.set(readyKey, replayBytes);
+        await cleanupUploadObjects(new Date(now + 86_400_001));
+        assert.equal(objects.has(readyKey), false,
+          "a late recreation after historical ready deletion is swept");
+        assert.deepEqual((await admin.query(ledgerSql, [versionIds])).rows, ledger);
+        objects.set(readyKey, replayBytes);
+        await cleanupUploadObjects(new Date(now + 2 * 86_400_001));
+        assert.equal(objects.has(readyKey), false,
+          "a second late recreation is swept without losing the durable tombstone");
+        assert.deepEqual((await admin.query(ledgerSql, [versionIds])).rows, ledger);
+        t.diagnostic("Historical ready bytes survived cleanup; deleted historical keys and repeated late recreations were swept under the runtime role.");
+      } finally {
+        await cleanupFixture(objects);
+      }
+    };
   } finally {
     releaseBackfill();
     await Promise.allSettled([migration, writer].filter((operation) => operation !== undefined));
     if (migrationClient && originalQuery) migrationClient.query = originalQuery;
     migrationClient?.release();
     writerClient?.release();
-    await admin.query("DELETE FROM vard WHERE id=$1", [vardId]);
-    await admin.query("DELETE FROM asset WHERE id=$1", [assetId]);
-    if ((await admin.query("SELECT to_regclass('public.asset_upload') AS relation")).rows[0].relation) {
-      await admin.query("DELETE FROM asset_upload WHERE version_id=ANY($1::uuid[])", [versionIds]);
-    }
+    if (!retainHistoricalData) await cleanupFixture();
   }
 }

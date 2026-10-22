@@ -29,7 +29,7 @@ LOCK TABLE "asset_version" IN SHARE ROW EXCLUSIVE MODE;
 --> statement-breakpoint
 INSERT INTO "asset_upload" ("version_id", "workspace_id", "asset_id", "storage_key", "created_at")
   SELECT "id", "workspace_id", "asset_id", "storage_key", "created_at"
-  FROM "asset_version" WHERE "status" <> 'ready';
+  FROM "asset_version";
 --> statement-breakpoint
 CREATE FUNCTION "track_asset_upload"() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 BEGIN
