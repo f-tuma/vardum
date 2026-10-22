@@ -5,7 +5,7 @@ import type {
   EvidenceScope,
 } from "../known-usage-model.js";
 import type { Transformation } from "../transformation.js";
-import type { VardFolderRule } from "@vardum/shared";
+import type { VardFolderRuleV2 } from "@vardum/shared";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -51,8 +51,8 @@ const vardDefinitionPolicy = (column: AnyPgColumn) =>
   pgPolicy("vard_definition_capability", {
     as: "restrictive",
     for: "all",
-    using: sql`${column} = 1 OR COALESCE(current_setting('vardum.vard_definition_schema', true), '') = '2'`,
-    withCheck: sql`${column} = 1 OR COALESCE(current_setting('vardum.vard_definition_schema', true), '') = '2'`,
+    using: sql`${column} = 1 OR (${column} = 2 AND COALESCE(current_setting('vardum.vard_definition_schema', true), '') IN ('2', '3')) OR (${column} = 3 AND COALESCE(current_setting('vardum.vard_definition_schema', true), '') = '3')`,
+    withCheck: sql`${column} = 1 OR (${column} = 2 AND COALESCE(current_setting('vardum.vard_definition_schema', true), '') IN ('2', '3')) OR (${column} = 3 AND COALESCE(current_setting('vardum.vard_definition_schema', true), '') = '3')`,
   });
 
 // Global operational liveness only; no tenant identifiers or job payloads.
@@ -133,9 +133,9 @@ export const vard = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     isPublic: boolean("is_public").default(false).notNull(),
-    definitionSchema: smallint("definition_schema").$type<1 | 2>().notNull().default(1),
+    definitionSchema: smallint("definition_schema").$type<1 | 2 | 3>().notNull().default(1),
     folderRules: jsonb("folder_rules")
-      .$type<VardFolderRule[]>()
+      .$type<VardFolderRuleV2[]>()
       .default([])
       .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -157,7 +157,7 @@ export const vard = pgTable(
       "vard_name_length_check",
       sql`length(${table.name}) between 1 and 80`,
     ),
-    check("vard_definition_schema_check", sql`${table.definitionSchema} IN (1, 2)`),
+    check("vard_definition_schema_check", sql`${table.definitionSchema} IN (1, 2, 3)`),
     check("vard_folder_rules_definition_check", sql`public.vard_folder_rules_fit_definition(${table.folderRules}, ${table.definitionSchema})`),
     tenantPolicy(table.workspaceId),
     vardDefinitionPolicy(table.definitionSchema),
@@ -373,7 +373,7 @@ export const vardItem = pgTable(
       .notNull()
       .references(() => workspace.id, { onDelete: "cascade" }),
     vardId: uuid("vard_id").notNull(),
-    definitionSchema: smallint("definition_schema").$type<1 | 2>().notNull().default(1),
+    definitionSchema: smallint("definition_schema").$type<1 | 2 | 3>().notNull().default(1),
     assetId: uuid("asset_id").notNull(),
     assetUseId: uuid("asset_use_id"),
     versionId: uuid("version_id"),
@@ -416,8 +416,8 @@ export const vardItem = pgTable(
     index("vard_item_vard_idx").on(table.vardId),
     index("vard_item_parent_definition_idx").on(table.workspaceId, table.vardId, table.definitionSchema),
     index("vard_item_use_idx").on(table.workspaceId, table.assetUseId, table.assetId),
-    check("vard_item_definition_schema_check", sql`${table.definitionSchema} IN (1, 2)`),
-    check("vard_item_use_binding_check", sql`${table.assetUseId} IS NULL OR (${table.definitionSchema} = 2 AND ${table.versionId} IS NULL AND ${table.transformation} IS NULL AND ${table.writable} = false)`),
+    check("vard_item_definition_schema_check", sql`${table.definitionSchema} IN (1, 2, 3)`),
+    check("vard_item_use_binding_check", sql`${table.assetUseId} IS NULL OR (${table.definitionSchema} IN (2, 3) AND ${table.versionId} IS NULL AND ${table.transformation} IS NULL AND ${table.writable} = false)`),
     check(
       "vard_item_output_path_check",
       sql`length(${table.outputPath}) between 1 and 500 and ${table.outputPath} !~ '(^/|\\\\|(^|/)\\.\\.?(/|$))'`,

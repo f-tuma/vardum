@@ -32,6 +32,10 @@ Create a linked use in the library to give one source its own output dimensions,
 safe area and format. In a Vard, choose **Add asset → Linked library use** to
 follow those settings live. Source mappings keep independent settings. Normal
 pull updates a linked output; frozen pull keeps the captured output unchanged.
+Folder rules keep including originals only unless you enable **Include linked
+library uses** on that rule. It matches the uses' own paths and follows their
+saved settings; generated outputs are read-only. Removing a folder-only use
+removes its live output while existing frozen snapshots retain their captured files.
 See [library uses](../library-uses.md) for unavailable outputs, removal and compatibility.
 
 ## Visibility

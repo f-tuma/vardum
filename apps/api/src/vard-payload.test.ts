@@ -3,12 +3,12 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { assetUse, assetVersion, vard, vardItem, type VardTransformation } from "./db/app-schema.js";
+import { asset, assetUse, assetVersion, vard, vardItem, type VardTransformation } from "./db/app-schema.js";
 import type { useRows } from "./asset-use-query.js";
 import { config } from "./config.js";
 import type { Transaction } from "./db/tenant.js";
 import { canonicalizeTransformation } from "./transformation.js";
-import { VardResolutionError } from "./vard-folder-rules.js";
+import { folderUseItemId, VardResolutionError } from "./vard-folder-rules.js";
 import { buildVardPayloadInTransaction } from "./vard-payload.js";
 
 function fixture(count = 1000) {
@@ -17,7 +17,7 @@ function fixture(count = 1000) {
     id: vardId,
     name: "Fixture",
     isPublic: true,
-    folderRules: [],
+    folderRules: [] as { sourcePrefix: string; outputPrefix: string; includeUses?: boolean }[],
     updatedAt: new Date(),
     workspaceSlug: "fixture",
   };
@@ -60,20 +60,37 @@ function fixture(count = 1000) {
     item.assetUseId = use.id;
     return use;
   }
+  const folderSources: Array<{ assetId: string; key: string; mimeType: string;
+    isPublic: boolean; currentVersionId: string | null }> = [];
+  const folderUses: Array<{ assetUseId: string; assetId: string; key: string;
+    outputMimeType: string; sourceKey: string; isPublic: boolean;
+    currentVersionId: string | null; sourceMimeType: string | null }> = [];
+  function includeUse(index: number, key: string, values: Partial<(typeof uses)[number]> = {}) {
+    const use = link(index, { key, ...values });
+    folderUses.push({ assetUseId: use.id, assetId: use.sourceAssetId, key: use.key,
+      outputMimeType: use.outputMimeType, sourceKey: use.sourceKey, isPublic: use.isPublic,
+      currentVersionId: use.currentVersionId, sourceMimeType: use.sourceMimeType });
+    return use;
+  }
+  const folderQueries: Array<{ kind: "source" | "use"; params: unknown[]; where: string;
+    privateWindow: string; limit: number | undefined; joins: Array<{ kind: string; sql: string }> }> = [];
   const versionQueries: unknown[][] = [];
   const useQueries: unknown[][] = [];
   const tx = {
-    select() {
-      let table: unknown, condition: SQL | undefined;
+    select(selection?: Record<string, unknown>) {
+      let table: unknown, condition: SQL | undefined, limit: number | undefined;
+      const joins: Array<{ kind: string; sql: string }> = [];
       const query = {
         from(value: unknown) {
           table = value;
           return query;
         },
-        innerJoin() {
+        innerJoin(_table: unknown, value: SQL) {
+          joins.push({ kind: "inner", sql: new PgDialect().sqlToQuery(value).sql });
           return query;
         },
-        leftJoin() {
+        leftJoin(_table: unknown, value: SQL) {
+          joins.push({ kind: "left", sql: new PgDialect().sqlToQuery(value).sql });
           return query;
         },
         $dynamic() {
@@ -86,7 +103,8 @@ function fixture(count = 1000) {
         orderBy() {
           return query;
         },
-        limit() {
+        limit(value: number) {
+          limit = value;
           return query;
         },
         then(
@@ -96,6 +114,15 @@ function fixture(count = 1000) {
           let rows: unknown[];
           if (table === vard) rows = [record];
           else if (table === vardItem) rows = items;
+          else if (selection?.hasPrivateMember && (table === asset || table === assetUse)) {
+            const compiled = new PgDialect().sqlToQuery(condition!);
+            folderQueries.push({ kind: table === asset ? "source" : "use", params: compiled.params,
+              where: compiled.sql, privateWindow: new PgDialect().sqlToQuery(selection.hasPrivateMember as SQL).sql,
+              joins, limit });
+            const all = table === asset ? folderSources : folderUses;
+            const hasPrivateMember = all.some((row) => !row.isPublic);
+            rows = all.slice(0, limit).map((row) => ({ ...row, hasPrivateMember }));
+          }
           else if (table === assetUse) {
             const params = new PgDialect().sqlToQuery(condition!).params;
             useQueries.push(params);
@@ -112,7 +139,7 @@ function fixture(count = 1000) {
       return query;
     },
   } as unknown as Transaction;
-  return { vardId, record, items, versions, uses, link, versionQueries, useQueries, tx };
+  return { vardId, record, items, versions, uses, link, includeUse, folderSources, folderUses, folderQueries, versionQueries, useQueries, tx };
 }
 test("selected payload validates 1000 outputs but queries and builds only selected exact asset/path versions", async () => {
   const f = fixture();
@@ -347,4 +374,119 @@ test("capture rechecks the public flag before outputs and never exposes editor d
   });
   assert.equal("availabilityError" in payload!.items[0]!, false);
   assert.equal("linkedUse" in payload!.items[0]!, false);
+});
+
+test("generated uses match use keys while canonical source URLs and complete live recipes stay separate", async () => {
+  const f = fixture(1);
+  const recipe = { w: 40, h: 60, fit: "contain" as const, format: "png" as const,
+    q: 91, pad: 12.25, bg: "#abcdef", render: "v2" as const };
+  f.versions[0]!.mimeType = "image/svg+xml";
+  f.items[0]!.key = "outside/source.svg";
+  const use = f.includeUse(0, "linked/card", { transformation: recipe });
+  const source = f.items[0]!;
+  f.items.length = 0;
+  f.record.folderRules = [{ sourcePrefix: "linked/", outputPrefix: "public/", includeUses: true }];
+  const first = (await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId, {
+    includeBindingIdentity: true,
+  }))!.items[0]!;
+  assert.equal(first.id, folderUseItemId(use.id, "public/card.png"));
+  assert.equal(first.assetId, source.assetId);
+  assert.equal(first.key, source.key);
+  assert.equal(first.outputPath, "public/card.png");
+  assert.deepEqual(first.transformation, recipe);
+  assert.deepEqual(first.bindingIdentity, { kind: "use", assetUseId: use.id });
+  assert.equal(first.pinned, false);
+  assert.equal(first.writable, false);
+  assert.ok(first.downloadUrl!.startsWith(`/w/fixture/__v/${source.currentVersionId}/${source.key}?`));
+  assert.ok(first.downloadUrl!.includes("pad=12.25"));
+  assert.ok(first.downloadUrl!.includes("bg=%23abcdef"));
+  use.transformation = { ...recipe, w: 80 };
+  const updated = (await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId))!.items[0]!;
+  assert.equal(updated.id, first.id);
+  assert.notEqual(updated.fingerprint, first.fingerprint);
+  const nextVersionId = randomUUID();
+  f.versions[0]!.id = nextVersionId;
+  f.folderUses[0]!.currentVersionId = use.currentVersionId = nextVersionId;
+  const next = (await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId))!.items[0]!;
+  assert.equal(next.id, first.id);
+  assert.equal(next.versionId, nextVersionId);
+  use.outputMimeType = f.folderUses[0]!.outputMimeType = "image/webp";
+  use.transformation = { ...recipe, format: "webp" };
+  const reformatted = (await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId))!.items[0]!;
+  assert.equal(reformatted.outputPath, "public/card.webp");
+  assert.notEqual(reformatted.id, first.id);
+  f.folderUses.length = 0;
+  assert.deepEqual((await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId))!.items, []);
+});
+
+test("generated unready or mismatched uses retain membership without an Original fallback", async () => {
+  for (const scenario of ["unready", "fixed-path"] as const) {
+    const f = fixture(1);
+    const use = f.includeUse(0, "linked/card.png");
+    f.items.length = 0;
+    f.record.folderRules = [{ sourcePrefix: "linked/", outputPrefix: "public/", includeUses: true }];
+    if (scenario === "unready") {
+      f.versions[0]!.status = "processing";
+      use.sourceMimeType = f.folderUses[0]!.sourceMimeType = null;
+    } else {
+      use.outputMimeType = f.folderUses[0]!.outputMimeType = "image/webp";
+      use.transformation = { format: "webp" };
+    }
+    const result = (await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId, {
+      includeEditorDiagnostics: true,
+    }))!.items[0]!;
+    assert.equal(result.id, folderUseItemId(use.id, "public/card.png"), scenario);
+    assert.equal(result.outputPath, "public/card.png", scenario);
+    for (const value of [result.versionId, result.sourceChecksum, result.fingerprint, result.downloadUrl, result.size])
+      assert.equal(value, null, scenario);
+    assert.ok(result.availabilityError, scenario);
+  }
+});
+
+test("both full matching privacy windows precede source overflow and selected availability hydration", async () => {
+  const f = fixture(0);
+  f.record.folderRules = [{ sourcePrefix: "linked/", outputPrefix: "public/", includeUses: true }];
+  f.folderSources.push(...Array.from({ length: 1001 }, (_, index) => ({
+    assetId: `source-${index}`, key: `linked/source-${index}.png`, mimeType: "image/png",
+    isPublic: true, currentVersionId: null,
+  })));
+  f.folderUses.push(...Array.from({ length: 1002 }, (_, index) => ({
+    assetUseId: `use-${index}`, assetId: `outside-${index}`, key: `linked/use-${index}`,
+    outputMimeType: "image/png", sourceKey: `outside/source-${index}.png`,
+    isPublic: index !== 1001, currentVersionId: null, sourceMimeType: null,
+  })));
+  assert.equal(await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId, {
+    anonymous: true, selectedTargets: [{ assetId: "source-0", outputPath: "public/source-0.png" }],
+  }), null);
+  assert.deepEqual(f.folderQueries.map((query) => query.kind), ["source", "use"]);
+  for (const query of f.folderQueries) {
+    assert.equal(query.limit, 1001);
+    assert.match(query.privateWindow, /bool_or\(not .*is_public.*\) over \(\)/);
+  }
+  const useQuery = f.folderQueries[1]!;
+  assert.match(useQuery.where, /starts_with\("asset_use"\."key"/);
+  assert.doesNotMatch(useQuery.where, /status|mime_type/);
+  assert.equal(useQuery.joins[1]!.kind, "left");
+  assert.match(useQuery.joins[1]!.sql, /status/);
+  assert.equal(f.useQueries.length, 0);
+  assert.equal(f.versionQueries.length, 0);
+  await assert.rejects(buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId), /more than 1000/);
+});
+
+test("folder use hydration remains selected-only after whole namespace validation and opt-in is explicit", async () => {
+  const f = fixture(2);
+  const use = f.includeUse(0, "linked/card");
+  const canonical = f.items.shift()!;
+  f.record.folderRules = [{ sourcePrefix: "linked/", outputPrefix: "public/", includeUses: true }];
+  const result = await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId, {
+    selectedTargets: [{ assetId: canonical.assetId, outputPath: "public/card.png" }],
+  });
+  assert.equal(result!.items.length, 1);
+  assert.deepEqual(f.useQueries, [["fixture-ws", use.id]]);
+  assert.deepEqual(f.versionQueries, [["fixture-ws", canonical.currentVersionId]]);
+  f.record.folderRules[0]!.includeUses = false;
+  f.folderQueries.length = 0;
+  const withoutOptIn = await buildVardPayloadInTransaction(f.tx, "fixture-ws", f.vardId);
+  assert.equal(withoutOptIn!.items.length, 1);
+  assert.deepEqual(f.folderQueries.map((query) => query.kind), ["source"]);
 });

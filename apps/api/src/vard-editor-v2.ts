@@ -6,7 +6,7 @@ import { asset, assetUse, assetVersion, auditEvent, vard, vardItem } from "./db/
 import { useRows, useIssue } from "./asset-use-query.js";
 import type { AuthorizationResult } from "./authorization.js";
 import type { Transaction } from "./db/tenant.js";
-import { folderRulesSchema, vardOutputPath } from "./vard-folder-rules.js";
+import { folderRulesV2Schema, vardOutputPath } from "./vard-folder-rules.js";
 import { buildVardPayloadInTransaction } from "./vard-payload.js";
 import { transformationSchema } from "./transformation.js";
 
@@ -33,7 +33,7 @@ export const v2ItemsBody = z.object({
 export const v2PatchBody = z.object({
   definitionSchema: z.literal(2), expectedRevision: v2Revision,
   name: z.string().trim().min(1).max(80).optional(),
-  isPublic: z.boolean().optional(), folderRules: folderRulesSchema.optional(),
+  isPublic: z.boolean().optional(), folderRules: folderRulesV2Schema.optional(),
   returnToSourceOnly: z.literal(true).optional(),
 }).strict().refine((value) => value.name !== undefined || value.isPublic !== undefined ||
   value.folderRules !== undefined || value.returnToSourceOnly === true,
@@ -84,7 +84,8 @@ export async function editableStateV2(tx: Transaction, workspaceId: string, vard
   }).from(vardItem).where(and(eq(vardItem.workspaceId, workspaceId), eq(vardItem.vardId, vardId)))
     .orderBy(asc(vardItem.id));
   if (items.some((item) => item.definitionSchema !== record.definitionSchema ||
-    (item.assetUseId !== null && record.definitionSchema !== 2)))
+    (item.assetUseId !== null && record.definitionSchema === 1)) ||
+    (record.folderRules.some((rule) => rule.includeUses === true) && record.definitionSchema !== 3))
     throw new Error("Inconsistent Vard definition format");
   const { updatedAt: _date, definitionSchema: storedDefinitionSchema, ...literalRecord } = record;
   const revision = `v2:${createHash("sha256").update(canonicalDefinition({
@@ -141,12 +142,18 @@ export async function patchEditorV2(
   const { definitionSchema: _wire, expectedRevision: _expected,
     returnToSourceOnly, ...fields } = body;
   const proposedRules = fields.folderRules ?? state.record.folderRules;
+  const hasFolderUses = proposedRules.some((rule) => rule.includeUses === true);
   if (returnToSourceOnly && (state.items.some((item) => item.assetUseId !== null) ||
-    proposedRules.some((rule) => "includeUses" in rule && rule.includeUses === true)))
+    hasFolderUses))
     throw new VardEditorV2Error(409,
       "Remove live library bindings before returning to a source-only definition.",
       undefined, "vard_definition_has_bindings");
-  const definitionSchema = returnToSourceOnly ? 1 : state.record.definitionSchema;
+  // Historical A rows can contain literal false even when this PATCH omits
+  // folderRules. An explicit return must restore the legacy round-trip subset.
+  if (returnToSourceOnly) fields.folderRules = proposedRules.map(
+    ({ includeUses: _includeUses, ...rule }) => rule,
+  );
+  const definitionSchema = returnToSourceOnly ? 1 : hasFolderUses ? 3 : state.record.definitionSchema;
   const changed = definitionSchema !== state.record.definitionSchema ||
     Object.entries(fields).some(([key, value]) => canonicalDefinition(value) !==
       canonicalDefinition(state.record[key as keyof typeof state.record]));
@@ -254,8 +261,8 @@ export async function replaceEditorItemsV2(
       canonicalDefinition(literalItemFields(byId.get(item.id)!)));
   const removed = state.items.filter((item) => !retainedIds.has(item.id));
   if (changed.length || removed.length) {
-    const definitionSchema = desired.some((item) => item.assetUseId !== null)
-      ? 2 : state.record.definitionSchema;
+    const definitionSchema = state.record.definitionSchema === 1 &&
+      desired.some((item) => item.assetUseId !== null) ? 2 : state.record.definitionSchema;
     // The composite parent FK upgrades every old child before any bound insert.
     if (definitionSchema !== state.record.definitionSchema)
       await tx.update(vard).set({ definitionSchema })

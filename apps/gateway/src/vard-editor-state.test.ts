@@ -271,3 +271,21 @@ test("captured drafts retain all original rows, rules, settings and literal unav
   assert.equal(inputs[0]?.versionId, "missing-pin");
   assert.equal(inputs[1]?.writable, true);
 });
+
+
+test("stored3 folder baselines preserve opt-in literally and safe source-only return requires no true rule or manual use", () => {
+  const editor: VardEditorDefinitionV2 = { definitionSchema: 2, storedDefinitionSchema: 3, revision: `v2:${"a".repeat(64)}`,
+    id: "vard", workspaceId: "workspace", name: "Folder", isPublic: false, updatedAt: "2026-01-01",
+    folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }, { sourcePrefix: "other/", outputPrefix: "other/", includeUses: false }], items: [] };
+  const baseline = captureVardBaselineV2(editor);
+  editor.folderRules[0]!.includeUses = false;
+  assert.equal(baseline.definition.folderRules[0]?.includeUses, true);
+  assert.equal(baseline.definition.folderRules[1]?.includeUses, false);
+  assert.equal(canReturnToSourceOnly(baseline.definition), false);
+  assert.equal(canReturnToSourceOnly(editor), true);
+  assert.equal(canReturnToSourceOnly({ ...editor, folderRules: [{ sourcePrefix: "", outputPrefix: "" }] }), true);
+  assert.equal(canReturnToSourceOnly({ ...editor, items: [{ id: "use", outputPath: "use.svg", binding: { kind: "use", assetUseId: "use" }, resolved: { ...manual, pinned: false, availabilityError: null }, linkedUse: null }] }), false);
+  const generatedUse = { ...manual, id: "folder:use:generated", outputPath: "generated.svg", writable: false };
+  assert.deepEqual(generatedOutputs({ ...definition, items: [generatedUse] }), [generatedUse]);
+  assert.deepEqual(vardItemInputsV2(baseline.items, new Set()), []);
+});

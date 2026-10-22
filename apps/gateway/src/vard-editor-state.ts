@@ -113,5 +113,7 @@ export function vardItemInputsV2(items: DraftItemV2[], existingIds: Set<string>)
 }
 
 export function canReturnToSourceOnly(definition: VardEditorDefinitionV2) {
-  return definition.storedDefinitionSchema === 2 && definition.items.every(({ binding }) => binding.kind === "source");
+  return [2, 3].includes(definition.storedDefinitionSchema)
+    && definition.items.every(({ binding }) => binding.kind === "source")
+    && definition.folderRules.every((rule) => rule.includeUses !== true);
 }

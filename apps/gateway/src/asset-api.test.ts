@@ -6,6 +6,9 @@ import {
   setAssetVisibility,
   uploadVersion,
   validateUploadFile,
+  getVardEditorV2,
+  updateVardEditorV2,
+  VardEditorUnavailableError,
 } from "./asset-api.js";
 
 test("assetDeliveryPath keeps private Open/copy URLs on the app origin", () => {
@@ -174,4 +177,61 @@ test("oversized uploads stop before creating a version; exact limits remain vali
     await validateUploadFile(new File([new Uint8Array(26 * mib)], "clip.mp4")),
     "video/mp4",
   );
+});
+
+
+const folderEditor = (overrides: Record<string, unknown> = {}) => ({
+  definitionSchema: 2, storedDefinitionSchema: 3, revision: `v2:${"a".repeat(64)}`,
+  id: "vard", workspaceId: "workspace", name: "Folder uses", updatedAt: "2026-01-01", isPublic: false,
+  folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }], items: [], ...overrides,
+});
+
+test("schema2 folder decoding accepts stored3 and historical false without inventing opt-in defaults", async (t) => {
+  const values = [folderEditor(), folderEditor({ storedDefinitionSchema: 1, folderRules: [{ sourcePrefix: "", outputPrefix: "", includeUses: false }] }),
+    folderEditor({ storedDefinitionSchema: 2, folderRules: [{ sourcePrefix: "", outputPrefix: "" }] })];
+  t.mock.method(globalThis, "fetch", async () => Response.json(values.shift()));
+  const capability = { vardDefinitionSchema: 2, vardFolderUses: 1 };
+  assert.equal((await getVardEditorV2("workspace", "vard", capability)).storedDefinitionSchema, 3);
+  assert.equal((await getVardEditorV2("workspace", "vard", capability)).folderRules[0]?.includeUses, false);
+  assert.equal(Object.hasOwn((await getVardEditorV2("workspace", "vard", capability)).folderRules[0]!, "includeUses"), false);
+});
+
+for (const invalid of [
+  { storedDefinitionSchema: 1 }, { storedDefinitionSchema: 2 }, { storedDefinitionSchema: "3" }, { storedDefinitionSchema: 4 },
+  ...["true", 1, null].map(includeUses => ({ folderRules: [{ sourcePrefix: "", outputPrefix: "", includeUses }] })),
+  { folderRules: [{ sourcePrefix: "", outputPrefix: "", includeUses: true, unknown: true }] },
+]) test("schema2 folder decoder refuses inconsistent or malformed rule " + JSON.stringify(invalid), async (t) => {
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => { calls.push(url); return Response.json(folderEditor(invalid)); });
+  await assert.rejects(getVardEditorV2("workspace", "vard", { vardDefinitionSchema: 2, vardFolderUses: 1 }), VardEditorUnavailableError);
+  assert.deepEqual(calls, ["/api/workspaces/workspace/vards/vard/editor?definitionSchema=2"]);
+});
+
+for (const vardFolderUses of [undefined, 0, 2]) test("exact folder capability is required for stored3 reads and true writes: " + vardFolderUses, async (t) => {
+  const calls: string[] = [];
+  const response = folderEditor();
+  t.mock.method(globalThis, "fetch", async (url: string) => { calls.push(url); return Response.json(response); });
+  await assert.rejects(getVardEditorV2("workspace", "vard", { vardDefinitionSchema: 2, vardFolderUses }), /linked folder uses/);
+  const before = calls.length;
+  await assert.rejects(updateVardEditorV2("workspace", "vard", response.revision, { folderRules: [{ sourcePrefix: "", outputPrefix: "", includeUses: true }] }, { vardDefinitionSchema: 2, vardFolderUses }), /linked folder uses/);
+  assert.equal(calls.length, before, "unsupported true opt-in must never be submitted");
+  assert.deepEqual(calls, ["/api/workspaces/workspace/vards/vard/editor?definitionSchema=2"]);
+});
+
+test("manual A editing remains available without the folder capability and never uses a legacy mutation", async (t) => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const response = folderEditor({ storedDefinitionSchema: 2, folderRules: [] });
+  t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => { calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null }); return Response.json(response); });
+  await updateVardEditorV2("workspace", "vard", response.revision, { name: "A still works" }, { vardDefinitionSchema: 2 });
+  assert.deepEqual(calls, [{ url: "/api/workspaces/workspace/vards/vard/editor", body: { name: "A still works", definitionSchema: 2, expectedRevision: response.revision } }]);
+});
+
+test("stored3 decoder retains an explicit manual use binding without resolving it into source input", async (t) => {
+  const binding = { kind: "use", assetUseId: "use" };
+  const item = { id: "item", outputPath: "fixed.svg", binding, linkedUse: null,
+    resolved: { assetId: "source", key: "brand/source.svg", versionId: null, sourceChecksum: null, mimeType: null, fingerprint: null,
+      downloadUrl: null, availabilityError: "Unavailable", transformation: null, pinned: false, writable: false, size: null } };
+  t.mock.method(globalThis, "fetch", async () => Response.json(folderEditor({ items: [item] })));
+  const decoded = await getVardEditorV2("workspace", "vard", { vardDefinitionSchema: 2, vardFolderUses: 1 });
+  assert.deepEqual(decoded.items[0]?.binding, binding);
 });

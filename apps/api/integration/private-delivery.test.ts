@@ -1886,6 +1886,16 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       root, cliPath: vardImportCliPath,
     });
   });
+  await t.test("VARD explicit folder-use inclusion under the production database role", async (folderTest) => {
+    const { checkVardFolderUses } = await import("./vard-folder-uses.fixture.js");
+    await checkVardFolderUses(folderTest, { admin: admin!, app, objects, keyHeaders, cookies,
+      root, cliPath: vardImportCliPath,
+    });
+  });
+  await t.test("known usage of generated linked-use outputs under the production database role", async (usageTest) => {
+    const { checkKnownUsageFolderUses } = await import("./known-usages.fixture.js");
+    await checkKnownUsageFolderUses(usageTest, { app, admin: admin! });
+  });
   await t.test("VARD import through the real CLI, uploads, worker and pull", async (importCliTest) => {
     const { checkVardImportCli } = await import("./vard-import-cli.fixture.js");
     await checkVardImportCli(importCliTest, {

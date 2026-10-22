@@ -325,7 +325,7 @@ export async function checkVardEditorV2(t: TestContext, fixture: {
     try {
       const client = await old.connect();
       try {
-        assert.notEqual((await client.query("SELECT current_setting('vardum.vard_definition_schema',true) AS cap")).rows[0].cap, "2");
+        assert.equal(["2", "3"].includes((await client.query("SELECT current_setting('vardum.vard_definition_schema',true) AS cap")).rows[0].cap), false);
         await client.query("BEGIN"); await client.query("SELECT set_config('app.workspace_id','ws',true)");
         assert.equal((await client.query("SELECT * FROM vard WHERE id=$1", [initial.id])).rowCount, 0);
         assert.equal((await client.query("SELECT * FROM vard_item WHERE vard_id=$1", [initial.id])).rowCount, 0);
@@ -337,12 +337,12 @@ export async function checkVardEditorV2(t: TestContext, fixture: {
         assert.equal((await admin.query("SELECT * FROM audit_event WHERE id=$1", [auditId])).rowCount, 0);
         assert.equal((await admin.query("SELECT * FROM asset WHERE id=$1", [directSource.id])).rowCount, 1);
         assert.equal((await snapshot(initial.id)).items.length, 2);
-        assert.notEqual((await client.query("SELECT current_setting('vardum.vard_definition_schema',true) AS cap")).rows[0].cap, "2");
+        assert.equal(["2", "3"].includes((await client.query("SELECT current_setting('vardum.vard_definition_schema',true) AS cap")).rows[0].cap), false);
       } finally { await client.query("ROLLBACK"); client.release(); }
       const { pool } = await import("../src/db/index.js");
       const clients = await Promise.all(Array.from({ length: Math.max(2, pool.totalCount) }, () => pool.connect()));
       try { for (const client of clients)
-        assert.notEqual((await client.query("SELECT current_setting('vardum.vard_definition_schema',true) AS cap")).rows[0].cap, "2");
+        assert.equal(["2", "3"].includes((await client.query("SELECT current_setting('vardum.vard_definition_schema',true) AS cap")).rows[0].cap), false);
       } finally { clients.forEach(client => client.release()); }
       assert.equal((await editor(initial.id)).storedDefinitionSchema, 2, "the new API continues to see the guarded definition");
     } finally { await old.end(); }

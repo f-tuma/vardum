@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { VardFolderRuleV2 } from "@vardum/shared";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { SQL } from "drizzle-orm";
@@ -7,6 +8,7 @@ import { buildApp } from "./app.js";
 import { asset, assetUse, assetVersion, auditEvent, vard, vardItem,
   type VardTransformation } from "./db/app-schema.js";
 import type { Transaction } from "./db/tenant.js";
+import { folderRulesSchema } from "./vard-folder-rules.js";
 import {
   editableStateV2, editorGetQuery, editorPayloadV2, patchEditorV2,
   replaceEditorItemsV2, v2DeleteQuery, v2ItemInput, v2ItemsBody, v2PatchBody,
@@ -22,7 +24,7 @@ type VersionRow = { id: string; assetId: string; status: string; mimeType: strin
   checksum: string; size: number; width: number; height: number };
 type ItemRow = { id: string; assetId: string; assetUseId: string | null; versionId: string | null;
   outputPath: string; transformation: VardTransformation | null; writable: boolean;
-  definitionSchema: 1 | 2; createdBy: string; updatedBy: string;
+  definitionSchema: 1 | 2 | 3; createdBy: string; updatedBy: string;
   createdAtText: string; updatedAtText: string };
 type UseRow = { id: string; sourceAssetId: string; key: string; displayName: string;
   transformation: VardTransformation | null; outputMimeType: string; revision: number };
@@ -31,10 +33,10 @@ type Write = { action: "update" | "insert" | "delete"; table: unknown; values?: 
 // This fixture exercises the exported orchestration with literal and hydrated
 // projections kept separate. Real PostgreSQL constraints/races belong to the
 // integration fixtures; this intentionally does not simulate their guarantees.
-function fixture(marker: 1 | 2 = 1) {
+function fixture(marker: 1 | 2 | 3 = 1) {
   const record = {
     id: randomUUID(), workspaceId: "ws", name: "Literal definition", isPublic: true,
-    folderRules: [] as { sourcePrefix: string; outputPrefix: string }[],
+    folderRules: [] as VardFolderRuleV2[],
     definitionSchema: marker, updatedAt: new Date(timestamp), createdBy: "original",
     updatedBy: "original", createdAtText: timestamp, updatedAtText: timestamp,
   };
@@ -114,7 +116,7 @@ function fixture(marker: 1 | 2 = 1) {
           if (table === vard) {
             Object.assign(record, values);
             if (values.updatedAt) record.updatedAtText = textTime(values.updatedAt);
-            if (values.definitionSchema) for (const item of items) item.definitionSchema = values.definitionSchema as 1 | 2;
+            if (values.definitionSchema) for (const item of items) item.definitionSchema = values.definitionSchema as 1 | 2 | 3;
           } else if (table === vardItem) {
             for (const row of items.filter((item) => params(condition).includes(item.id))) {
               Object.assign(row, values);
@@ -164,6 +166,81 @@ function useInput(row: ItemRow, assetUseId = row.assetUseId!): V2ItemInput {
   return { id: row.id, outputPath: row.outputPath, binding: { kind: "use", assetUseId } };
 }
 const errorCode = (code: string) => (error: unknown) => error instanceof VardEditorV2Error && error.code === code;
+
+test("wire2 admits explicit folder use intent while opt-out restores the legacy rule shape", () => {
+  const rule = { sourcePrefix: "brand/", outputPrefix: "public/" };
+  const patch = (extra: Record<string, unknown>) => ({ definitionSchema: 2,
+    expectedRevision: validRevision, folderRules: [{ ...rule, ...extra }] });
+  assert.deepEqual(v2PatchBody.parse(patch({ includeUses: true })).folderRules,
+    [{ ...rule, includeUses: true }]);
+  assert.deepEqual(v2PatchBody.parse(patch({ includeUses: false })).folderRules, [rule]);
+  assert.deepEqual(v2PatchBody.parse(patch({})).folderRules, [rule]);
+  assert.equal(folderRulesSchema.safeParse([{ ...rule, includeUses: true }]).success, false);
+  for (const extra of [{ includeUses: "true" }, { includeUses: null }, { includeUses: 1 },
+    { includeUses: true, copiedRecipe: {} }])
+    assert.equal(v2PatchBody.safeParse(patch(extra)).success, false);
+});
+
+test("first folder opt-in promotes source/direct-use definitions to3 and later item writes preserve3", async () => {
+  for (const marker of [1, 2] as const) {
+    const f = fixture(marker), source = f.addSource(), use = f.addUse(source);
+    const item = f.addItem(source);
+    const before = (await f.state()).revision;
+    const promoted = await patchEditorV2(f.tx, "ws", f.record.id,
+      { definitionSchema: 2, expectedRevision: before,
+        folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }] }, principal, "request");
+    assert.equal(promoted.storedDefinitionSchema, 3);
+    assert.equal(item.definitionSchema, 3);
+    assert.notEqual(promoted.revision, before);
+    const added = await f.save([sourceInput(item), { id: null, outputPath: "linked.png",
+      binding: { kind: "use", assetUseId: use.id } }]);
+    assert.equal(added.storedDefinitionSchema, 3);
+    assert.ok(f.items.every(row => row.definitionSchema === 3));
+    const disabled = await patchEditorV2(f.tx, "ws", f.record.id,
+      v2PatchBody.parse({ definitionSchema: 2, expectedRevision: added.revision,
+        folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: false }] }), principal, "request");
+    assert.equal(disabled.storedDefinitionSchema, 3, "opting out never silently reopens older writers");
+    assert.deepEqual(disabled.folderRules, [{ sourcePrefix: "brand/", outputPrefix: "public/" }]);
+  }
+});
+
+test("stored3 unsafe downgrade refuses atomically and historical false is removed even without folderRules in PATCH", async () => {
+  const f = fixture(3), source = f.addSource(), item = f.addItem(source);
+  f.record.folderRules = [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }];
+  await assert.rejects(patchEditorV2(f.tx, "ws", f.record.id,
+    { definitionSchema: 2, expectedRevision: (await f.state()).revision,
+      name: "Must not persist", returnToSourceOnly: true }, principal, "request"),
+  errorCode("vard_definition_has_bindings"));
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.record.name, "Literal definition");
+  // This literal already existed under A; the new request intentionally omits rules.
+  f.record.folderRules = [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: false }];
+  const result = await patchEditorV2(f.tx, "ws", f.record.id,
+    { definitionSchema: 2, expectedRevision: (await f.state()).revision,
+      returnToSourceOnly: true }, principal, "request");
+  assert.equal(result.storedDefinitionSchema, 1);
+  assert.equal(item.definitionSchema, 1);
+  assert.deepEqual(result.folderRules, [{ sourcePrefix: "brand/", outputPrefix: "public/" }]);
+  assert.deepEqual(folderRulesSchema.parse(result.folderRules), result.folderRules,
+    "the explicit downgrade is a real legacy round-trip subset");
+  assert.equal(result.items[0]!.id, item.id);
+  assert.equal(result.items[0]!.outputPath, source.key);
+  assert.equal(item.createdAtText, timestamp);
+});
+
+test("folder-use live membership and recipe state never enter the literal editor revision", async () => {
+  const f = fixture(3);
+  f.record.folderRules = [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }];
+  const revision = (await f.state()).revision;
+  const source = f.addSource("outside/logo.png"), use = f.addUse(source);
+  use.key = "brand/linked.png";
+  use.transformation = { w: 64, h: 48, fit: "contain", format: "png", pad: 12.5 };
+  use.revision++;
+  source.currentVersionId = randomUUID();
+  assert.equal((await f.state()).revision, revision);
+  f.uses.pop();
+  assert.equal((await f.state()).revision, revision, "live member removal changes the manifest, not configuration");
+});
 
 test("editor HTTP routes reject malformed protocol shapes before authorization", async () => {
   const app = await buildApp();

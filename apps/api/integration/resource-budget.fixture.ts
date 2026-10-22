@@ -207,7 +207,7 @@ export async function checkResourceBudgets(
 
       fixture.setDeleteFailure(key => { attempts.push(key); return false; });
       for (let run = 2; run < 4; run++) {
-        const previousAttempts = attempts.length;
+        const previousAttempts: number = attempts.length;
         await cleanupPendingUploads(new Date(now.getTime() + run * 1000));
         assert.ok(attempts.length - previousAttempts <= 100);
       }
