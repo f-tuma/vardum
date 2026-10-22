@@ -24,7 +24,7 @@ export async function checkVardUsePublicClients({ base, cookie, workspaceId, oth
       assert.equal(cli.version, "0.8.3");
       assert.equal(mcp.version, "0.4.2");
       const apiResponse = (path, body, method = body === undefined ? "GET" : "POST", headers = { cookie }) =>
-        fetch(new URL(path, base), { method, headers: { origin: base, "content-type": "application/json", ...headers },
+        fetch(new URL(path, base), { method, headers: { origin: base, ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
       const api = async (path, body, method) => {
         const response = await apiResponse(path, body, method);

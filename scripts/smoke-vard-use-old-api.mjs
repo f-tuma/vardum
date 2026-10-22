@@ -41,7 +41,7 @@ export async function checkVardUseOldApi({
   };
   const inspect = async id => JSON.parse((await docker("inspect", id)).stdout)[0];
   const apiResponse = (server, path, body, method = body === undefined ? "GET" : "POST") => fetch(new URL(path, server), {
-    method, headers: { origin: base, "content-type": "application/json", "x-api-key": writeKey },
+    method, headers: { origin: base, ...(body === undefined ? {} : { "content-type": "application/json" }), "x-api-key": writeKey },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000),
   });
   const api = async (server, path, body, method) => {
