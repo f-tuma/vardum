@@ -321,6 +321,21 @@ export const assetVersion = pgTable(
   ],
 ).enableRLS();
 
+// Durable maintenance inventory, intentionally without cascading foreign keys.
+// Tenant rows remain private even after their asset/workspace is deleted.
+export const assetUpload = pgTable("asset_upload", {
+  versionId: uuid("version_id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  assetId: uuid("asset_id").notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sweepAt: timestamp("sweep_at", { withTimezone: true }),
+  sweepAttemptAt: timestamp("sweep_attempt_at", { withTimezone: true }),
+}, table => [
+  index("asset_upload_cleanup_idx").on(table.workspaceId, table.sweepAttemptAt.asc().nullsFirst(), table.versionId),
+  tenantPolicy(table.workspaceId),
+]).enableRLS();
+
 export type VardTransformation = {
   w?: number;
   h?: number;

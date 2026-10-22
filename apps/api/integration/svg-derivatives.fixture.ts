@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mutateLegacyVersion } from "./legacy-version.fixture.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
@@ -92,10 +93,10 @@ export async function checkSvgDerivatives(t: TestContext, admin: Pool, objects: 
   assert.equal(v2Fingerprint, `${legacyFingerprint}&render=v2`);
   assert.deepEqual((await app.inject({ url: legacyUrl })).rawPayload, legacyRaster.rawPayload, "captured legacy URLs retain their bytes after upgrading the recipe");
   // A source type guard runs even before an already stored SVG derivative hit.
-  await admin.query("UPDATE asset_version SET mime_type='image/png' WHERE id=$1", [versionId]);
+  await mutateLegacyVersion(admin, "UPDATE asset_version SET mime_type='image/png' WHERE id=$1", [versionId]);
   assert.equal((await app.inject({ url })).statusCode, 422);
   assert.equal((await app.inject({ url: v2Url })).statusCode, 422, "v2 source validation precedes its existing cache hit");
-  await admin.query("UPDATE asset_version SET mime_type='image/svg+xml' WHERE id=$1", [versionId]);
+  await mutateLegacyVersion(admin, "UPDATE asset_version SET mime_type='image/svg+xml' WHERE id=$1", [versionId]);
   const unsafe = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><script>alert(1)</script></svg>');
   objects.set(storageKey, unsafe);
   const rejected = await app.inject({ url: transformedVersionUrl("demo", key, versionId, { format: "svg", w: 32 }) });

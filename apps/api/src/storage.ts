@@ -195,6 +195,13 @@ export function deleteObjects(storageKeys: string[]) {
     });
 }
 
+/** Publish the exact server-validated upload bytes to a worker-only key. */
+export function putOriginalObject(storageKey: string, body: Buffer, contentType: string, signal?: AbortSignal) {
+  return storage.send(new PutObjectCommand({
+    Bucket: config.S3_BUCKET, Key: storageKey, Body: body, ContentType: contentType,
+  }), { abortSignal: signal });
+}
+
 export function putDerivedObject(
   storageKey: string,
   body: Buffer,

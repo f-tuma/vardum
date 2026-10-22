@@ -11,6 +11,7 @@ import test from "node:test";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { mutateLegacyVersion } from "./legacy-version.fixture.js";
 
 const execFile = promisify(execFileCallback);
 const migrations = fileURLToPath(new URL("../drizzle", import.meta.url));
@@ -37,6 +38,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   let deleteFailure: boolean | ((key: string) => boolean) = false;
   let beforeObjectRead: (key: string) => Promise<void> = async () => {};
   let beforeObjectCopy: (key: string) => Promise<boolean> = async () => false;
+  let beforeObjectWrite: (key: string, bytes: Buffer) => Promise<void> = async () => {};
   const objectServer = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://objects.invalid");
     const key = decodeURIComponent(url.pathname.replace(/^\/fixture\//, ""));
@@ -46,6 +48,10 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       const body = Buffer.concat(chunks).toString();
       const keys = [...body.matchAll(/<Key>(.*?)<\/Key>/g)].map(match => match[1]!);
       res.setHeader("content-type", "application/xml");
+      if (keys.length > 1000) {
+        res.statusCode = 400;
+        return res.end("<Error><Code>MalformedXML</Code></Error>");
+      }
       if (typeof deleteFailure === "function" ? keys.some(deleteFailure) : deleteFailure) return res.end(`<DeleteResult><Error><Key>${keys[0]}</Key><Code>AccessDenied</Code></Error></DeleteResult>`);
       for (const key of keys) objects.delete(key);
       return res.end("<DeleteResult/>");
@@ -71,6 +77,13 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     }
     if (url.searchParams.has("list-type")) {
       res.setHeader("content-type", "application/xml");
+      const prefix = url.searchParams.get("prefix") ?? "";
+      if (prefix.startsWith("originals/")) {
+        const limit = Number(url.searchParams.get("max-keys") ?? 1000);
+        const matches = [...objects.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b));
+        const page = matches.slice(0, limit);
+        return res.end(`<ListBucketResult><IsTruncated>${matches.length > limit}</IsTruncated>${matches.length > limit ? "<NextContinuationToken>more</NextContinuationToken>" : ""}${page.map(([key, bytes]) => `<Contents><Key>${key}</Key><Size>${bytes.length}</Size></Contents>`).join("")}</ListBucketResult>`);
+      }
       return res.end(
         "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>incoming/import.png</Key><Size>4</Size></Contents></ListBucketResult>",
       );
@@ -91,7 +104,15 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       }
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      objects.set(key, Buffer.concat(chunks));
+      const bytes = Buffer.concat(chunks);
+      try {
+        await beforeObjectWrite(key, bytes);
+      } catch {
+        res.statusCode = 503;
+        res.setHeader("content-type", "application/xml");
+        return res.end("<Error><Code>ServiceUnavailable</Code></Error>");
+      }
+      objects.set(key, bytes);
       if (req.headers["content-type"]) objectTypes.set(key, req.headers["content-type"]);
       return res.end();
     }
@@ -633,7 +654,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     "private image/video previews and transform links use app origin; public uses verified domain",
     async () => {
       for (const mime of ["image/svg+xml", "video/mp4"]) {
-        await sql("UPDATE asset_version SET mime_type=$1 WHERE id=$2", [
+        await mutateLegacyVersion(admin!, "UPDATE asset_version SET mime_type=$1 WHERE id=$2", [
           mime,
           versionId,
         ]);
@@ -669,7 +690,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
           privateHeaders(range);
         }
       }
-      await sql(
+      await mutateLegacyVersion(admin!,
         "UPDATE asset_version SET mime_type='image/svg+xml' WHERE id=$1",
         [versionId],
       );
@@ -889,7 +910,7 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       assert.equal(denied.statusCode, 401);
       assert.equal(storageReads, reads);
       privateHeaders(denied);
-      await sql("UPDATE asset_version SET status='processing' WHERE id=$1", [
+      await mutateLegacyVersion(admin!, "UPDATE asset_version SET status='processing' WHERE id=$1", [
         historicalVersion,
       ]);
       const unready = await app.inject({
@@ -1830,6 +1851,12 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   await t.test("upload resume and planned checksum under the production database role", async (resumeTest) => {
     const { checkUploadResume } = await import("./upload-resume.fixture.js");
     await checkUploadResume(resumeTest, { admin: admin!, app, objects, keyHeaders, cookies });
+  });
+  await t.test("immutable upload publication, fencing and durable cleanup", async integrityTest => {
+    const { checkUploadIntegrity } = await import("./upload-integrity.fixture.js");
+    await checkUploadIntegrity(integrityTest, { admin: admin!, app, objects, keyHeaders,
+      setWriteHook: hook => { beforeObjectWrite = hook; },
+    });
   });
   await t.test("VARD additive import under the production database role", async (importTest) => {
     const { checkVardImport } = await import("./vard-import.fixture.js");
