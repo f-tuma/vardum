@@ -15,7 +15,7 @@ ARG VITE_UPLOAD_ORIGINS
 ENV VITE_UPLOAD_ORIGINS=$VITE_UPLOAD_ORIGINS
 RUN pnpm --filter "@vardum/gateway..." build
 
-FROM nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 AS gateway-base
+FROM nginx:1.30.6-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951 AS gateway-base
 # Exact Alpine 3.24 pins; libexpat availability rechecked on 2026-10-20.
 # Keep security upgrades exact and fail the build if that input is unavailable.
 RUN apk add --no-cache --upgrade \
