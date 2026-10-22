@@ -9,3 +9,6 @@ node_modules
 coverage
 *.log
 backups
+.mcp.json
+.pi/
+artifacts/

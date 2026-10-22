@@ -14,3 +14,5 @@ backups/
 !.env.example
 !.env.*.example
 artifacts/server/
+/.mcp.json
+/.pi/extensions/dokploy.yaml
