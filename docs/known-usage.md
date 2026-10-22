@@ -28,6 +28,14 @@ A new record starts **Not manually checked**. Creating or editing it, resolving
 a manifest, and uploading a new asset version do not count as checking the
 consumer.
 
+Folder rules with explicit use inclusion can supply these targets too. A generated
+use target retains its canonical source asset and output path while its scope
+also captures the linked use identity and effective recipe. A different use at the
+same path is a scope change even when its source and settings match. Removing a
+folder-only use leaves that target unresolved; another output cannot silently
+take over its recorded observation. Changing the recipe changes the scope;
+changing only the current source version reports a source change.
+
 ## Record a manual check
 
 Inspect the actual destination or its committed release/snapshot, then use

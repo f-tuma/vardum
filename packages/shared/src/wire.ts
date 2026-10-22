@@ -60,6 +60,9 @@ export type VardFolderRule = {
  outputPrefix: string;
 };
 
+/** Explicit live library-use inclusion; omitted/false retains originals only. */
+export type VardFolderRuleV2 = VardFolderRule & { includeUses?: boolean };
+
 /** Editable configuration: items are manual mappings only, never expanded outputs. */
 export type VardDefinition = VardManifest & {
  folderRules: VardFolderRule[];
@@ -119,14 +122,14 @@ export type VardEditorItemV2 = {
 /** Schema 2 editor keeps literal intent separate from live resolution. */
 export type VardEditorDefinitionV2 = {
  definitionSchema: 2;
- storedDefinitionSchema: 1 | 2;
+ storedDefinitionSchema: 1 | 2 | 3;
  revision: string;
  id: string;
  workspaceId: string;
  name: string;
  isPublic: boolean;
  updatedAt: string;
- folderRules: VardFolderRule[];
+ folderRules: VardFolderRuleV2[];
  items: VardEditorItemV2[];
 };
 

@@ -19,7 +19,7 @@ export async function assertVardDefinitionProtocol(
 ) {
   const [record] = await tx.select({ definitionSchema: vard.definitionSchema })
     .from(vard).where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)));
-  if (record?.definitionSchema === 2 && protocol !== 2)
+  if (record && record.definitionSchema >= 2 && protocol !== 2)
     throw new VardDefinitionUpgradeError();
   return record?.definitionSchema ?? null;
 }

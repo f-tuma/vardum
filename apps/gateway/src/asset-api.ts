@@ -13,6 +13,7 @@ import type {
   VardSourceBinding,
   VardUseBinding,
   VardFolderRule,
+  VardFolderRuleV2,
 } from "@vardum/shared";
 
 export type {
@@ -42,6 +43,7 @@ export type DeploymentCapabilities = {
   invitations: boolean;
   vardEditRevision?: number;
   vardDefinitionSchema?: number;
+  vardFolderUses?: number;
 };
 
 export function getDeploymentCapabilities() {
@@ -413,7 +415,7 @@ function literalBinding(value: unknown): value is VardSourceBinding | VardUseBin
   return value.kind === "source" && onlyKeys(value, ["kind", "assetId", "versionId", "transformation", "writable"])
     && nonemptyString(value.assetId) && nullableString(value.versionId) && recipe(value.transformation) && typeof value.writable === "boolean";
 }
-function requireEditorV2(capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined, expectedRevision?: string) {
+function requireEditorV2(capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema" | "vardFolderUses"> | undefined, expectedRevision?: string) {
   if (capabilities?.vardDefinitionSchema !== 2 || (expectedRevision !== undefined && !/^v2:[a-f0-9]{64}$/.test(expectedRevision))) {
     throw new VardEditorUnavailableError("This server does not support linked Vard editing. Update the server and reload the page to enable editing.");
   }
@@ -421,12 +423,17 @@ function requireEditorV2(capabilities: Pick<DeploymentCapabilities, "vardDefinit
 function invalidVardEditorV2(): never {
   throw new VardEditorUnavailableError("This server did not return a complete schema 2 Vard definition. Editing is unavailable until the server is updated.");
 }
-function checkedVardEditorV2(value: unknown): VardEditorDefinitionV2 {
-  if (!object(value) || value.definitionSchema !== 2 || ![1, 2].includes(Number(value.storedDefinitionSchema))
+function checkedVardEditorV2(value: unknown, capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema" | "vardFolderUses"> | undefined): VardEditorDefinitionV2 {
+  if (!object(value) || value.definitionSchema !== 2 || ![1, 2, 3].includes(Number(value.storedDefinitionSchema))
     || typeof value.storedDefinitionSchema !== "number" || typeof value.revision !== "string" || !/^v2:[a-f0-9]{64}$/.test(value.revision)
     || ![value.id, value.workspaceId, value.name, value.updatedAt].every(nonemptyString) || typeof value.isPublic !== "boolean"
-    || !Array.isArray(value.folderRules) || !value.folderRules.every((rule) => object(rule) && onlyKeys(rule, ["sourcePrefix", "outputPrefix"])
-      && typeof rule.sourcePrefix === "string" && typeof rule.outputPrefix === "string") || !Array.isArray(value.items)) return invalidVardEditorV2();
+    || !Array.isArray(value.folderRules) || !value.folderRules.every((rule) => object(rule) && onlyKeys(rule, Object.hasOwn(rule, "includeUses") ? ["sourcePrefix", "outputPrefix", "includeUses"] : ["sourcePrefix", "outputPrefix"])
+      && typeof rule.sourcePrefix === "string" && typeof rule.outputPrefix === "string"
+      && (!Object.hasOwn(rule, "includeUses") || typeof rule.includeUses === "boolean")) || !Array.isArray(value.items)) return invalidVardEditorV2();
+  if (value.folderRules.some((rule) => rule.includeUses === true) && value.storedDefinitionSchema !== 3) return invalidVardEditorV2();
+  if (value.storedDefinitionSchema === 3 && capabilities?.vardFolderUses !== 1) {
+    throw new VardEditorUnavailableError("This server does not support linked folder uses. Update the server and reload the page to enable editing.");
+  }
   const ids = new Set<string>();
   for (const item of value.items) {
     if (!object(item) || !nonemptyString(item.id) || ids.has(item.id) || !nonemptyString(item.outputPath) || !literalBinding(item.binding)
@@ -440,7 +447,7 @@ function checkedVardEditorV2(value: unknown): VardEditorDefinitionV2 {
     if (item.binding.kind === "source") {
       if (item.linkedUse !== null || item.binding.assetId !== resolved.assetId) return invalidVardEditorV2();
     } else {
-      if (value.storedDefinitionSchema !== 2 || resolved.pinned || resolved.writable) return invalidVardEditorV2();
+      if (![2, 3].includes(value.storedDefinitionSchema) || resolved.pinned || resolved.writable) return invalidVardEditorV2();
       if (resolved.availabilityError !== null && [resolved.versionId, resolved.sourceChecksum, resolved.fingerprint, resolved.downloadUrl].some((field) => field !== null)) return invalidVardEditorV2();
       if (item.linkedUse !== null && (!object(item.linkedUse) || item.linkedUse.id !== item.binding.assetUseId
         || ![item.linkedUse.key, item.linkedUse.displayName, item.linkedUse.sourceDisplayName].every(nonemptyString)
@@ -450,30 +457,33 @@ function checkedVardEditorV2(value: unknown): VardEditorDefinitionV2 {
   return value as unknown as VardEditorDefinitionV2;
 }
 
-export async function getVardEditorV2(workspaceId: string, vardId: string, capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+export async function getVardEditorV2(workspaceId: string, vardId: string, capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema" | "vardFolderUses"> | undefined) {
   requireEditorV2(capabilities);
-  return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?definitionSchema=2`));
+  return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?definitionSchema=2`), capabilities);
 }
 export async function updateVardEditorV2(workspaceId: string, vardId: string, expectedRevision: string,
-  input: { name?: string; isPublic?: boolean; folderRules?: VardFolderRule[]; returnToSourceOnly?: true },
-  capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  input: { name?: string; isPublic?: boolean; folderRules?: VardFolderRuleV2[]; returnToSourceOnly?: true },
+  capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema" | "vardFolderUses"> | undefined) {
   requireEditorV2(capabilities, expectedRevision);
+  if (input.folderRules?.some((rule) => rule.includeUses === true) && capabilities?.vardFolderUses !== 1) {
+    throw new VardEditorUnavailableError("This server does not support linked folder uses. Update the server and reload the page to include them.");
+  }
   return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor`, {
     method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, definitionSchema: 2, expectedRevision }),
-  }));
+  }), capabilities);
 }
 export async function replaceVardEditorItemsV2(workspaceId: string, vardId: string, expectedRevision: string,
-  items: VardEditorItemInputV2[], capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  items: VardEditorItemInputV2[], capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema" | "vardFolderUses"> | undefined) {
   requireEditorV2(capabilities, expectedRevision);
   if (!items.every((item) => (item.id === null || nonemptyString(item.id)) && nonemptyString(item.outputPath) && literalBinding(item.binding))) {
     throw new VardEditorUnavailableError("The Vard draft contains an invalid literal binding. Reload before editing.");
   }
   return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor/items`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ definitionSchema: 2, expectedRevision, items }),
-  }));
+  }), capabilities);
 }
 export function deleteVardEditorV2(workspaceId: string, vardId: string, expectedRevision: string,
-  capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema" | "vardFolderUses"> | undefined) {
   requireEditorV2(capabilities, expectedRevision);
   const query = new URLSearchParams({ definitionSchema: "2", expectedRevision });
   return request<void>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?${query}`, { method: "DELETE" });

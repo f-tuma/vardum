@@ -1,4 +1,4 @@
-import type { VardEditorDefinitionV2, VardEditorItemV2, VardFolderRule } from "@vardum/shared";
+import type { VardEditorDefinitionV2, VardEditorItemV2, VardFolderRuleV2 } from "@vardum/shared";
 import { mediaOutputPath } from "@vardum/shared";
 import { useInfiniteQuery, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -28,6 +28,7 @@ import { AppHeader, Page, PageHeader, PageSkeleton } from "@/components/page";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardAction,
@@ -508,7 +509,7 @@ export function VardEditor({
   async function persistManifest(patch: {
     name?: string;
     isPublic?: boolean;
-    folderRules?: VardFolderRule[];
+    folderRules?: VardFolderRuleV2[];
     returnToSourceOnly?: true;
   }, baseline: VardEditorDefinitionV2) {
     beginSave();
@@ -670,7 +671,7 @@ export function VardEditor({
           </TabsContent>
           <TabsContent value="folders" keepMounted>
             <div className="pt-4">
-              <FolderRulesForm key={draftEpoch} vard={definition} editor={editor.data} canEdit={canEdit} saving={saving}
+              <FolderRulesForm key={draftEpoch} vard={definition} editor={editor.data} canEdit={canEdit} saving={saving} canIncludeUses={capabilities.data?.vardFolderUses === 1}
                 onSave={(folderRules, baseline) => persistManifest({ folderRules }, baseline)} onReload={reloadEditor} />
             </div>
           </TabsContent>
@@ -857,6 +858,7 @@ function FolderRulesForm({
   vard,
   editor,
   canEdit,
+  canIncludeUses,
   saving,
   onSave,
   onReload,
@@ -864,8 +866,9 @@ function FolderRulesForm({
   vard: VardMetadata;
   editor?: VardEditorDefinitionV2;
   canEdit: boolean;
+  canIncludeUses: boolean;
   saving: boolean;
-  onSave: (rules: VardFolderRule[], baseline: VardEditorDefinitionV2) => Promise<VardEditorDefinitionV2>;
+  onSave: (rules: VardFolderRuleV2[], baseline: VardEditorDefinitionV2) => Promise<VardEditorDefinitionV2>;
   onReload: () => Promise<void>;
 }) {
   const id = useId();
@@ -890,7 +893,7 @@ function FolderRulesForm({
     setDirty(true);
   }
 
-  function changeRule(rowId: string, patch: Partial<VardFolderRule>) {
+  function changeRule(rowId: string, patch: Partial<VardFolderRuleV2>) {
     change(draft.map((rule) => rule.rowId === rowId ? { ...rule, ...patch } : rule));
   }
 
@@ -900,7 +903,7 @@ function FolderRulesForm({
     pendingRef.current = true;
     setFailure(null);
     try {
-      const saved = await onSave(draft.map(({ sourcePrefix, outputPrefix }) => ({ sourcePrefix, outputPrefix })), baseline);
+      const saved = await onSave(draft.map(({ sourcePrefix, outputPrefix, includeUses }) => ({ sourcePrefix, outputPrefix, ...(includeUses === true ? { includeUses: true } : {}) })), baseline);
       setSyncedDefinition(saved);
       setBaseline(captureVardBaselineV2(saved).definition);
       setDraft(withRowIds(saved.folderRules));
@@ -949,7 +952,8 @@ function FolderRulesForm({
           {draft.length ? (
             <ul className="flex flex-col gap-3">
               {draft.map((rule, index) => (
-                <li key={rule.rowId} className="flex items-end gap-2">
+                <li key={rule.rowId} className="flex flex-col gap-2">
+                  <div className="flex items-end gap-2">
                   <div className="flex flex-1 items-end gap-2">
                     <div className="flex-1">
                     <Field>
@@ -997,6 +1001,19 @@ function FolderRulesForm({
                       <Trash2Icon />
                     </Button>
                   )}
+                  </div>
+                  <Field orientation="horizontal" data-disabled={!editable || !canIncludeUses}>
+                    <Checkbox id={`${id}-${rule.rowId}-uses`} checked={rule.includeUses === true}
+                      disabled={!editable || !canIncludeUses}
+                      onCheckedChange={(checked) => changeRule(rule.rowId, { includeUses: checked === true })} />
+                    <FieldContent>
+                      <FieldLabel htmlFor={`${id}-${rule.rowId}-uses`}>Include linked library uses</FieldLabel>
+                      <FieldDescription>
+                        Original files stay included. Linked uses follow their current library settings.
+                        {!canIncludeUses && " Update the server to include linked library uses."}
+                      </FieldDescription>
+                    </FieldContent>
+                  </Field>
                 </li>
               ))}
             </ul>
@@ -1103,7 +1120,14 @@ function PreviewTable({ manifest }: { manifest: VardManifest }) {
                       <span className="font-mono text-xs">{item.outputPath}</span>
                     </TableCell>
                     <TableCell>
-                      <span className="font-mono text-xs text-muted-foreground">{item.key}</span>
+                      <div className="flex items-center gap-2">
+                        {item.id.startsWith("folder:use:") ? item.versionId && item.downloadUrl ? (
+                          <span className="flex size-10 shrink-0 overflow-hidden rounded-sm bg-muted">
+                            <AssetThumb url={item.downloadUrl} mimeType={item.mimeType} label={`Preview of ${item.outputPath}`} />
+                          </span>
+                        ) : <Badge variant="secondary">Unavailable</Badge> : null}
+                        <span className="font-mono text-xs text-muted-foreground">{item.key}</span>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">
@@ -1981,7 +2005,7 @@ function PickerAsset({
   );
 }
 
-function withRowIds(rules: VardFolderRule[]) {
+function withRowIds(rules: VardFolderRuleV2[]) {
   return rules.map((rule) => ({ ...rule, rowId: crypto.randomUUID() }));
 }
 

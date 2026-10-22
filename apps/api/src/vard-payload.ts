@@ -1,10 +1,11 @@
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { asset, assetUse, assetVersion, vard, vardItem, workspace, type VardTransformation } from "./db/app-schema.js";
 import { inWorkspaceSnapshot, type Transaction } from "./db/tenant.js";
 import { useCompatibilityIssue } from "./asset-use-model.js";
 import { useIssue, useRows } from "./asset-use-query.js";
 import { canonicalizeTransformation, transformedVersionUrl } from "./transformation.js";
-import { folderItemId, folderOutputPath, MAX_VARD_OUTPUTS, validateResolvedOutputs } from "./vard-folder-rules.js";
+import { resolveFolderMembership } from "./vard-folder-rules.js";
+import { loadFolderMembers } from "./vard-folder-members.js";
 
 export type VardPayloadOptions = {
   anonymous?: boolean;
@@ -54,7 +55,7 @@ export async function buildVardPayloadInTransaction(
     .where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)));
   if (!record || (requirePublic && !record.isPublic)) return null;
 
-  const items = await transaction
+  const manual = await transaction
     .select({
       id: vardItem.id,
       assetId: vardItem.assetId,
@@ -71,56 +72,30 @@ export async function buildVardPayloadInTransaction(
     .innerJoin(asset, and(eq(asset.workspaceId, workspaceId), eq(asset.id, vardItem.assetId)))
     .where(and(eq(vardItem.workspaceId, workspaceId), eq(vardItem.vardId, vardId)))
     .orderBy(asc(vardItem.outputPath));
-  if (anonymous && items.some((item) => !item.isPublic)) return null;
-  if (resolveFolders && record.folderRules.length) {
-    const matches = and(
-      eq(asset.workspaceId, workspaceId),
-      eq(assetVersion.workspaceId, workspaceId),
-      eq(assetVersion.assetId, asset.id),
-      eq(assetVersion.status, "ready"),
-      or(
-        ...record.folderRules.map(
-          (rule) => sql`starts_with(${asset.key}, ${rule.sourcePrefix})`,
-        ),
-      ),
-    );
-    // The window sees all matches before LIMIT, in the same database snapshot.
-    const members = await transaction
-      .select({
-        hasPrivateMember: sql<boolean>`bool_or(not ${asset.isPublic}) over ()`,
-        assetId: asset.id,
-        key: asset.key,
-        isPublic: asset.isPublic,
-        currentVersionId: asset.currentVersionId,
-        sourceMimeType: assetVersion.mimeType,
-      })
-      .from(asset)
-      .innerJoin(assetVersion, eq(assetVersion.id, asset.currentVersionId))
-      .where(matches)
-      .orderBy(asc(asset.key), asc(asset.id))
-      .limit(MAX_VARD_OUTPUTS + 1);
-    // Privacy precedes all collision/overflow details, even beyond the row limit.
-    if (anonymous && members[0]?.hasPrivateMember) return null;
-    for (const member of members) {
-      for (const rule of record.folderRules) {
-        if (!member.key.startsWith(rule.sourcePrefix)) continue;
-        const outputPath = folderOutputPath(member.key, member.sourceMimeType, rule);
-        items.push({
-          ...member,
-          id: folderItemId(member.assetId, outputPath),
-          assetUseId: null,
-          outputPath,
-          transformation: null,
-          writable: false,
-          pinnedVersionId: null,
-        });
-        if (items.length > MAX_VARD_OUTPUTS)
-          validateResolvedOutputs(items.map((item) => item.outputPath));
-      }
-    }
-  }
+  if (anonymous && manual.some((item) => !item.isPublic)) return null;
+  let items = manual;
   if (resolveFolders) {
-    validateResolvedOutputs(items.map((item) => item.outputPath));
+    // Fetch both complete privacy aggregates before namespace/overflow errors.
+    const members = await loadFolderMembers(transaction, workspaceId, record.folderRules);
+    if (anonymous && members.hasPrivateMember) return null;
+    const membership = resolveFolderMembership(manual.map((item) => ({ ...item,
+      bindingKind: item.assetUseId ? "use" as const : "source" as const,
+    })), members.sources, members.uses, record.folderRules);
+    const manualById = new Map(manual.map((item) => [item.id, item]));
+    const sourceById = new Map(members.sources.map((source) => [source.assetId, source]));
+    const useById = new Map(members.uses.map((use) => [use.assetUseId, use]));
+    items = membership.map((item) => {
+      const literal = manualById.get(item.id);
+      if (literal) return literal;
+      const source = sourceById.get(item.assetId);
+      const use = item.assetUseId ? useById.get(item.assetUseId) : undefined;
+      const canonical = use ?? source;
+      if (!canonical) throw new Error("Generated Vard member lost its canonical source");
+      return { id: item.id, assetId: item.assetId, assetUseId: item.assetUseId,
+        isPublic: canonical.isPublic, key: use ? use.sourceKey : source!.key,
+        outputPath: item.outputPath, transformation: null, writable: false,
+        pinnedVersionId: null, currentVersionId: canonical.currentVersionId };
+    });
     items.sort((a, b) =>
       a.outputPath < b.outputPath ? -1 : a.outputPath > b.outputPath ? 1 : 0,
     );

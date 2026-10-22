@@ -1,4 +1,4 @@
-import { supportedMimeTypes } from "@vardum/shared";
+import { supportedMimeTypes, type VardFolderRuleV2 } from "@vardum/shared";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
@@ -10,8 +10,10 @@ import { conflictsWithUse } from "./asset-use-namespace.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
 import { maximumUploadSize } from "./upload-limits.js";
-import { folderItemId, folderOutputPath, MAX_VARD_OUTPUTS, validateResolvedOutputs, vardOutputPath,
-  VardResolutionError } from "./vard-folder-rules.js";
+import { MAX_VARD_OUTPUTS, validateResolvedOutputs, vardOutputPath, resolveFolderMembership,
+  VardResolutionError, type FolderMembershipItem, type FolderSourceCandidate,
+  type FolderUseCandidate } from "./vard-folder-rules.js";
+import { loadFolderMembers } from "./vard-folder-members.js";
 
 export const vardImportFile = z.object({
   assetId: z.uuid().transform((value) => value.toLowerCase()),
@@ -32,33 +34,23 @@ export const vardImportBody = z.object({
   })).min(1).max(MAX_VARD_OUTPUTS),
 }).strict();
 type ImportFile = z.infer<typeof vardImportFile>;
-type Source = { assetId: string; key: string; mimeType: string };
-type Mapping = {
-  id: string; assetId: string; outputPath: string;
-  bindingKind: "source" | "use"; assetUseId: string | null;
-};
-type Rule = { sourcePrefix: string; outputPrefix: string };
+type Source = FolderSourceCandidate;
+type Mapping = FolderMembershipItem;
+type Rule = VardFolderRuleV2;
 
-/** Existing manual rows and every generated output must already form a valid union. */
-export function resolveImportOutputs(manual: Mapping[], sources: Source[], rules: Rule[]) {
-  validateResolvedOutputs(manual.map((item) => item.outputPath));
-  const items = [...manual];
-  for (const source of sources) {
-    for (const rule of rules) {
-      if (!source.key.startsWith(rule.sourcePrefix)) continue;
-      const outputPath = folderOutputPath(source.key, source.mimeType, rule);
-      items.push({ id: folderItemId(source.assetId, outputPath), assetId: source.assetId, outputPath,
-        bindingKind: "source", assetUseId: null });
-      if (items.length > MAX_VARD_OUTPUTS) validateResolvedOutputs(items.map((item) => item.outputPath));
-    }
-  }
-  validateResolvedOutputs(items.map((item) => item.outputPath));
-  return new Map(items.map((item) => [item.outputPath, item]));
+/** Existing manual rows and generated outputs must form one valid union. */
+export function resolveImportOutputs(
+  manual: Mapping[], sources: Source[], rules: Rule[], uses: FolderUseCandidate[] = [],
+) {
+  return new Map(resolveFolderMembership(manual, sources, uses, rules)
+    .map((item) => [item.outputPath, item]));
 }
 
 /** Validate the full prospective union before admitting any additions. */
-export function importMappings(manual: Mapping[], sources: Source[], rules: Rule[], files: ImportFile[]) {
-  const resolved = resolveImportOutputs(manual, sources, rules);
+export function importMappings(
+  manual: Mapping[], sources: Source[], rules: Rule[], files: ImportFile[], uses: FolderUseCandidate[] = [],
+) {
+  const resolved = resolveImportOutputs(manual, sources, rules, uses);
   const mappings = files.map((file) => {
     const existing = resolved.get(file.outputPath);
     if (existing) {
@@ -86,16 +78,10 @@ async function importContext(tx: Transaction, workspaceId: string, vardId: strin
     .from(vardItem).where(and(eq(vardItem.workspaceId, workspaceId), eq(vardItem.vardId, vardId)))
     .orderBy(asc(vardItem.outputPath)).limit(MAX_VARD_OUTPUTS + 1);
   const manual: Mapping[] = rows.map((row) => ({ ...row, bindingKind: row.assetUseId ? "use" : "source" }));
-  const sources = target.folderRules.length ? await tx.select({
-    assetId: asset.id, key: asset.key, mimeType: assetVersion.mimeType,
-  }).from(asset).innerJoin(assetVersion, eq(assetVersion.id, asset.currentVersionId)).where(and(
-    eq(asset.workspaceId, workspaceId), eq(assetVersion.workspaceId, workspaceId),
-    eq(assetVersion.assetId, asset.id), eq(assetVersion.status, "ready"),
-    or(...target.folderRules.map((rule) => sql`starts_with(${asset.key}, ${rule.sourcePrefix})`)),
-  )).orderBy(asc(asset.key), asc(asset.id)).limit(MAX_VARD_OUTPUTS + 1) : [];
-  // Current invalid definitions must be repaired through the established editor endpoints.
-  resolveImportOutputs(manual, sources, target.folderRules);
-  return { ...target, manual, sources };
+  const members = await loadFolderMembers(tx, workspaceId, target.folderRules);
+  // Current invalid definitions must be repaired through the editor endpoints.
+  resolveImportOutputs(manual, members.sources, target.folderRules, members.uses);
+  return { ...target, manual, sources: members.sources, uses: members.uses };
 }
 
 export function assertImportIdentities(files: ImportFile[]) {
@@ -145,7 +131,7 @@ export function registerVardImportRoutes(app: FastifyInstance) {
         const byId = new Map(rows.map((row) => [row.id, row]));
         const byKey = new Map(rows.map((row) => [row.key, row]));
         const mappings = importMappings(context.manual, projectSources(context.sources, request.body.files),
-          context.folderRules, request.body.files);
+          context.folderRules, request.body.files, context.uses);
         return { files: request.body.files.map((file, index) => {
           const existing = byId.get(file.assetId);
           if ((existing && existing.key !== file.key) || (byKey.get(file.key)?.id ?? file.assetId) !== file.assetId)
@@ -193,6 +179,9 @@ export function registerVardImportRoutes(app: FastifyInstance) {
             throw new VardResolutionError("Linked uses are read-only upload destinations; select the source asset instead");
         const context = await importContext(tx, workspaceId, vardId);
         if (!context) return null;
+        // Refuse use destinations before any source identity/checksum shortcut.
+        const mappings = importMappings(context.manual, context.sources, context.folderRules,
+          request.body.files, context.uses);
         const rows = await tx.select({
           assetId: asset.id, key: asset.key, versionId: assetVersion.id,
           checksum: assetVersion.checksum, mimeType: assetVersion.mimeType, size: assetVersion.size,
@@ -208,7 +197,6 @@ export function registerVardImportRoutes(app: FastifyInstance) {
               current.checksum !== file.checksum || current.mimeType !== file.mimeType || current.size !== file.size)
             throw new VardResolutionError("Asset must still belong to the workspace with the exact current ready source from the import");
         }
-        const mappings = importMappings(context.manual, context.sources, context.folderRules, request.body.files);
         const additions = request.body.files.filter((_file, index) => mappings[index]!.mappingAction === "add");
         const inserted = additions.length ? await tx.insert(vardItem).values(additions.map((file) => ({
           workspaceId, vardId, assetId: file.assetId, outputPath: file.outputPath,

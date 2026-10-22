@@ -68,7 +68,7 @@ export async function checkBackupRestore({
     fetch(`${base}${path}`, {
       method,
       signal: AbortSignal.timeout(10_000),
-      headers: { cookie, origin: base, "content-type": "application/json" },
+      headers: { cookie, origin: base, ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   const api = async (
@@ -287,6 +287,93 @@ export async function checkBackupRestore({
           files.set(item.path, await readFile(join(project, item.path)));
         assert.deepEqual(files.get("assets/linked.png"), linkedBytes);
 
+        // A separate B graph leaves every marker2/source history assertion above intact.
+        assert.equal((await api("/api/capabilities")).vardFolderUses, 1);
+        const folderSource = await api(`/api/workspaces/${workspaceId}/assets`, {
+          key: "backup-b/source.svg", displayName: "Folder restore source",
+        });
+        const folderSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="blue"/></svg>');
+        const folderVersion = await api(`/api/workspaces/${workspaceId}/assets/${folderSource.id}/versions`, {
+          filename: "source.svg", mimeType: "image/svg+xml", size: folderSvg.length,
+        });
+        const folderForm = new FormData();
+        for (const [field, value] of Object.entries(folderVersion.upload.fields)) folderForm.append(field, value);
+        folderForm.append("file", new Blob([folderSvg], { type: "image/svg+xml" }), "source.svg");
+        assert.ok((await fetch(folderVersion.upload.url, { method: "POST", body: folderForm, signal: AbortSignal.timeout(15_000) })).ok);
+        await api(`/api/workspaces/${workspaceId}/assets/${folderSource.id}/versions/${folderVersion.id}/finalize`, {});
+        const folderReadyDeadline = Date.now() + 60_000;
+        let folderReady;
+        do {
+          folderReady = await api(`/api/workspaces/${workspaceId}/assets/${folderSource.id}`);
+          assert.notEqual(folderReady.status, "failed");
+          if (folderReady.status === "ready" && folderReady.currentVersionId === folderVersion.id) break;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        } while (Date.now() < folderReadyDeadline);
+        assert.equal(folderReady.currentVersionId, folderVersion.id);
+        const originalFolderUse = await api(`/api/workspaces/${workspaceId}/asset-uses`, {
+          sourceAssetId: folderSource.id, key: "backup-b-uses/original.svg", displayName: "Restore original", transformation: null,
+        });
+        const renderedFolderUse = await api(`/api/workspaces/${workspaceId}/asset-uses`, {
+          sourceAssetId: folderSource.id, key: "backup-b-uses/card", displayName: "Restore card",
+          transformation: { w: 40, h: 32, fit: "contain", format: "png", bg: "#ffffff", pad: 25, render: "v2" },
+        });
+        const folderVard = await api(`/api/workspaces/${workspaceId}/vards`, { name: "Folder recovery fixture" });
+        const folderEditorPath = `/api/workspaces/${workspaceId}/vards/${folderVard.id}/editor`;
+        const folderInitial = await api(`${folderEditorPath}?definitionSchema=2`);
+        const folderManual = await api(`${folderEditorPath}/items`, {
+          definitionSchema: 2, expectedRevision: folderInitial.revision,
+          items: [
+            { id: null, outputPath: "manual/source.svg", binding: { kind: "source", assetId: folderSource.id, versionId: folderVersion.id, transformation: null, writable: false } },
+            { id: null, outputPath: "manual/card.png", binding: { kind: "use", assetUseId: renderedFolderUse.id } },
+          ],
+        }, "PUT");
+        const folderDefinitionBefore = await api(folderEditorPath, {
+          definitionSchema: 2, expectedRevision: folderManual.revision,
+          folderRules: [{ sourcePrefix: "backup-b-uses/", outputPrefix: "generated/", includeUses: true }],
+        }, "PATCH");
+        assert.equal(folderDefinitionBefore.storedDefinitionSchema, 3);
+        const folderManifestPath = `/api/workspaces/${workspaceId}/vards/${folderVard.id}/manifest`;
+        const folderManifestBefore = await api(folderManifestPath);
+        assert.equal(folderManifestBefore.items.length, 4);
+        const folderGenerated = folderManifestBefore.items.filter(item => item.id.startsWith("folder:use:"));
+        assert.equal(folderGenerated.length, 2);
+        assert.deepEqual(folderGenerated.map(item => item.outputPath).sort(), ["generated/card.png", "generated/original.svg"]);
+        assert.ok(folderGenerated.every(item => item.assetId === folderSource.id && item.key === folderSource.key && item.versionId === folderVersion.id && !item.writable));
+        const folderState = async stack => JSON.parse(await sql(stack, `SELECT json_build_object(
+          'vard',(SELECT row_to_json(v) FROM vard v WHERE id='${folderVard.id}'),
+          'items',(SELECT json_agg(i ORDER BY i.id) FROM vard_item i WHERE vard_id='${folderVard.id}'),
+          'uses',(SELECT json_agg(u ORDER BY u.id) FROM asset_use u WHERE id IN ('${originalFolderUse.id}','${renderedFolderUse.id}')),
+          'source',(SELECT row_to_json(a) FROM asset a WHERE id='${folderSource.id}'),
+          'version',(SELECT row_to_json(v) FROM asset_version v WHERE id='${folderVersion.id}')
+        )`));
+        const folderStateBefore = await folderState(source);
+        assert.equal(folderStateBefore.vard.definition_schema, 3);
+        assert.equal(folderStateBefore.items.length, 2);
+        assert.ok(folderStateBefore.items.every(item => item.definition_schema === 3 && item.workspace_id === workspaceId && item.asset_id === folderSource.id));
+        assert.equal(folderStateBefore.items.find(item => item.asset_use_id)?.asset_use_id, renderedFolderUse.id);
+        assert.ok(folderStateBefore.uses.every(use => use.workspace_id === workspaceId && use.source_asset_id === folderSource.id));
+        assertSealedKey(folderStateBefore.version);
+        const folderProject = join(root, "folder-project"); await mkdir(folderProject);
+        await writeFile(join(folderProject, "vardum.json"), JSON.stringify({ schema: 1, server: base, workspace: workspaceId, vard: folderVard.id }));
+        const folderCommand = (...args) => run(process.execPath, [cli.binary, ...args, "--json"], {
+          cwd: folderProject, env: { PATH: process.env.PATH, VARDUM_CONFIG_HOME: configHome, VARDUM_API_KEY: key }, timeout: 30_000,
+        });
+        assert.equal(JSON.parse((await folderCommand("pull")).stdout).changed, 4);
+        const folderLock = await readFile(join(folderProject, ".vardum.lock"), "utf8");
+        const parsedFolderLock = JSON.parse(folderLock); assert.equal(parsedFolderLock.schema, 2);
+        const folderFiles = new Map();
+        for (const item of folderManifestBefore.items) {
+          const entry = parsedFolderLock.items[item.id], bytes = await readFile(join(folderProject, item.outputPath));
+          assert.equal(entry.versionId, item.versionId); assert.equal(entry.fingerprint, item.fingerprint);
+          assert.equal(entry.downloadUrl, item.downloadUrl); assert.equal(entry.checksum, checksum(bytes));
+          assert.equal(item.sourceChecksum, folderStateBefore.version.checksum);
+          folderFiles.set(item.outputPath, bytes);
+        }
+        assert.deepEqual(folderFiles.get("generated/original.svg"), folderSvg);
+        assert.deepEqual(folderFiles.get("generated/card.png"), folderFiles.get("manual/card.png"));
+        const decodedFolder = await storageCommand(source, `const sharp=(await import('sharp')).default;const b=Buffer.from(${JSON.stringify(folderFiles.get("generated/card.png").toString("base64"))},'base64');const d=await sharp(b).raw().toBuffer({resolveWithObject:true});if(d.info.width!==40||d.info.height!==32)throw new Error('Unexpected restored folder geometry');console.log(JSON.stringify({width:d.info.width,height:d.info.height,decoded:true}));`);
+        assert.deepEqual(JSON.parse(decodedFolder.stdout.trim()), { width: 40, height: 32, decoded: true });
+
         // Include a real durable job that cannot finish until the restored worker starts.
         await compose(source, "stop", "worker");
         const queuedAsset = await api(`/api/workspaces/${workspaceId}/assets`, {
@@ -399,6 +486,7 @@ export async function checkBackupRestore({
         );
         await assertWritersStopped(source);
         assert.deepEqual(await linkedState(source), linkedStateBefore, "backup snapshot preserves marker2 parent/child and use/source/version tuple/settings");
+        assert.deepEqual(await folderState(source), folderStateBefore, "backup snapshot preserves the separate stored3 folder graph");
         // This historical ready version already points at worker-sealed bytes.
         // Restoring it must preserve that exact key, independently of staging.
         const sealedBefore = await versionRow(source, versionId);
@@ -491,6 +579,7 @@ export async function checkBackupRestore({
         );
         await assertWritersStopped(target);
         assert.deepEqual(await linkedState(target), linkedStateBefore, "restore preserves exact marker2 rows and linked settings before application startup");
+        assert.deepEqual(await folderState(target), folderStateBefore, "restore preserves exact stored3 parent/manual-child/source/use/version rows before application startup");
         const sealedRestored = await versionRow(target, versionId);
         assert.deepEqual(sealedRestored, sealedBefore, "ready version identity, checksum and exact sealed key survive restore");
         await assertStoredObject(target, sealedRestored.storage_key, sealedRestored.mime_type, pinnedBytes, sealedHeaders);
@@ -535,6 +624,23 @@ export async function checkBackupRestore({
         const restoredLinked = await fetch(new URL(resolvedLinked.downloadUrl, base), { headers: { cookie } });
         assert.equal(restoredLinked.status, 200);
         assert.deepEqual(Buffer.from(await restoredLinked.arrayBuffer()), linkedBytes);
+
+        assert.deepEqual(await api(`${folderEditorPath}?definitionSchema=2`), folderDefinitionBefore);
+        assert.deepEqual(await api(folderManifestPath), folderManifestBefore);
+        assert.deepEqual(await folderState(target), folderStateBefore);
+        for (const item of folderManifestBefore.items) {
+          const delivered = await fetch(new URL(item.downloadUrl, base), { headers: { cookie } });
+          assert.equal(delivered.status, 200);
+          assert.deepEqual(Buffer.from(await delivered.arrayBuffer()), folderFiles.get(item.outputPath));
+        }
+        await rm(join(folderProject, "manual"), { recursive: true });
+        await rm(join(folderProject, "generated"), { recursive: true });
+        assert.equal(JSON.parse((await folderCommand("pull", "--frozen")).stdout).changed, 4);
+        assert.equal(await readFile(join(folderProject, ".vardum.lock"), "utf8"), folderLock);
+        for (const [path, bytes] of folderFiles) assert.deepEqual(await readFile(join(folderProject, path)), bytes);
+        console.log(JSON.stringify({ check: "schema2-folder-use-backup-restore", storedDefinitionSchema: 3,
+          parentManualChildMarkers: true, sourceUseTuple: true, literalRulesRevision: true, canonicalGeneratedIdentity: true,
+          immutableResolution: true, frozenLockUnchanged: true, folderOutputSha256: checksum(folderFiles.get("generated/card.png")) }));
 
         // A new signature may be issued, but identity, reservation and the
         // original expiry must stay fixed. Denied content changes do no work.

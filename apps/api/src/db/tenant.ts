@@ -12,7 +12,7 @@ function inDefinitionTransaction<T>(
     // This declaration belongs to the same checked-out connection and ends on
     // both COMMIT and ROLLBACK. Physical sessions retain effective baseline 1.
     await transaction.execute(
-      sql`select set_config('vardum.vard_definition_schema', '2', true)`,
+      sql`select set_config('vardum.vard_definition_schema', '3', true)`,
     );
     if (workspaceId !== undefined) await transaction.execute(
       sql`select set_config('app.workspace_id', ${workspaceId}, true)`,

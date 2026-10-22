@@ -43,9 +43,9 @@ export async function checkVardDefinitionDatabase(
       throw error;
     } finally { client.release(); }
   }
-  async function seed(marker: 1 | 2 = 1, workspaceId = workspaces[0]!, isPublic = false): Promise<Graph> {
+  async function seed(marker: 1 | 2 | 3 = 1, workspaceId = workspaces[0]!, isPublic = false): Promise<Graph> {
     const graph = { id: randomUUID(), itemId: randomUUID(), sourceId: randomUUID(), versionId: randomUUID(), workspaceId };
-    await transaction(admin, workspaceId, "2", async (client) => {
+    await transaction(admin, workspaceId, "3", async (client) => {
       await client.query("INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES ($1,$2,$3,'Source','fixture','fixture')", [graph.sourceId, workspaceId, `source/${graph.sourceId}.png`]);
       await client.query("INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,created_by,updated_by) VALUES ($1,$2,$3,1,'ready',$4,'source.png','image/png',4,'fixture','fixture')", [graph.versionId, workspaceId, graph.sourceId, `${workspaceId}/${graph.versionId}/source`]);
       await client.query("INSERT INTO vard(id,workspace_id,name,is_public,definition_schema,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,'fixture','fixture')", [graph.id, workspaceId, graph.id, isPublic, marker]);
@@ -55,14 +55,14 @@ export async function checkVardDefinitionDatabase(
   }
   async function makeUse(graph: Graph) {
     const id = randomUUID();
-    await transaction(admin, graph.workspaceId, "2", async (client) => {
+    await transaction(admin, graph.workspaceId, "3", async (client) => {
       await client.query("INSERT INTO asset_use(id,workspace_id,source_asset_id,key,display_name,output_mime_type,created_by,updated_by) VALUES ($1,$2,$3,$4,'Original use','image/png','fixture','fixture')", [id, graph.workspaceId, graph.sourceId, `use/${id}.png`]);
     });
     return id;
   }
-  async function bind(client: PoolClient, graph: Graph, useId: string) {
+  async function bind(client: PoolClient, graph: Graph, useId: string, marker: 2 | 3 = 2) {
     const id = randomUUID();
-    await client.query("INSERT INTO vard_item(id,workspace_id,vard_id,definition_schema,asset_id,asset_use_id,output_path,created_by,updated_by) VALUES ($1,$2,$3,2,$4,$5,'linked.png','fixture','fixture')", [id, graph.workspaceId, graph.id, graph.sourceId, useId]);
+    await client.query("INSERT INTO vard_item(id,workspace_id,vard_id,definition_schema,asset_id,asset_use_id,output_path,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,'linked.png','fixture','fixture')", [id, graph.workspaceId, graph.id, marker, graph.sourceId, useId]);
     return id;
   }
   async function snapshot() {
@@ -101,10 +101,10 @@ export async function checkVardDefinitionDatabase(
     (result) => ({ result, error: undefined }),
     (error: unknown) => ({ result: undefined, error }),
   );
-  async function assertMatchingMarkers(graph: Graph) {
+  async function assertMatchingMarkers(graph: Graph, marker: 2 | 3 = 2) {
     const rows = (await admin.query("SELECT i.definition_schema AS child,v.definition_schema AS parent FROM vard_item i JOIN vard v ON v.id=i.vard_id WHERE i.vard_id=$1", [graph.id])).rows;
     assert.ok(rows.length > 0);
-    assert.ok(rows.every(({ child, parent }) => child === 2 && parent === 2));
+    assert.ok(rows.every(({ child, parent }) => child === marker && parent === marker));
   }
 
   try {
@@ -154,6 +154,77 @@ export async function checkVardDefinitionDatabase(
       }
     });
 
+    await t.test("marker3 requires exact local3 while local2 retains only A definitions and no tenant grant", async () => {
+      const ordinary = await seed(1), a = await seed(2), b = await seed(3);
+      const publicA = await seed(2, workspaces[0], true), publicB = await seed(3, workspaces[0], true);
+      for (const cap of [undefined, "", "1", "invalid", "02", "03", "2 ", "3 ", "2", "3"]) {
+        const visible = [ordinary, ...(cap === "2" || cap === "3" ? [a] : []), ...(cap === "3" ? [b] : [])];
+        await transaction(runtime, workspaces[0], cap, async (client) => {
+          assert.deepEqual((await client.query("SELECT id FROM vard WHERE id=ANY($1::uuid[]) ORDER BY id", [[ordinary.id, a.id, b.id]])).rows.map(({ id }) => id), visible.map(({ id }) => id).sort());
+          assert.deepEqual((await client.query("SELECT id FROM vard_item WHERE id=ANY($1::uuid[]) ORDER BY id", [[ordinary.itemId, a.itemId, b.itemId]])).rows.map(({ id }) => id), visible.map(({ itemId }) => itemId).sort());
+          if (cap !== "3") {
+            assert.equal((await client.query("UPDATE vard SET name='old A' WHERE id=$1", [b.id])).rowCount, 0);
+            assert.equal((await client.query("DELETE FROM vard_item WHERE id=$1", [b.itemId])).rowCount, 0);
+          }
+        });
+        await transaction(runtime, undefined, cap, async (client) => {
+          const expected = [...(cap === "2" || cap === "3" ? [publicA.id] : []), ...(cap === "3" ? [publicB.id] : [])].sort();
+          assert.deepEqual((await client.query("SELECT id FROM vard WHERE id=ANY($1::uuid[]) ORDER BY id", [[publicA.id, publicB.id, a.id, b.id]])).rows.map(({ id }) => id), expected);
+          assert.equal((await client.query("SELECT * FROM vard_item WHERE vard_id=ANY($1::uuid[])", [[publicA.id, publicB.id]])).rowCount, 0);
+        });
+      }
+      await transaction(runtime, workspaces[1], "3", async (client) => {
+        assert.equal((await client.query("SELECT * FROM vard WHERE id=$1", [b.id])).rowCount, 0);
+        assert.equal((await client.query("SELECT * FROM vard_item WHERE id=$1", [b.itemId])).rowCount, 0);
+      });
+      for (const cap of [undefined, "", "1", "invalid", "03", "3 ", "2"]) {
+        await refusal("INSERT INTO vard(workspace_id,name,definition_schema,created_by,updated_by) VALUES ($1,$2,3,'fixture','fixture')", [workspaces[0], randomUUID()], "23514", guard, runtime, cap ?? null);
+        for (const [sql, values] of [
+          ["UPDATE vard SET definition_schema=3 WHERE id=$1", [a.id]],
+          ["UPDATE vard SET name='owner mutation' WHERE id=$1", [b.id]],
+          ["UPDATE vard SET definition_schema=2 WHERE id=$1", [b.id]],
+          ["UPDATE vard SET definition_schema=1 WHERE id=$1", [b.id]],
+          ["DELETE FROM vard WHERE id=$1", [b.id]],
+          ["UPDATE vard_item SET output_path='owner.png' WHERE id=$1", [b.itemId]],
+          ["UPDATE vard_item SET definition_schema=2 WHERE id=$1", [b.itemId]],
+          ["UPDATE vard_item SET definition_schema=1 WHERE id=$1", [b.itemId]],
+          ["DELETE FROM vard_item WHERE id=$1", [b.itemId]],
+        ] as const) await refusal(sql, [...values], "23514", guard, admin, cap ?? null);
+      }
+      await transaction(runtime, b.workspaceId, "3", async (client) => {
+        assert.equal((await client.query("UPDATE vard SET name='B capable' WHERE id=$1", [b.id])).rowCount, 1);
+        assert.equal((await client.query("UPDATE vard_item SET output_path='B-capable.png' WHERE id=$1", [b.itemId])).rowCount, 1);
+      });
+    });
+
+    await t.test("marker3 keeps use tuple constraints and true-only3 rules with an explicit safe downgrade", async () => {
+      const graph = await seed(3), useId = await makeUse(graph);
+      const linked = await transaction(runtime, graph.workspaceId, "3", (client) => bind(client, graph, useId, 3));
+      for (const assignment of ["version_id=$2", "transformation='{}'::jsonb", "transformation='null'::jsonb", "writable=true"]) {
+        await refusal(`UPDATE vard_item SET ${assignment} WHERE id=$1`, assignment.includes("$2") ? [linked, graph.versionId] : [linked], "23514", "vard_item_use_binding_check", runtime, "3");
+      }
+      const insert = "INSERT INTO vard_item(workspace_id,vard_id,definition_schema,asset_id,asset_use_id,output_path,created_by,updated_by) VALUES ($1,$2,2,$3,$4,'mismatch.png','fixture','fixture')";
+      await refusal(insert, [graph.workspaceId, graph.id, graph.sourceId, useId], "23503", "vard_item_vard_fk", runtime, "3");
+      await refusal("UPDATE vard SET definition_schema=1 WHERE id=$1", [graph.id], "23514", "vard_item_use_binding_check", runtime, "3");
+      for (const marker of [1, 2] as const) {
+        const sourceOnly = await seed(marker);
+        await refusal("UPDATE vard SET folder_rules=$2 WHERE id=$1", [sourceOnly.id, JSON.stringify([{ includeUses: true }])], "23514", "vard_folder_rules_definition_check", runtime, "3");
+        await transaction(runtime, sourceOnly.workspaceId, "3", (client) => client.query("UPDATE vard SET folder_rules=$2 WHERE id=$1", [sourceOnly.id, JSON.stringify([{ includeUses: false }, {}])]));
+      }
+      await transaction(runtime, graph.workspaceId, "3", async (client) => {
+        await client.query("UPDATE vard SET folder_rules=$2 WHERE id=$1", [graph.id, JSON.stringify([{ includeUses: true }])]);
+        await client.query("DELETE FROM vard_item WHERE id=$1", [linked]);
+      });
+      await refusal("UPDATE vard SET definition_schema=1 WHERE id=$1", [graph.id], "23514", "vard_folder_rules_definition_check", runtime, "3");
+      await transaction(runtime, graph.workspaceId, "3", async (client) => {
+        await client.query("UPDATE vard SET folder_rules='[]' WHERE id=$1", [graph.id]);
+        assert.equal((await client.query("SELECT definition_schema FROM vard WHERE id=$1", [graph.id])).rows[0].definition_schema, 3);
+        await client.query("UPDATE vard SET definition_schema=1 WHERE id=$1", [graph.id]);
+      });
+      assert.equal((await admin.query("SELECT definition_schema FROM vard_item WHERE id=$1", [graph.itemId])).rows[0].definition_schema, 1);
+      await transaction(runtime, graph.workspaceId, undefined, (client) => client.query("UPDATE vard_item SET output_path='source-only-again.png' WHERE id=$1", [graph.itemId]));
+    });
+
     await t.test("tuple FKs and binding checks enforce parent format, source identity and tenant", async () => {
       const graph = await seed(2), other = await seed(2), foreign = await seed(2, workspaces[1]);
       const useId = await makeUse(graph), foreignUse = await makeUse(foreign);
@@ -192,9 +263,10 @@ export async function checkVardDefinitionDatabase(
       await refusal("UPDATE vard_item SET definition_schema=1 WHERE id=$1", [graph.itemId], "23503", "vard_item_vard_fk");
       await transaction(runtime, graph.workspaceId, "2", (client) => client.query("DELETE FROM vard_item WHERE id=$1", [linked]));
       assert.equal((await admin.query("SELECT definition_schema FROM vard WHERE id=$1", [graph.id])).rows[0].definition_schema, 2, "removing the final binding is not an implicit downgrade");
-      await transaction(runtime, graph.workspaceId, "2", (client) => client.query("UPDATE vard SET folder_rules=$2 WHERE id=$1", [graph.id, JSON.stringify([{ includeUses: true }])]));
-      await refusal("UPDATE vard SET definition_schema=1 WHERE id=$1", [graph.id], "23514", "vard_folder_rules_definition_check");
-      await transaction(runtime, graph.workspaceId, "2", async (client) => {
+      await refusal("UPDATE vard SET folder_rules=$2 WHERE id=$1", [graph.id, JSON.stringify([{ includeUses: true }])], "23514", "vard_folder_rules_definition_check");
+      await transaction(runtime, graph.workspaceId, "3", (client) => client.query("UPDATE vard SET definition_schema=3,folder_rules=$2 WHERE id=$1", [graph.id, JSON.stringify([{ includeUses: true }])]));
+      await refusal("UPDATE vard SET definition_schema=1 WHERE id=$1", [graph.id], "23514", "vard_folder_rules_definition_check", runtime, "3");
+      await transaction(runtime, graph.workspaceId, "3", async (client) => {
         await client.query("UPDATE vard SET folder_rules='[]',definition_schema=1 WHERE id=$1", [graph.id]);
       });
       assert.equal((await admin.query("SELECT definition_schema FROM vard_item WHERE id=$1", [graph.itemId])).rows[0].definition_schema, 1);
@@ -233,22 +305,51 @@ export async function checkVardDefinitionDatabase(
       assert.equal((await admin.query("SELECT * FROM vard_item WHERE id=$1", [ordinary.itemId])).rowCount, 0, "schema1 source cascade retains its previous behavior");
     });
 
-    for (const action of ["insert", "update", "delete"] as const) {
+    await t.test("old A capability2 cannot bypass OLD3 in source, workspace or organization cascades", async () => {
+      const isolatedOrg = `cascade3-${randomUUID()}`, isolatedWorkspace = `${isolatedOrg}-ws`;
+      organizations.push(isolatedOrg); workspaces.push(isolatedWorkspace);
+      await admin.query("INSERT INTO organization(id,name,slug,created_at) VALUES ($1,'Isolated B cascade',$1,now())", [isolatedOrg]);
+      await admin.query("INSERT INTO workspace(id,organization_id,name,slug,created_by,updated_by) VALUES ($1,$2,$1,$1,'fixture','fixture')", [isolatedWorkspace, isolatedOrg]);
+      const graph = await seed(3, isolatedWorkspace);
+      // No use exists: refusals must actually reach OLD3 rather than RESTRICT.
+      for (const pool of [runtime, admin]) for (const cap of [null, "", "invalid", "2"]) {
+        await refusal("DELETE FROM asset WHERE id=$1", [graph.sourceId], "23514", guard, pool, cap, graph.workspaceId);
+        await refusal("DELETE FROM workspace WHERE id=$1", [graph.workspaceId], "23514", guard, pool, cap, graph.workspaceId);
+        await refusal("DELETE FROM organization WHERE id=$1", [isolatedOrg], "23514", guard, pool, cap, graph.workspaceId);
+      }
+      const before = await snapshot();
+      await assert.rejects(transaction(runtime, graph.workspaceId, "2", async (client) => {
+        await client.query("INSERT INTO audit_event(workspace_id,actor_type,action,target_type,target_id,request_id) VALUES ($1,'system','before-cascade','workspace',$1,'old-A-guard-rollback')", [graph.workspaceId]);
+        await client.query("DELETE FROM workspace WHERE id=$1", [graph.workspaceId]);
+      }), matches("23514", guard));
+      assert.deepEqual(await snapshot(), before);
+      await transaction(runtime, graph.workspaceId, "3", (client) => client.query("DELETE FROM asset WHERE id=$1", [graph.sourceId]));
+      assert.equal((await admin.query("SELECT * FROM vard_item WHERE id=$1", [graph.itemId])).rowCount, 0);
+      const parent = await seed(3, isolatedWorkspace);
+      await transaction(runtime, parent.workspaceId, "3", (client) => client.query("DELETE FROM vard WHERE id=$1", [parent.id]));
+      assert.equal((await admin.query("SELECT * FROM vard_item WHERE id=$1", [parent.itemId])).rowCount, 0);
+      await seed(3, isolatedWorkspace);
+      await transaction(runtime, isolatedWorkspace, "3", (client) => client.query("DELETE FROM workspace WHERE id=$1", [isolatedWorkspace]));
+      assert.equal((await admin.query("SELECT * FROM vard WHERE workspace_id=$1", [isolatedWorkspace])).rowCount, 0);
+    });
+
+    for (const targetMarker of [2, 3] as const) for (const action of ["insert", "update", "delete"] as const) {
       for (const upgradeFirst of [true, false]) {
-        await t.test(`upgrade versus old child ${action}, ${upgradeFirst ? "upgrade" : "old writer"} holds the first lock`, async () => {
-          const graph = await seed(1), useId = await makeUse(graph);
+        await t.test(`upgrade to ${targetMarker} versus old child ${action}, ${upgradeFirst ? "upgrade" : "old writer"} holds the first lock`, async () => {
+          const previousMarker = targetMarker === 3 ? 2 : 1;
+          const graph = await seed(previousMarker), useId = await makeUse(graph);
           const old = await concurrent.connect(), capable = await concurrent.connect();
           const { waiterPid: oldPid, blockerPid: capablePid } = await waitForBlock(old, capable);
           let pending: ReturnType<typeof settled> | undefined;
           const oldWrite = () => action === "insert"
-            ? old.query("INSERT INTO vard_item(workspace_id,vard_id,asset_id,output_path,created_by,updated_by) VALUES ($1,$2,$3,'old-insert.png','old','old')", [graph.workspaceId, graph.id, graph.sourceId])
+            ? old.query("INSERT INTO vard_item(workspace_id,vard_id,asset_id,definition_schema,output_path,created_by,updated_by) VALUES ($1,$2,$3,$4,'old-insert.png','old','old')", [graph.workspaceId, graph.id, graph.sourceId, previousMarker])
             : old.query(action === "update" ? "UPDATE vard_item SET output_path='old-update.png' WHERE id=$1" : "DELETE FROM vard_item WHERE id=$1", [graph.itemId]);
           try {
-            await begin(old, graph.workspaceId);
-            await begin(capable, graph.workspaceId, "2");
+            await begin(old, graph.workspaceId, targetMarker === 3 ? "2" : undefined);
+            await begin(capable, graph.workspaceId, String(targetMarker));
             if (upgradeFirst) {
-              await capable.query("UPDATE vard SET definition_schema=2 WHERE id=$1", [graph.id]);
-              await bind(capable, graph, useId);
+              await capable.query("UPDATE vard SET definition_schema=$2 WHERE id=$1", [graph.id, targetMarker]);
+              await bind(capable, graph, useId, targetMarker);
               pending = settled(oldWrite());
               // This statement starts with the old child snapshot, then waits
               // for the uncommitted FK cascade to publish its newer marker.
@@ -264,15 +365,15 @@ export async function checkVardDefinitionDatabase(
               }
             } else {
               assert.equal((await oldWrite()).rowCount, 1);
-              pending = settled(capable.query("UPDATE vard SET definition_schema=2 WHERE id=$1", [graph.id]));
+              pending = settled(capable.query("UPDATE vard SET definition_schema=$2 WHERE id=$1", [graph.id, targetMarker]));
               await observeBlock(capablePid, oldPid);
               await old.query("COMMIT");
               const outcome = await pending;
               assert.equal(outcome.error, undefined);
-              await bind(capable, graph, useId);
+              await bind(capable, graph, useId, targetMarker);
               await capable.query("COMMIT");
             }
-            await assertMatchingMarkers(graph);
+            await assertMatchingMarkers(graph, targetMarker);
             assert.equal((await admin.query("SELECT * FROM vard_item WHERE vard_id=$1 AND asset_use_id=$2", [graph.id, useId])).rowCount, 1);
             const source = (await admin.query("SELECT output_path FROM vard_item WHERE id=$1", [graph.itemId])).rows[0];
             if (upgradeFirst) assert.equal(source.output_path, "source.png");
@@ -328,14 +429,14 @@ export async function checkVardDefinitionDatabase(
       const original = await runtime.connect();
       const pid = (await original.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
       try {
-        for (const ending of ["COMMIT", "ROLLBACK"]) {
-          await begin(original, workspaces[0], "2");
-          assert.equal((await original.query("SELECT current_setting($1,true) AS value", [capability])).rows[0].value, "2");
+        for (const cap of ["2", "3"]) for (const ending of ["COMMIT", "ROLLBACK"]) {
+          await begin(original, workspaces[0], cap);
+          assert.equal((await original.query("SELECT current_setting($1,true) AS value", [capability])).rows[0].value, cap);
           await original.query(ending);
           await assertVardDefinitionBaseline(original);
           assert.notEqual((await original.query("SELECT current_setting('app.workspace_id',true) AS value")).rows[0].value, workspaces[0]);
         }
-        await begin(original, workspaces[0], "2");
+        await begin(original, workspaces[0], "3");
         await assert.rejects(original.query("SELECT 1/0"), matches("22012"));
         await original.query("ROLLBACK");
         await assertVardDefinitionBaseline(original);
@@ -355,7 +456,7 @@ export async function checkVardDefinitionDatabase(
         try {
           for (const client of clients) {
             pids.add((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
-            await begin(client, workspaces[0], "2");
+            await begin(client, workspaces[0], "3");
           }
           assert.equal(pids.size, 3);
           for (const client of clients) {
@@ -372,8 +473,8 @@ export async function checkVardDefinitionDatabase(
       } finally { await checked.end(); }
     });
 
-    await t.test("awaited pool validation refuses startup2 before a caller receives the client", async () => {
-      for (const value of [undefined, "", "1", "invalid", "2"]) {
+    await t.test("awaited pool validation refuses startup2 or startup3 before a caller receives the client", async () => {
+      for (const value of [undefined, "", "1", "invalid", "02", "03", "2", "3"]) {
         let acquired = false;
         const checked = new Pool({ connectionString: runtimeConnectionString, max: 1,
           options: `-c statement_timeout=1234${value === undefined ? "" : ` -c ${capability}=${value}`}`,
@@ -386,7 +487,7 @@ export async function checkVardDefinitionDatabase(
               await assertVardDefinitionBaseline(client);
             } finally { client.release(); }
           });
-          if (value === "2") {
+          if (value === "2" || value === "3") {
             await assert.rejects(acquire, /Unsafe Vard definition capability baseline/);
             assert.equal(acquired, false);
             assert.equal(checked.totalCount, 0, "a rejected physical connection must be destroyed");
@@ -403,7 +504,7 @@ export async function checkVardDefinitionDatabase(
       }), (error: unknown) => ["23514", "23503"].includes((error as PgFailure).code ?? ""));
       assert.deepEqual(await snapshot(), before, "refused cascade also rolls back preceding audit work");
       for (const workspaceId of workspaces) {
-        await transaction(runtime, workspaceId, "2", async (client) => {
+        await transaction(runtime, workspaceId, "3", async (client) => {
           await client.query("DELETE FROM vard WHERE workspace_id=$1", [workspaceId]);
           await client.query("DELETE FROM asset_use WHERE workspace_id=$1", [workspaceId]);
           await client.query("DELETE FROM workspace WHERE id=$1", [workspaceId]);
@@ -413,7 +514,7 @@ export async function checkVardDefinitionDatabase(
     });
   } finally {
     await concurrent.end();
-    await transaction(admin, undefined, "2", async (client) => {
+    await transaction(admin, undefined, "3", async (client) => {
       await client.query("DELETE FROM vard WHERE workspace_id=ANY($1)", [workspaces]);
       await client.query("DELETE FROM asset_use WHERE workspace_id=ANY($1)", [workspaces]);
       await client.query("DELETE FROM organization WHERE id=ANY($1)", [organizations]);

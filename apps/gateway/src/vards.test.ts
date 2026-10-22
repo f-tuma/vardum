@@ -60,6 +60,8 @@ function sourceItems(body: Record<string, unknown>): Array<Record<string, unknow
 }
 async function render(t: TestContext, options: {
   capability?: number;
+  folderCapability?: number | null;
+  manifest?: unknown;
   editor?: unknown;
   editorStatus?: number;
   editorRead?: () => Response | Promise<Response>;
@@ -83,14 +85,14 @@ async function render(t: TestContext, options: {
       assert.ok(path.includes("/editor"), "No UI mutation may use a legacy route");
       return editorResponse(options.mutation ? await options.mutation(call) : Response.json(current));
     }
-    if (path === "/api/capabilities") return Response.json({ vardEditRevision: 1, vardDefinitionSchema: options.capability ?? 2 });
+    if (path === "/api/capabilities") return Response.json({ vardEditRevision: 1, vardDefinitionSchema: options.capability ?? 2, ...(options.folderCapability === null ? {} : { vardFolderUses: options.folderCapability ?? 1 }) });
     if (path.endsWith("/editor")) {
       const response = options.editorRead ? await options.editorRead() : Response.json(options.editor ?? current, { status: options.editorStatus ?? 200 });
       return options.rawEditor ? response : editorResponse(response);
     }
     if (path.endsWith("/manifest") || path.endsWith("/vards/vard")) {
       const manifest = "definitionSchema" in current ? { ...current, schema: 1, items: current.items.map(({ id, outputPath, resolved }) => ({ ...resolved, id, outputPath })) } : current;
-      return Response.json(manifest);
+      return Response.json(path.endsWith("/manifest") && options.manifest ? options.manifest : manifest);
     }
     if (path.endsWith("/asset-uses")) return options.usesRead ? options.usesRead(requestUrl) : Response.json({ uses: options.uses ?? [], nextCursor: null });
     if (path.endsWith("/assets/real-source")) return Response.json({ id: "real-source", key: "source.png", displayName: "Source", isPublic: false,
@@ -642,4 +644,105 @@ test("processing refresh stops at ready and preserves the open literal draft", {
   assert.equal(reads, finishedReads, "editor polling stops when the source finishes processing");
   await submit(button("Save", dialog()).closest("form")!);
   assert.deepEqual(mutations(calls)[0]!.body!.items, [{ id: definition.items[0]!.id, outputPath: "unsaved-during-processing.png", binding: { kind: "use", assetUseId: "library-use" } }]);
+});
+
+
+function folderCheckbox(index = 0): HTMLInputElement {
+  const label = [...document.querySelectorAll("label")].filter(element => element.textContent?.trim() === "Include linked library uses")[index];
+  assert.ok(label);
+  const control = document.getElementById(label.htmlFor);
+  assert.ok(control instanceof HTMLInputElement); return control;
+}
+
+test("folder opt-in defaults off, saves only true, reopens saved state and omits false on opt-out", async (t) => {
+  let saved = wireEditor(original);
+  const { calls } = await render(t, { editorRead: () => Response.json(saved), mutation: (call) => {
+    saved = { ...saved, storedDefinitionSchema: 3, revision: freshRevision, folderRules: call.body!.folderRules as VardEditorDefinitionV2["folderRules"] };
+    return Response.json(saved);
+  } });
+  await click(button("Folder rules"));
+  assert.equal(folderCheckbox().checked, false);
+  await click(folderCheckbox());
+  await submit(button("Save rules").closest("form")!);
+  assert.deepEqual(mutations(calls)[0]?.body, { folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }], definitionSchema: 2, expectedRevision: revision });
+  await click(button("Settings")); await click(button("Folder rules"));
+  assert.equal(folderCheckbox().checked, true);
+  await click(folderCheckbox());
+  await submit(button("Save rules").closest("form")!);
+  assert.deepEqual(mutations(calls)[1]?.body?.folderRules, [{ sourcePrefix: "brand/", outputPrefix: "public/" }]);
+  assert.equal(mutations(calls)[1]?.body?.expectedRevision, freshRevision);
+  assert.equal(folderCheckbox().checked, false);
+});
+
+test("mixed folder rules keep independent opt-in without adding false defaults", async (t) => {
+  const { calls } = await render(t);
+  await click(button("Folder rules")); await click(folderCheckbox()); await click(button("Add rule"));
+  assert.equal(folderCheckbox(1).checked, false);
+  await submit(button("Save rules").closest("form")!);
+  assert.deepEqual(mutations(calls)[0]?.body?.folderRules, [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }, { sourcePrefix: "", outputPrefix: "" }]);
+});
+
+for (const folderCapability of [null, 0, 2]) test("A editing remains usable but folder opt-in requires exact B capability " + folderCapability, async (t) => {
+  const { calls } = await render(t, { folderCapability });
+  assert.equal(button("Add asset").disabled, false);
+  await click(button("Folder rules"));
+  assert.equal(folderCheckbox().disabled, true);
+  await click(folderCheckbox());
+  assert.equal(folderCheckbox().checked, false);
+  await change(field("Workspace folder"), "manual/");
+  await submit(button("Save rules").closest("form")!);
+  assert.deepEqual(mutations(calls)[0]?.body?.folderRules, [{ sourcePrefix: "manual/", outputPrefix: "public/" }]);
+});
+
+test("stored3 body without folder capability blocks all editing instead of falling back to a writable v1 definition", async (t) => {
+  const editor = { ...wireEditor(original), storedDefinitionSchema: 3, folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }] };
+  const { calls } = await render(t, { editor, folderCapability: null });
+  assert.match(document.body.textContent!, /Vard editing unavailable/);
+  assert.equal(button("Add asset").disabled, true);
+  await click(button("Folder rules")); await click(folderCheckbox());
+  assert.equal(mutations(calls).length, 0);
+});
+
+test("stale folder opt-in keeps the captured draft and token until explicit reload", async (t) => {
+  const { calls, setServer, client } = await render(t, { mutation: () => Response.json({ code: "vard_revision_conflict", error: "Reload", currentRevision: freshRevision }, { status: 409 }) });
+  await click(button("Folder rules")); await click(folderCheckbox());
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], { ...wireEditor(original), revision: freshRevision }); });
+  await settle();
+  assert.equal(folderCheckbox().checked, true);
+  await submit(button("Save rules").closest("form")!);
+  assert.equal(mutations(calls)[0]?.body?.expectedRevision, revision);
+  assert.equal(folderCheckbox().checked, true);
+  assert.match(document.body.textContent!, /Your unsaved changes are kept/);
+  await submit(button("Save rules").closest("form")!);
+  assert.equal(mutations(calls).length, 1);
+  setServer({ ...wireEditor(original), revision: freshRevision });
+  await click(button("Reload and discard changes"));
+  assert.equal(folderCheckbox().checked, false);
+});
+
+test("stored3 source-only return is hidden while any folder opt-in remains and available after explicit opt-out", async (t) => {
+  const editor: VardEditorDefinitionV2 = { ...wireEditor(original), storedDefinitionSchema: 3, folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }] };
+  const { calls, client } = await render(t, { editor });
+  await click(button("Settings"));
+  assert.doesNotMatch(document.body.textContent!, /Return to source-only editing/);
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], { ...editor, folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: false }] }); });
+  await settle(); await click(button("Return to source-only editing"));
+  assert.deepEqual(mutations(calls)[0]?.body, { returnToSourceOnly: true, definitionSchema: 2, expectedRevision: revision });
+});
+
+test("generated folder uses appear only in read-only preview, never manual draft controls", async (t) => {
+  const editor: VardEditorDefinitionV2 = { ...wireEditor(original), storedDefinitionSchema: 3, folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/", includeUses: true }] };
+  const generated = { ...original.items[0]!, id: "folder:use:generated", outputPath: "generated-linked.svg", versionId: "ready", downloadUrl: "/w/workspace/__v/ready/source.svg?pad=25&sig=canonical", writable: false };
+  const unavailable = { ...generated, id: "folder:use:unavailable", outputPath: "unavailable-linked.svg", versionId: null, downloadUrl: null, fingerprint: null, sourceChecksum: null };
+  await render(t, { editor, manifest: { ...original, items: [generated, unavailable] } });
+  assert.doesNotMatch(document.body.textContent!, /generated-linked.svg/);
+  await click(button("Preview"));
+  const row = [...document.querySelectorAll("tr")].find(element => element.textContent?.includes("generated-linked.svg"));
+  assert.ok(row); assert.match(row.textContent!, /Folder rule/);
+  assert.equal(row.querySelectorAll("button,input").length, 0);
+  assert.equal(row.querySelector("img")?.getAttribute("src"), generated.downloadUrl);
+  const unavailableRow = [...document.querySelectorAll("tr")].find(element => element.textContent?.includes("unavailable-linked.svg"));
+  assert.ok(unavailableRow); assert.match(unavailableRow.textContent!, /Unavailable/);
+  assert.equal(unavailableRow.querySelector("img"), null);
+  assert.match(document.body.textContent!, /Folder outputs are read-only/);
 });

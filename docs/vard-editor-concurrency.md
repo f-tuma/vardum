@@ -114,16 +114,17 @@ recipe or writable field is invalid even for an Original use. The response keeps
 current `resolved` output and `linkedUse` diagnostics separate. Never build an
 input by copying those live values into the literal binding.
 
-`storedDefinitionSchema` reports the persisted format (1 or 2). The first live
-binding atomically upgrades the parent and existing children to format 2 before
-inserting it. Removing the last live binding leaves format 2. An explicit schema-2
-PATCH with `returnToSourceOnly: true` may downgrade only after all bindings are
-removed; an unsafe request returns `409 vard_definition_has_bindings` without
+`storedDefinitionSchema` reports the persisted format (1, 2 or 3). The first live
+binding in a source-only definition atomically upgrades the parent and existing
+children to format 2 before inserting it. Removing the last live binding leaves
+format 2. An explicit schema-2 PATCH with `returnToSourceOnly: true` may downgrade
+only after all manual use bindings and folder-use opt-ins are removed; an unsafe
+request returns `409 vard_definition_has_bindings` without
 partial metadata, item or audit changes. The gateway exposes this as
 **Return to source-only editing**. The API rejects false or unknown intent fields.
 
 Schema-1 editor and legacy definition GET/PATCH/whole-list PUT/DELETE requests
-against format 2 return `409 vard_definition_upgrade_required` with
+against format 2 or 3 return `409 vard_definition_upgrade_required` with
 `requiredDefinitionSchema: 2`, before OCC or domain validation. They expose no
 schema-1 editable revision. Do not retry by flattening a use into its source.
 Schema-1 projections and revision hashes for source-only definitions are unchanged.
@@ -136,8 +137,30 @@ manual UUID/use identity may round-trip while unavailable; a newly selected use
 must belong to the workspace and have a usable ready current source. Configuration
 writes retain the existing no-op, ID, creation-time and atomic path-swap rules.
 
-Migration 0020 enforces the workspace/use/source tuple and capability boundary in
-PostgreSQL as well. Physical connections stay at baseline capability 1; new API
-transactions set exact schema 2 locally and return to baseline afterward. Old
-binaries cannot see format-2 rows or delete them through a source cascade.
-Do not set schema-2 capability persistently to bypass an old binary's guard.
+### Explicit folder-use opt-in
+
+The separate `vardFolderUses: 1` capability permits `includeUses: true` on an
+individual schema-2 folder rule. Legacy rule bodies still reject this field.
+False and omission mean originals only; new writes normalize false to omission.
+The first true rule atomically promotes the parent and manual children to stored
+format 3. Removing it leaves format 3, including subsequent item replacements and
+imports. Existing formats 1/2 do not opt in implicitly. There is no automatic
+3-to-2 downgrade.
+
+The explicit safe return to format 1 removes historical `includeUses: false`
+keys from the effective rules even when the PATCH omits `folderRules`. Unsafe
+returns reject the entire request before any metadata, item or audit mutation.
+Wire definition and immutable manifest/frozen-lock schemas remain unchanged.
+
+Live folder membership, use recipes and source versions remain outside the
+literal revision. Reads capture membership and resolved settings in the same
+repeatable-read transaction. Generated use outputs are read-only and share the
+full namespace and output limit with manual outputs and originals. Their
+canonical source identity is distinct from the use path that matched the rule.
+
+Migrations 0020 and 0021 enforce the workspace/use/source tuple and capability
+boundary in PostgreSQL. Physical connections stay at baseline capability 1;
+current API transactions set exact capability 3 locally and return to baseline
+afterward. A capability-2 API sees formats 1/2 but cannot see or mutate format 3,
+including through a source/workspace cascade. The oldest API cannot see format 2
+or 3. Never grant either elevated capability persistently to bypass these guards.

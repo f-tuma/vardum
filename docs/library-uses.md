@@ -32,7 +32,7 @@ JPEG requires a different use. An unrecognized extension is rejected.
 
 Settings and removal require the revision that was read. A concurrent change
 returns `409`; reload the settings before trying again. Removing a use keeps its
-source, all source versions and every other use. A use referenced by a Vard
+source, all source versions and every other use. A use explicitly bound by a Vard
 cannot be removed: the API returns `409 asset_use_in_use` after checking its
 revision. Remove or rebind those Vard outputs first. Empty containing folders can
 be removed separately. Source deletion returns `409 source_in_use` while uses remain;
@@ -58,6 +58,29 @@ are read-only for push and Vard import, including an **Original** use and a targ
 whose checksum already matches. A normal pull captures the current resolution;
 `pull --frozen` retains its captured source version, complete transformation,
 canonical immutable URL and checksums. Editing the use never changes that lock.
+
+## Include uses with a folder rule
+
+Folder rules include originals by default. Enable **Include linked library uses**
+on an individual rule to also include uses whose own library paths match its
+prefix. The source may live outside that prefix. The saved
+output format determines the generated extension; two uses of one source remain
+separate outputs. Existing rules do not opt in automatically.
+
+Generated use outputs follow the saved dimensions, safe area, background and ready
+source version. They have no independent Vard recipe or pin and are read-only for
+push and import, including Original uses and files with matching checksums. Their
+identity starts with `folder:use:` and remains stable while the use and output
+path stay the same. Changing the format of an extensionless use can change its
+generated path and identity. Manual outputs, originals and generated uses share
+the same collision rules and 1,000-output limit.
+
+Removing a use included only by a folder rule removes that generated output;
+it does not delete its source or change a captured frozen lock. An unavailable
+use remains unavailable without falling back to original bytes. One private
+matching source or use hides the whole anonymous manifest, including a private
+use beyond the output limit. Turn off the rule's opt-in to return that rule to
+originals-only membership.
 
 ## Delivery and privacy
 
@@ -159,8 +182,10 @@ whole-batch transactional upload guarantee.
 
 Vard manual outputs explicitly choose a source mapping or a live library-use
 binding. **Originals-only folder rules remain originals-only**: adding a use does
-not silently add a Vard output. Folder inclusion of uses is separate follow-up
-work. Existing schema-2 frozen snapshots keep the same canonical source URLs,
+not silently add a Vard output. Schema-2 rules can explicitly set
+`includeUses: true` when the server advertises `vardFolderUses: 1`; false or
+omission means originals only. Existing schema-2 frozen snapshots keep the same
+canonical source URLs,
 captured transforms, version IDs and checksums. The matching gateway/API use
 [editor definition schema 2](vard-editor-concurrency.md#live-library-use-definitions)
 for linked configuration; immutable manifest and lock schemas do not change.
@@ -194,3 +219,12 @@ Vard. After removing its last binding, use **Return to source-only editing** to
 explicitly restore source-only editing; removal alone keeps format 2. Keep the
 migration during image rollback and never grant old binaries persistent schema-2
 capability. See [upgrade and rollback review](server-release.md#upgrade-and-rollback-review).
+
+Migration `0021_vard_folder_uses` adds stored format 3 for folder opt-in. Wire
+definition and frozen-lock schemas stay 2. Deploy its matching migrator, API and
+gateway before enabling the checkbox. Current API transactions declare local
+capability 3; physical connections retain baseline 1. A format-2 API can continue
+working with formats 1/2 while format-3 definitions are hidden and protected from
+its writes and cascades. Keep the migration on rollback. Removing every opt-in
+and manual use does not silently downgrade the definition; **Return to source-only
+editing** performs the explicit safe return to format 1.

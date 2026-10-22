@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { folderItemId } from "./vard-folder-rules.js";
+import { folderItemId, folderUseItemId, resolveFolderMembership } from "./vard-folder-rules.js";
 import { assertImportIdentities, importMappings, resolveImportOutputs, vardImportBody, vardImportPlanBody } from "./vard-import.js";
 
 const file = {
@@ -128,4 +128,28 @@ test("full union accepts exactly 1000 outputs and never truncates generated or m
     assetId: randomUUID(), key: `brand/${index}`, mimeType: "image/png",
   }));
   assert.throws(() => resolveImportOutputs([], sources, rules), /more than 1000/);
+});
+
+test("generated Original and transformed use destinations refuse before canonical source equality", () => {
+  const optIn = [{ sourcePrefix: "derived/", outputPrefix: "assets/", includeUses: true }];
+  for (const outputMimeType of ["image/png", "image/webp"]) {
+    const extension = outputMimeType === "image/png" ? "png" : "webp";
+    const use = { assetUseId: randomUUID(), assetId: file.assetId, key: "derived/logo", outputMimeType };
+    const incoming = { ...file, key: "outside/logo", outputPath: `assets/logo.${extension}` };
+    const membership = resolveFolderMembership([], [], [use], optIn);
+    const outputs = resolveImportOutputs([], [], optIn, [use]);
+    assert.deepEqual([...outputs.values()], membership, "manifest and import use the same member identities and paths");
+    assert.equal(outputs.get(incoming.outputPath)!.id, folderUseItemId(use.assetUseId, incoming.outputPath));
+    assert.throws(() => importMappings([], [], optIn, [incoming], [use]), /Linked uses are read-only/);
+    assert.throws(() => importMappings([], [], optIn, [{ ...incoming, assetId: randomUUID(), checksum: "b".repeat(64) }], [use]),
+      /Linked uses are read-only/, "refusal precedes even mismatched source identity/checksum");
+    assert.deepEqual(importMappings([], [], optIn, [{ ...incoming, outputPath: "direct.png" }], [use]),
+      [{ mappingAction: "add", mappingId: null }]);
+  }
+  const plain = [{ sourcePrefix: "derived/", outputPrefix: "assets/" }];
+  const use = { assetUseId: randomUUID(), assetId: file.assetId, key: "derived/logo", outputMimeType: "image/png" };
+  assert.deepEqual(importMappings([], [], plain, [file], [use]), [{ mappingAction: "add", mappingId: null }],
+    "uses do not become destinations without explicit opt-in");
+  assert.throws(() => importMappings([], [], optIn, [file], [use]), /Linked uses are read-only/,
+    "a true rule added after preflight is re-evaluated at commit");
 });
