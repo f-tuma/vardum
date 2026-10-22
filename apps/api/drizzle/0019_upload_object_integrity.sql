@@ -15,9 +15,17 @@ ALTER TABLE "asset_upload" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "workspace_isolation" ON "asset_upload" FOR ALL USING ("workspace_id" = current_setting('app.workspace_id', true)) WITH CHECK ("workspace_id" = current_setting('app.workspace_id', true));
 --> statement-breakpoint
 -- A private inventory must survive asset/workspace cascade. This narrow owner
--- view exposes only a cleanup directory, including already deleted workspaces.
+-- view exposes only aggregated cleanup scheduling, including deleted workspaces.
+-- GROUP BY also makes it structurally non-updatable, even if a broad default
+-- table grant is accidentally applied before runtime-role provisioning.
 CREATE VIEW "asset_upload_cleanup_scope" AS
-  SELECT "workspace_id", "sweep_at", "sweep_attempt_at" FROM "asset_upload";
+  SELECT "workspace_id", bool_or("sweep_at" IS NULL) AS "has_unswept",
+    min("sweep_at") AS "sweep_at", max("sweep_attempt_at") AS "sweep_attempt_at"
+  FROM "asset_upload" GROUP BY "workspace_id";
+--> statement-breakpoint
+-- Held until the migration transaction commits: no old writer may insert or
+-- finish a version between this snapshot and installation of the new guards.
+LOCK TABLE "asset_version" IN SHARE ROW EXCLUSIVE MODE;
 --> statement-breakpoint
 INSERT INTO "asset_upload" ("version_id", "workspace_id", "asset_id", "storage_key", "created_at")
   SELECT "id", "workspace_id", "asset_id", "storage_key", "created_at"

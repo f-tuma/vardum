@@ -10,12 +10,15 @@ export async function checkUploadIntegrity(t: TestContext, fixture: {
   objects: Map<string, Buffer>;
   keyHeaders: Record<string, Record<string, string>>;
   setWriteHook: (hook: (key: string, bytes: Buffer) => Promise<void>) => void;
+  setListHook: (hook: (prefix: string) => Promise<void>) => void;
+  setBeforeListHook: (hook: (prefix: string) => Promise<void>) => void;
 }) {
-  const { admin, app, objects, keyHeaders, setWriteHook } = fixture;
+  const { admin, app, objects, keyHeaders, setWriteHook, setListHook, setBeforeListHook } = fixture;
   const { processAsset } = await import("../src/asset-processor.js");
   const { cleanupUploadObjects } = await import("../src/upload-objects.js");
   const { inWorkspace } = await import("../src/db/tenant.js");
   const { workspaceUsage } = await import("../src/upload-lifecycle.js");
+  const { pool } = await import("../src/db/index.js");
   const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8"><rect width="16" height="8" fill="red"/></svg>');
   const changed = Buffer.from(bytes.toString().replace("red", "tan"));
   const digest = (data: Buffer) => createHash("sha256").update(data).digest("hex");
@@ -40,9 +43,15 @@ export async function checkUploadIntegrity(t: TestContext, fixture: {
     objects.set(stage, bytes);
     return { workspaceId: "ws", assetId, versionId, requestId: "upload-integrity", stage, key };
   }
-  t.beforeEach(() => setWriteHook(async () => {}));
+  t.beforeEach(() => {
+    setWriteHook(async () => {});
+    setListHook(async () => {});
+    setBeforeListHook(async () => {});
+  });
   t.after(async () => {
     setWriteHook(async () => {});
+    setListHook(async () => {});
+    setBeforeListHook(async () => {});
     await admin.query("DELETE FROM asset WHERE id=ANY($1::uuid[])", [assets]);
     await admin.query("DELETE FROM asset_upload WHERE version_id=ANY($1::uuid[])", [versions]);
     await admin.query("DELETE FROM workspace WHERE id=ANY($1::text[])", [workspaces]);
@@ -103,6 +112,59 @@ export async function checkUploadIntegrity(t: TestContext, fixture: {
       assert.ok(!objects.has(firstKey));
       assert.deepEqual(objects.get(winner.storage_key), changed);
     } finally { release(); await stale; }
+  });
+
+  await t.test("a lost ready COMMIT acknowledgement preserves the winner through retry and cleanup", async (commitTest) => {
+    const item = await seed(digest(bytes));
+    const client = await pool.connect();
+    const realQuery = client.query.bind(client);
+    const realRelease = client.release.bind(client);
+    const lostAcknowledgement = new Error("ready COMMIT acknowledgement lost");
+    let readyPut = false, lost = 0;
+    setWriteHook(async key => { if (key.includes("/sealed/")) readyPut = true; });
+    // Use the real runtime connection and let PostgreSQL commit first. Pin it
+    // only for this processor call, including its initial claim transaction.
+    const connectMock = commitTest.mock.method(pool, "connect", async () => client);
+    const releaseMock = commitTest.mock.method(client, "release", () => {});
+    const queryMock = commitTest.mock.method(client, "query", async (query: string | { text: string }, values?: unknown[]) => {
+      const result = await realQuery(query, values);
+      if ((typeof query === "string" ? query : query.text).trim().toLowerCase() === "commit" && readyPut) {
+        readyPut = false;
+        lost++;
+        throw lostAcknowledgement;
+      }
+      return result;
+    });
+    try {
+      await assert.rejects(processAsset(item), error =>
+        error === lostAcknowledgement || (error as { cause?: unknown }).cause === lostAcknowledgement);
+      assert.equal(lost, 1, "only the ready transaction loses its acknowledgement");
+    } finally {
+      queryMock.mock.restore();
+      releaseMock.mock.restore();
+      connectMock.mock.restore();
+      realRelease();
+      setWriteHook(async () => {});
+    }
+    const winner = await state(item.versionId);
+    assert.equal(winner.status, "ready");
+    assert.notEqual(winner.storage_key, item.stage);
+    assert.equal(winner.checksum, digest(bytes));
+    assert.equal(winner.ingest_attempt_id, null);
+    const audit = () => admin.query("SELECT * FROM audit_event WHERE target_id=$1 AND action='asset.version_processed'", [item.versionId]);
+    assert.equal((await audit()).rowCount, 1);
+    objects.set(item.stage, changed);
+    await processAsset(item);
+    await sweep(6 * 86400_001);
+    assert.deepEqual(await state(item.versionId), winner);
+    assert.equal((await admin.query("SELECT current_version_id FROM asset WHERE id=$1", [item.assetId])).rows[0].current_version_id, item.versionId);
+    assert.equal((await audit()).rowCount, 1, "retry must not publish or audit a committed winner twice");
+    assert.ok(!objects.has(item.stage));
+    assert.deepEqual(objects.get(winner.storage_key), bytes);
+    assert.equal([...objects.keys()].filter(key => key.startsWith(`originals/ws/${item.assetId}/${item.versionId}/sealed/`)).length, 1);
+    const delivered = await app.inject({ url: `/w/demo/__v/${item.versionId}/${item.key}`, headers: keyHeaders.read });
+    assert.equal(delivered.statusCode, 200, delivered.body);
+    assert.deepEqual(delivered.rawPayload, bytes);
   });
 
   await t.test("crash candidate is swept while retry stage stays; failed PUT never becomes ready", async () => {
@@ -181,7 +243,6 @@ export async function checkUploadIntegrity(t: TestContext, fixture: {
     versions.push(deletedVersion);
     await admin.query("INSERT INTO asset_upload(version_id,workspace_id,asset_id,storage_key) VALUES($1,$2,$3,$4)", [deletedVersion, `z-integrity-${suffix}`, deletedAsset, deletedStage]);
     objects.set(deletedStage, bytes);
-    const { pool } = await import("../src/db/index.js");
     assert.equal((await pool.query("SELECT * FROM asset_upload WHERE version_id=$1", [deletedVersion])).rowCount, 0);
     const hidden = await inWorkspace("ws", tx => tx.execute("SELECT * FROM asset_upload WHERE workspace_id LIKE 'z-integrity-%'"));
     assert.equal(hidden.rowCount, 0);
@@ -190,6 +251,126 @@ export async function checkUploadIntegrity(t: TestContext, fixture: {
     assert.ok(!objects.has(deletedStage), "pending scopes cannot starve the deleted-workspace ledger");
     const untouched = await admin.query("SELECT count(*)::int AS n FROM asset_upload WHERE version_id=ANY($1::uuid[]) AND sweep_at IS NULL", [versions]);
     assert.equal(untouched.rows[0].n, 0);
+  });
+
+  await t.test("a workspace with more than two batches cannot starve a later deleted scope", async () => {
+    const suffix = randomUUID();
+    const pendingWorkspace = `a-integrity-backlog-${suffix}`;
+    const deletedWorkspace = `z-integrity-backlog-${suffix}`;
+    workspaces.push(pendingWorkspace);
+    await admin.query("INSERT INTO workspace(id,organization_id,name,slug,created_by,updated_by) VALUES($1,'org','Cleanup backlog',$1,'fixture','fixture')", [pendingWorkspace]);
+    const batch = 3;
+    const pendingVersions: string[] = [];
+    for (let index = 0; index < 2 * batch + 1; index++) {
+      const assetId = randomUUID(), versionId = randomUUID();
+      assets.push(assetId); versions.push(versionId); pendingVersions.push(versionId);
+      await admin.query("INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES($1,$2,$3,'Pending','fixture','fixture')", [assetId, pendingWorkspace, `pending-${index}`]);
+      await admin.query("INSERT INTO asset_version(id,workspace_id,asset_id,number,storage_key,filename,mime_type,size,created_by,updated_by) VALUES($1,$2,$3,1,$4,'fixture.svg','image/svg+xml',$5,'fixture','fixture')", [versionId, pendingWorkspace, assetId, `originals/${pendingWorkspace}/${assetId}/${versionId}/source`, bytes.length]);
+    }
+    const deletedVersion = randomUUID(), deletedAsset = randomUUID();
+    const deletedStage = `originals/${deletedWorkspace}/${deletedAsset}/${deletedVersion}/source`;
+    versions.push(deletedVersion);
+    await admin.query("INSERT INTO asset_upload(version_id,workspace_id,asset_id,storage_key) VALUES($1,$2,$3,$4)", [deletedVersion, deletedWorkspace, deletedAsset, deletedStage]);
+    objects.set(deletedStage, bytes);
+    const unswept = async () => (await admin.query("SELECT count(*)::int AS n FROM asset_upload WHERE version_id=ANY($1::uuid[]) AND sweep_at IS NULL", [pendingVersions])).rows[0].n;
+    const now = Date.now() + 10 * 86400_001;
+    assert.equal(await cleanupUploadObjects(new Date(now), batch), batch);
+    assert.equal(await unswept(), batch + 1, "the first workspace still has a full batch with no attempt timestamp");
+    assert.ok(objects.has(deletedStage));
+    assert.ok(await cleanupUploadObjects(new Date(now + 1000), batch) <= batch);
+    assert.ok(!objects.has(deletedStage), "a recent workspace attempt must yield to an unvisited deleted scope");
+    assert.ok(await unswept() > 0, "the later scope is serviced before the backlog is exhausted");
+    await sweep(10 * 86400_001 + 2000);
+  });
+
+  await t.test("the runtime cleanup directory denies cross-tenant writes while its ledger stays private", async () => {
+    const workspaceId = `z-integrity-private-${randomUUID()}`;
+    const versionId = randomUUID(), assetId = randomUUID();
+    const stage = `originals/${workspaceId}/${assetId}/${versionId}/source`;
+    versions.push(versionId);
+    await admin.query("INSERT INTO asset_upload(version_id,workspace_id,asset_id,storage_key) VALUES($1,$2,$3,$4)", [versionId, workspaceId, assetId, stage]);
+    const before = (await admin.query("SELECT * FROM asset_upload WHERE version_id=$1", [versionId])).rows[0];
+    const runtime = await pool.connect();
+    try {
+      assert.equal((await runtime.query("SELECT current_user AS role")).rows[0].role, "varda_app");
+      const grants = (await runtime.query("SELECT has_any_column_privilege(current_user,'asset_upload_cleanup_scope','INSERT') AS insert,has_any_column_privilege(current_user,'asset_upload_cleanup_scope','UPDATE') AS update,has_table_privilege(current_user,'asset_upload_cleanup_scope','DELETE') AS delete")).rows[0];
+      assert.deepEqual(grants, { insert: false, update: false, delete: false });
+      for (const statement of [
+        "UPDATE asset_upload_cleanup_scope SET workspace_id='ws' WHERE workspace_id=$1",
+        "DELETE FROM asset_upload_cleanup_scope WHERE workspace_id=$1",
+        "INSERT INTO asset_upload_cleanup_scope(workspace_id) VALUES($1)",
+      ]) {
+        await runtime.query("BEGIN");
+        try {
+          await runtime.query("SELECT set_config('app.workspace_id','ws',true)");
+          assert.equal((await runtime.query("SELECT * FROM asset_upload_cleanup_scope WHERE workspace_id=$1", [workspaceId])).rowCount, 1);
+          assert.equal((await runtime.query("SELECT * FROM asset_upload WHERE version_id=$1", [versionId])).rowCount, 0);
+          // PostgreSQL can reject aggregate-view writes during rewriting,
+          // before reaching its executor permission check.
+          await assert.rejects(runtime.query(statement, [workspaceId]), error =>
+            ["42501", "55000"].includes((error as { code: string }).code));
+        } finally { await runtime.query("ROLLBACK"); }
+      }
+    } finally { runtime.release(); }
+    assert.deepEqual((await admin.query("SELECT * FROM asset_upload WHERE version_id=$1", [versionId])).rows[0], before);
+  });
+
+  for (const { title, startHook, day } of [
+    { title: "a candidate committed before LIST is protected by the fresh fenced database snapshot", startHook: setBeforeListHook, day: 11 },
+    { title: "LIST snapshot cannot delete an attempt started afterwards or its eventual winner", startHook: setListHook, day: 13 },
+  ]) await t.test(title, async () => {
+    const item = await seed();
+    // The preceding fairness fixtures deliberately create over 100 scopes.
+    // Keep this ordering regression focused on one upload: otherwise the fair
+    // directory can omit its recently visited workspace on the next sweep.
+    // The fixture's final priorLedger restoration also covers these changes.
+    await admin.query("UPDATE asset_upload SET sweep_at=now()+interval '1 year' WHERE version_id<>$1", [item.versionId]);
+    const prefix = `originals/ws/${item.assetId}/${item.versionId}/sealed/`;
+    const abandoned = `${prefix}${randomUUID()}/source`;
+    objects.set(abandoned, bytes);
+    let release!: () => void, entered!: () => void, active = "", listed = 0;
+    let running: Promise<void> | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    setWriteHook(async (key, data) => {
+      if (key.startsWith(prefix)) {
+        active = key;
+        objects.set(key, data);
+        entered(); await gate;
+      }
+    });
+    startHook(async listedPrefix => {
+      if (listedPrefix !== prefix) return;
+      startHook(async () => {});
+      listed++;
+      objects.set(item.stage, changed);
+      running = processAsset(item);
+      await waiting;
+    });
+    try {
+      assert.equal(await sweep(day * 86400_001), 1);
+      assert.equal(listed, 1, "start the attempt at the requested LIST boundary");
+      const processing = await state(item.versionId);
+      assert.equal(processing.status, "processing");
+      assert.equal(active, `${prefix}${processing.ingest_attempt_id}/source`);
+      assert.ok(!objects.has(abandoned));
+      assert.deepEqual(objects.get(active), changed);
+      assert.deepEqual(objects.get(item.stage), changed);
+      release(); await running;
+      const winner = await state(item.versionId);
+      assert.equal(winner.status, "ready");
+      assert.equal(winner.storage_key, active);
+      assert.equal(winner.checksum, digest(changed));
+      assert.equal(await sweep((day + 1) * 86400_001), 1);
+      assert.deepEqual(objects.get(winner.storage_key), changed);
+      assert.ok(!objects.has(item.stage));
+      assert.equal((await state(item.versionId)).storage_key, winner.storage_key);
+    } finally {
+      setListHook(async () => {});
+      setBeforeListHook(async () => {});
+      setWriteHook(async () => {});
+      release(); await running;
+    }
   });
 
   await t.test("cleanup keeps an active committed PUT and bounds every deletion page to 1000 keys", async () => {

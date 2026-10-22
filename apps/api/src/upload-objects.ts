@@ -20,10 +20,8 @@ export async function cleanupUploadObjects(now = new Date(), batch = 100) {
   // Unlike workspace, it also retains directories deleted since an upload.
   const scopes = await db.execute<{ workspace_id: string }>(sql`
     SELECT workspace_id FROM asset_upload_cleanup_scope
-    WHERE sweep_at IS NULL OR sweep_at < ${new Date(now.getTime() - 86400_000)}
-    GROUP BY workspace_id
-    ORDER BY CASE WHEN count(sweep_attempt_at) < count(*) THEN NULL
-      ELSE min(sweep_attempt_at) END ASC NULLS FIRST, workspace_id LIMIT 100
+    WHERE has_unswept OR sweep_at < ${new Date(now.getTime() - 86400_000)}
+    ORDER BY sweep_attempt_at ASC NULLS FIRST, workspace_id LIMIT 100
   `);
   for (const scope of scopes.rows) {
     if (inspected >= batch) break;

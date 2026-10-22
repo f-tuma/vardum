@@ -130,6 +130,16 @@ conditional copies, lifecycle rules and provider-specific features are not requi
 Private buckets remain required. Smoke coverage uses actual signed RustFS POSTs;
 it is not certification of an operator's remote bucket/IAM configuration.
 
+The remote-store contract is an atomic successful PUT followed by readable
+complete bytes, plus GET/LIST/DELETE and permission to write the sealed prefix.
+This matches the documented [Amazon S3 consistency model](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel)
+and [PutObject semantics](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html).
+The old failure also applies to ordinary same-key overwrite semantics. Sealing
+uses different keys and therefore does not rely on conditional POST support or
+versioning. Other S3-compatible endpoints still require the operator's own
+read/write/list/delete and private-bucket acceptance; local RustFS coverage does
+not establish a live test against AWS or another remote provider.
+
 Legacy ready objects, physical keys, immutable URL identities, stored checksums
 and frozen locks remain untouched. This cannot revoke an already issued grant
 for a legacy ready object; grants issued before the upgrade keep their original
@@ -141,7 +151,12 @@ stages, in bounded batches and with a fresh attempt fence after listing. It keep
 the active attempt, the published key and retryable staging bytes. Its private
 inventory survives asset/workspace deletion and is swept again daily; the narrow
 cleanup-directory view exposes workspace IDs and scheduling timestamps, no keys
-or asset content. Do not remove its retained tombstones based on signature expiry
+or asset content. The aggregated view is non-updatable and runtime provisioning
+revokes its write grants; startup rejects effective write access, including
+PUBLIC grants. Scope ordering uses the last attempt across all its ledger rows,
+so an unfinished large workspace cannot monopolize each batch. The migration
+blocks version writes from before backfill until its tracking/publication guards
+are installed. Do not remove retained tombstones based on signature expiry
 alone: an already started object-store request can complete later. Newly inserted
 versions cannot reuse a retained version UUID. Failed object operations retain
 their inventory and move behind less-recently-attempted work.

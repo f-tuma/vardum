@@ -35,7 +35,11 @@ SELECT current_user AS role,
   has_table_privilege(current_user, 'public.known_usage_check', 'SELECT')
     AND has_table_privilege(current_user, 'public.known_usage_check', 'INSERT')
     AND NOT has_any_column_privilege(current_user, 'public.known_usage_check', 'UPDATE')
-    AND NOT has_table_privilege(current_user, 'public.known_usage_check', 'DELETE') AS checks_append_only
+    AND NOT has_table_privilege(current_user, 'public.known_usage_check', 'DELETE') AS checks_append_only,
+  has_table_privilege(current_user, 'public.asset_upload_cleanup_scope', 'SELECT')
+    AND NOT has_any_column_privilege(current_user, 'public.asset_upload_cleanup_scope', 'INSERT')
+    AND NOT has_any_column_privilege(current_user, 'public.asset_upload_cleanup_scope', 'UPDATE')
+    AND NOT has_table_privilege(current_user, 'public.asset_upload_cleanup_scope', 'DELETE') AS cleanup_read_only
 `;
 
 export function validateRuntimeDatabaseProbe(row) {
@@ -43,6 +47,6 @@ export function validateRuntimeDatabaseProbe(row) {
       row.uses_rls !== true || row.uses_tenant_policy !== true ||
       row.unscoped_known_usages !== 0 || row.unscoped_known_checks !== 0 ||
       row.usage_rls !== true || row.usage_tenant_policies !== true ||
-      row.usage_crud !== true || row.checks_append_only !== true)
-    throw new Error("Deployed runtime role, private inventory RLS or append-only check grants failed");
+      row.usage_crud !== true || row.checks_append_only !== true || row.cleanup_read_only !== true)
+    throw new Error("Deployed runtime role, private inventory RLS, read-only cleanup or append-only check grants failed");
 }

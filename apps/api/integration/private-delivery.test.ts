@@ -39,6 +39,8 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
   let beforeObjectRead: (key: string) => Promise<void> = async () => {};
   let beforeObjectCopy: (key: string) => Promise<boolean> = async () => false;
   let beforeObjectWrite: (key: string, bytes: Buffer) => Promise<void> = async () => {};
+  let afterObjectList: (prefix: string) => Promise<void> = async () => {};
+  let beforeObjectList: (prefix: string) => Promise<void> = async () => {};
   const objectServer = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://objects.invalid");
     const key = decodeURIComponent(url.pathname.replace(/^\/fixture\//, ""));
@@ -79,9 +81,11 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
       res.setHeader("content-type", "application/xml");
       const prefix = url.searchParams.get("prefix") ?? "";
       if (prefix.startsWith("originals/")) {
+        await beforeObjectList(prefix);
         const limit = Number(url.searchParams.get("max-keys") ?? 1000);
         const matches = [...objects.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b));
         const page = matches.slice(0, limit);
+        await afterObjectList(prefix);
         return res.end(`<ListBucketResult><IsTruncated>${matches.length > limit}</IsTruncated>${matches.length > limit ? "<NextContinuationToken>more</NextContinuationToken>" : ""}${page.map(([key, bytes]) => `<Contents><Key>${key}</Key><Size>${bytes.length}</Size></Contents>`).join("")}</ListBucketResult>`);
       }
       return res.end(
@@ -280,7 +284,8 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
         );
       }
       const beforeKeys = (await sql("SELECT * FROM apikey ORDER BY id")).rows;
-      await migrate(drizzle(admin!), { migrationsFolder: migrations });
+      const { checkUploadIntegrityMigration } = await import("./upload-integrity-migration.fixture.js");
+      await checkUploadIntegrityMigration(t, admin!, migrations, root);
       assert.deepEqual(
         (await sql("SELECT * FROM vard WHERE id=$1", [oldVardId])).rows[0],
         {
@@ -1856,6 +1861,8 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     const { checkUploadIntegrity } = await import("./upload-integrity.fixture.js");
     await checkUploadIntegrity(integrityTest, { admin: admin!, app, objects, keyHeaders,
       setWriteHook: hook => { beforeObjectWrite = hook; },
+      setListHook: hook => { afterObjectList = hook; },
+      setBeforeListHook: hook => { beforeObjectList = hook; },
     });
   });
   await t.test("VARD additive import under the production database role", async (importTest) => {
