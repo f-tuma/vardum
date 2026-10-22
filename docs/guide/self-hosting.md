@@ -19,7 +19,7 @@ One Compose file, your database, your bucket. MIT licensed.
 
 | Service | Role |
 | --- | --- |
-| `gateway` | nginx on 8080: the app, plus `/api`, `/w`, `/v` |
+| `gateway` | nginx on 8080: `/app/`, plus `/api`, `/w`, `/v` |
 | `api` | Versions, Vards, signed delivery, transforms |
 | `worker` | Checks uploads, prunes old delivery events |
 | `postgres` | Data with row-level security, and the job queue |
@@ -42,6 +42,10 @@ docker compose --env-file .env.production -f compose.production.yml up -d --buil
 curl --fail http://localhost:8080/ready
 ```
 
+- Open `http://localhost:8080/app/`; the apex redirects there. App assets live
+  under `/app/`, while API/auth and delivery URLs keep their root paths.
+- Old root UI links, including `/cli-login?...`, redirect to `/app/` with their
+  escaped path and query intact.
 - `/health`: the API runs. `/ready`: also PostgreSQL.
 - `down` (without `-v`) stops it and keeps data.
 
@@ -49,7 +53,7 @@ curl --fail http://localhost:8080/ready
 
 | Variable | Why |
 | --- | --- |
-| `APP_URL` | Public URL of the install |
+| `APP_URL` | Public origin of the install, without `/app` |
 | `BETTER_AUTH_SECRET` | Signs sessions |
 | `TRANSFORM_SECRET` | Signs variant URLs; changing it breaks them |
 | `POSTGRES_PASSWORD` | Administrator, runs migrations |

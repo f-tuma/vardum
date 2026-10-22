@@ -26,7 +26,8 @@ RUN apk add --no-cache --upgrade \
   tiff=4.7.2-r0 \
   zlib=1.3.2-r1
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /repo/apps/gateway/dist /usr/share/nginx/html
+RUN rm -rf /usr/share/nginx/html/*
+COPY --from=build /repo/apps/gateway/dist /usr/share/nginx/html/app/
 EXPOSE 80
 
 # The configuration travels with the image; Dokploy replaces the Git checkout
@@ -35,5 +36,5 @@ FROM gateway-base AS dokploy
 COPY docker/nginx.marketing.conf.template /etc/nginx/templates/default.conf.template
 ENV API_UPSTREAM=api:3000 MARKETING_UPSTREAM=127.0.0.1:8080
 
-# Keep the default build for self-hosted/dev deployments serving the SPA at /.
+# Keep the default build for self-hosted/dev deployments serving the SPA at /app/.
 FROM gateway-base AS runtime

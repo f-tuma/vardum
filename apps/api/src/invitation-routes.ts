@@ -37,7 +37,7 @@ async function sendInvitation({
   organizationName: string;
   inviterName: string;
 }) {
-  const url = new URL("/accept-invitation", config.WEB_URL);
+  const url = new URL("/app/accept-invitation", config.WEB_URL);
   url.searchParams.set("id", id);
   await sendActionEmail({
     to: email,

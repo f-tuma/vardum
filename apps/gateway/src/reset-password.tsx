@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient } from "./auth-client";
+import { appPath } from "./app-path";
 
 export function ResetPassword({
   token,
@@ -48,7 +49,7 @@ export function ResetPassword({
   }
 
   const backToSignIn = (
-    <a href="/app" className={buttonVariants({ variant: "outline" })}>
+    <a href={appPath()} className={buttonVariants({ variant: "outline" })}>
       Back to sign in
     </a>
   );

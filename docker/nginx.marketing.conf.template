@@ -1,18 +1,6 @@
-# Vardum gateway for a deployment whose apex belongs to a separate marketing
-# site. Baked into /etc/nginx/templates/ by the Dokploy target, so nginx substitutes
+# Baked into the Dokploy image; the official nginx entrypoint substitutes
 # ${API_UPSTREAM} and ${MARKETING_UPSTREAM} at container start.
-#
-# WHY ONE ORIGIN: the client calls the API with relative /api/* URLs and the
-# Better Auth session cookie has to stay first-party. Splitting the client and
-# the API across two hostnames is not a supported configuration. The marketing
-# site has no such constraint — it is a separate deployment reached across
-# dokploy-network — but it lives on the same origin so the apex can be a
-# landing page while /app is the product.
-#
-# The self-hosted stack uses docker/nginx.conf instead, where `/` is the app.
-
-# Docker service addresses change when containers are replaced. Keep upstream
-# state shared between workers and refresh Docker DNS without an nginx reload.
+# The application and API share one origin; marketing owns the apex.
 resolver 127.0.0.11 valid=5s ipv6=off;
 resolver_timeout 5s;
 
@@ -29,19 +17,20 @@ upstream vardum_marketing {
 server {
   listen 80;
   server_name _;
+  absolute_redirect off;
   root /usr/share/nginx/html;
   index index.html;
 
-  # The API owns its REST surface, asset delivery and the health probes. These
-  # come first so nothing below can shadow them.
-  location ^~ /api/ {
+  # Keep URI-less proxy_pass: encoded delivery paths and signed queries must
+  # reach the API byte-for-byte, including the bare reserved prefixes.
+  location ~ ^/api(?:/|$) {
     proxy_pass http://vardum_api;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 
-  location ~ ^/(?:v|w)/ {
+  location ~ ^/(?:v|w|assets)(?:/|$) {
     proxy_pass http://vardum_api;
     proxy_buffering off;
     proxy_set_header Host $http_host;
@@ -57,41 +46,35 @@ server {
     proxy_pass http://vardum_api;
   }
 
-  # The built bundle, with the legacy /assets/ delivery prefix as the fallback.
-  location ^~ /assets/ {
-    try_files $uri @legacy_assets;
+  location = /app {
+    return 307 /app/$is_args$args;
   }
 
-  location @legacy_assets {
-    proxy_pass http://vardum_api;
-    proxy_buffering off;
-    proxy_set_header Host $http_host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+  # $request_uri retains the original escaping and query. These temporary,
+  # relative redirects also work behind a TLS-terminating reverse proxy.
+  location ~ ^/(?:account|organizations|workspaces|reset-password|accept-invitation|cli-login)(?:/|$) {
+    return 307 /app$request_uri;
   }
 
-  # The routes the web client owns, listed rather than caught, so that the apex
-  # can belong to something else. Keep in sync with apps/gateway/src/main.tsx: a
-  # route missing here quietly serves the marketing 404 instead.
-  location ~ ^/(?:app|account|organizations|workspaces|reset-password|accept-invitation|cli-login)(?:/|$) {
-    try_files $uri /index.html;
+  # Missing app files must never fall through to HTML or the marketing site.
+  location = /app/assets {
+    return 404;
   }
 
-  # SPA try_files internally redirects to /index.html. Keep that target static
-  # instead of allowing the catch-all marketing proxy to receive the redirect.
-  location = /index.html {
+  location ^~ /app/assets/ {
     try_files $uri =404;
   }
 
-  location = /favicon.svg {
+  location = /app/favicon.svg {
     try_files $uri =404;
   }
 
-  # Everything left over — the apex and whatever the marketing site puts beside
-  # it. MARKETING_UPSTREAM is the marketing deployment's dokploy-network alias
-  # as host:port, e.g. vardum-marketing:80. Left at its default it points at the
-  # loopback server below, so an install with no marketing site yet opens the
-  # app on the apex instead of failing to start.
+  location /app/ {
+    try_files $uri /app/index.html;
+  }
+
+  # Marketing receives its original URI, including root favicon and /_astro/.
+  # Set MARKETING_UPSTREAM to the site's unique shared-network service alias.
   location / {
     proxy_pass http://vardum_marketing;
     proxy_set_header Host $http_host;
@@ -100,15 +83,17 @@ server {
   }
 }
 
-# The stand-in for a marketing site: the client itself, on a loopback port so
-# the `/` handler above can reach it without recursing into its own server.
+# No-marketing fallback: one canonical app router, never a second root copy.
 server {
   listen 127.0.0.1:8080;
   server_name _;
-  root /usr/share/nginx/html;
-  index index.html;
+  absolute_redirect off;
+
+  location = / {
+    return 307 /app/$is_args$args;
+  }
 
   location / {
-    try_files $uri $uri/ /index.html;
+    return 404;
   }
 }

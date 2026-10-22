@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/table";
 import { timeAgo } from "@/lib/format";
 import { authClient } from "./auth-client";
+import { appUrl } from "./app-path";
 import { CapabilityNotice, useDeploymentCapabilities } from "./capabilities";
 
 type RevokeTarget = { token: string | null; label: string };
@@ -128,7 +129,7 @@ export function ProfileCard() {
     if (canChangeEmail && email !== user.email.toLowerCase()) {
       const emailResult = await authClient.changeEmail({
         newEmail: email,
-        callbackURL: `${window.location.origin}/account?emailChanged=true`,
+        callbackURL: appUrl("/account?emailChanged=true"),
       });
       setPending(false);
       if (emailResult.error) {

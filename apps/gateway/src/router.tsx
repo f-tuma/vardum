@@ -1,0 +1,260 @@
+import {
+  Outlet,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  redirect,
+  type RouterHistory,
+} from "@tanstack/react-router";
+import { AcceptInvitation } from "./accept-invitation";
+import { App } from "./app";
+import { CliLogin } from "./cli-login";
+import { ResetPassword } from "./reset-password";
+import { APP_BASE_PATH } from "./app-path";
+
+const rootRoute = createRootRoute({ component: Outlet });
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/",
+  component: App,
+});
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reset-password",
+  validateSearch: (search: Record<string, unknown>) => ({
+    token: typeof search.token === "string" ? search.token : "",
+    error: typeof search.error === "string" ? search.error : "",
+  }),
+  component: ResetPasswordPage,
+});
+const acceptInvitationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/accept-invitation",
+  validateSearch: (search: Record<string, unknown>) => ({
+    id: typeof search.id === "string" ? search.id : "",
+  }),
+  component: AcceptInvitationPage,
+});
+const cliLoginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cli-login",
+  validateSearch: (search: Record<string, unknown>) => ({
+    callback: typeof search.callback === "string" ? search.callback : "",
+    state: typeof search.state === "string" ? search.state : "",
+    label: typeof search.label === "string" ? search.label : "cli",
+    workspace: typeof search.workspace === "string" ? search.workspace : "",
+  }),
+  component: CliLoginPage,
+});
+const accountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/account",
+  component: AccountPage,
+});
+const organizationSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/organizations/$organizationId/settings",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: string; create?: boolean } => ({
+    ...(typeof search.tab === "string" && search.tab
+      ? { tab: search.tab }
+      : {}),
+    ...(search.create === true ? { create: true } : {}),
+  }),
+  component: OrganizationSettingsPage,
+});
+const workspaceOverviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId",
+  component: WorkspaceOverviewPage,
+});
+const workspaceVardsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/vards",
+  component: WorkspaceVardsPage,
+});
+const vardEditorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/vards/$vardId",
+  component: VardEditorPage,
+});
+const workspaceUsageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/usage",
+  component: WorkspaceUsagePage,
+});
+const workspaceActivityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/activity",
+  component: WorkspaceActivityPage,
+});
+const workspaceAuditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/audit",
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/workspaces/$workspaceId/activity",
+      params: { workspaceId: params.workspaceId },
+      replace: true,
+    });
+  },
+});
+const workspaceSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/settings",
+  validateSearch: (search: Record<string, unknown>): { tab?: string } =>
+    typeof search.tab === "string" && search.tab ? { tab: search.tab } : {},
+  // Activity used to be a settings tab; old links still land on it.
+  beforeLoad: ({ params, search }) => {
+    if (search.tab === "activity")
+      throw redirect({
+        to: "/workspaces/$workspaceId/activity",
+        params: { workspaceId: params.workspaceId },
+        replace: true,
+      });
+  },
+  component: WorkspaceSettingsPage,
+});
+const workspaceAssetsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/assets",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { prefix: string; q?: string } => ({
+    ...(typeof search.q === "string" && search.q ? { q: search.q } : {}),
+    prefix: typeof search.prefix === "string" ? search.prefix : "",
+  }),
+  component: WorkspaceAssetsPage,
+});
+const assetRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspaces/$workspaceId/assets/$assetId",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { from?: string; q?: string } => ({
+    ...(typeof search.q === "string" && search.q ? { q: search.q } : {}),
+    ...(typeof search.from === "string" ? { from: search.from } : {}),
+  }),
+  component: AssetPage,
+});
+export function createAppRouter(history?: RouterHistory) {
+  return createRouter({
+    basepath: APP_BASE_PATH,
+    history,
+    scrollRestoration: true,
+    getScrollRestorationKey: (location) =>
+      /^\/workspaces\/[^/]+\/assets\/?$/.test(location.pathname)
+        ? location.href
+        // TanStack's default history-entry key keeps new detail visits independent.
+        // oxlint-disable-next-line no-underscore-dangle
+        : location.state.__TSR_key ?? location.href,
+    routeTree: rootRoute.addChildren([
+      indexRoute,
+      resetPasswordRoute,
+      acceptInvitationRoute,
+      cliLoginRoute,
+      accountRoute,
+      organizationSettingsRoute,
+      workspaceOverviewRoute,
+      workspaceVardsRoute,
+      vardEditorRoute,
+      workspaceUsageRoute,
+      workspaceActivityRoute,
+      workspaceAuditRoute,
+      workspaceSettingsRoute,
+      workspaceAssetsRoute,
+      assetRoute,
+    ]),
+  });
+}
+
+export const router = createAppRouter();
+
+function ResetPasswordPage() {
+  const { token, error } = resetPasswordRoute.useSearch();
+  return <ResetPassword token={token} callbackError={error} />;
+}
+
+function AcceptInvitationPage() {
+  const { id } = acceptInvitationRoute.useSearch();
+  return <AcceptInvitation invitationId={id} />;
+}
+
+function CliLoginPage() {
+  const { callback, state, label, workspace } = cliLoginRoute.useSearch();
+  return <CliLogin callback={callback} state={state} label={label} requestedWorkspace={workspace} />;
+}
+
+function AccountPage() {
+  return <App view="account" />;
+}
+
+function OrganizationSettingsPage() {
+  const { organizationId } = organizationSettingsRoute.useParams();
+  return <App routeOrganizationId={organizationId} view="organization" />;
+}
+
+function WorkspaceOverviewPage() {
+  const { workspaceId } = workspaceOverviewRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="overview" />;
+}
+
+function WorkspaceVardsPage() {
+  const { workspaceId } = workspaceVardsRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="vards" />;
+}
+
+function VardEditorPage() {
+  const { workspaceId, vardId } = vardEditorRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} vardId={vardId} view="vards" />;
+}
+
+function WorkspaceUsagePage() {
+  const { workspaceId } = workspaceUsageRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="usage" />;
+}
+
+function WorkspaceActivityPage() {
+  const { workspaceId } = workspaceActivityRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="activity" />;
+}
+
+function WorkspaceSettingsPage() {
+  const { workspaceId } = workspaceSettingsRoute.useParams();
+  return <App routeWorkspaceId={workspaceId} view="settings" />;
+}
+
+function WorkspaceAssetsPage() {
+  const { workspaceId } = workspaceAssetsRoute.useParams();
+  const { prefix, q } = workspaceAssetsRoute.useSearch();
+  return (
+    <App
+      routeWorkspaceId={workspaceId}
+      prefix={prefix}
+      searchQuery={q}
+      view="assets"
+    />
+  );
+}
+
+function AssetPage() {
+  const { workspaceId, assetId } = assetRoute.useParams();
+  const { from, q } = assetRoute.useSearch();
+  return (
+    <App
+      routeWorkspaceId={workspaceId}
+      assetId={assetId}
+      fromPrefix={from}
+      searchQuery={q}
+      view="assets"
+    />
+  );
+}
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
+

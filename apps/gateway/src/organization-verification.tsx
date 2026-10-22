@@ -14,6 +14,7 @@ import {
 import { errorMessage } from "@/lib/format";
 import { getOrganizationDirectory } from "./asset-api";
 import { authClient } from "./auth-client";
+import { appAuthCallback } from "./app-path";
 
 export function OrganizationVerification({
   emailEnabled,
@@ -34,7 +35,7 @@ export function OrganizationVerification({
     if (!session.data || pending) return;
     setPending(true);
     try {
-      const callback = new URL(window.location.href);
+      const callback = new URL(appAuthCallback(window.location));
       callback.searchParams.delete("error");
       const result = await authClient.sendVerificationEmail({
         email: session.data.user.email,

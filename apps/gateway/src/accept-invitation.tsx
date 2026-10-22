@@ -6,6 +6,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { errorMessage } from "@/lib/format";
 import { acceptWorkspaceInvitation } from "./asset-api";
 import { authClient } from "./auth-client";
+import { appPath } from "./app-path";
 
 export function AcceptInvitation({ invitationId }: { invitationId: string }) {
   const session = authClient.useSession();
@@ -17,7 +18,7 @@ export function AcceptInvitation({ invitationId }: { invitationId: string }) {
     setError("");
     try {
       const result = await acceptWorkspaceInvitation(invitationId);
-      window.location.assign(`/workspaces/${result.workspaceId}`);
+      window.location.assign(appPath(`/workspaces/${encodeURIComponent(result.workspaceId)}`));
     } catch (cause) {
       setError(errorMessage(cause, "Invitation failed"));
       setPending(false);
@@ -26,7 +27,7 @@ export function AcceptInvitation({ invitationId }: { invitationId: string }) {
 
   async function switchAccount() {
     await authClient.signOut();
-    window.location.assign(`/?invitation=${encodeURIComponent(invitationId)}`);
+    window.location.assign(appPath(`/?invitation=${encodeURIComponent(invitationId)}`));
   }
 
   if (!invitationId)
@@ -36,7 +37,7 @@ export function AcceptInvitation({ invitationId }: { invitationId: string }) {
         description="Ask the sender for a new link."
       >
         <div className="flex flex-col">
-          <a href="/app" className={buttonVariants({ variant: "outline" })}>
+          <a href={appPath()} className={buttonVariants({ variant: "outline" })}>
             Go to Vardum
           </a>
         </div>
@@ -57,7 +58,7 @@ export function AcceptInvitation({ invitationId }: { invitationId: string }) {
         description="Sign in or create an account to join."
       >
         <div className="flex flex-col">
-          <a href={`/?invitation=${encodeURIComponent(invitationId)}`} className={buttonVariants()}>
+          <a href={appPath(`/?invitation=${encodeURIComponent(invitationId)}`)} className={buttonVariants()}>
             Continue
           </a>
         </div>

@@ -208,7 +208,7 @@ function WorkspaceApp({
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button render={<Link to="/app" />} nativeButton={false}>
+            <Button render={<Link to="/" />} nativeButton={false}>
               Back to your workspaces
             </Button>
           </EmptyContent>

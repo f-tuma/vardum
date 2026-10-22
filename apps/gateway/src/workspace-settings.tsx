@@ -1,3 +1,4 @@
+import { appPath } from "./app-path";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { CircleCheckIcon, KeyRoundIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
@@ -660,7 +661,7 @@ function DangerZone({ workspace }: { workspace: WorkspaceRef }) {
 
   async function removeWorkspace() {
     await deleteWorkspace(workspace.id, confirmation);
-    window.location.assign("/");
+    window.location.assign(appPath());
   }
 
   return (

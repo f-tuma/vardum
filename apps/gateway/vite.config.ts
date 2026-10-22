@@ -2,8 +2,10 @@ import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { APP_BASE_PATH } from "./src/app-path.ts";
 
 export default defineConfig({
+  base: APP_BASE_PATH,
   envDir: "../..",
   plugins: [react(), tailwindcss()],
   resolve: {

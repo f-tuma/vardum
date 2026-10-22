@@ -134,15 +134,17 @@ old database current; each fresh candidate requires a fresh online database.
 
 The disposable probes use the tested immutable images with their normal inherited
 entrypoint. Each of the standard, marketing and loopback fallback configurations
-must pass nginx validation and 39 HTTP assertions, including exact static bundle
-bytes, every SPA route prefix, API/delivery/health routing, legacy assets,
-forwarded headers and method/body/query preservation.
+must pass nginx validation and 71 HTTP assertions, including built JavaScript,
+CSS, font and favicon checksums/MIME types, SPA deep links, relative legacy UI
+redirects, API/delivery/health routing, forwarded headers and exact method, body,
+query, cookie and range preservation. Missing app assets must return 404.
 
-The marketing template explicitly serves `/index.html` as a static file. A SPA
-`try_files` fallback internally redirects there; without the exact location, the
-catch-all marketing proxy incorrectly receives `/app` and other application
-routes. The probe verifies both direct index requests and SPA fallback behavior,
-while the apex and unrelated marketing paths still reach the marketing backend.
+The build lives physically under `/usr/share/nginx/html/app/`. Both gateway
+configurations keep the SPA fallback inside `/app/`, at `/app/index.html`; root
+`/index.html` and `/favicon.svg` belong to marketing. The probe verifies direct
+app index and deep-link requests, segment boundaries and escaped legacy paths.
+Without marketing, the apex redirects to `/app/`. Changed-IP and absent-alias
+startup probes verify API and marketing recovery without nginx reload.
 
 ## Vendor assessment and release gate
 

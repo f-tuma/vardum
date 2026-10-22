@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceDomain } from "./asset-api";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-  url: "http://localhost:5173/account",
+  url: "http://localhost:5173/app/account",
   pretendToBeVisual: true,
 });
 for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Document", "Event", "MouseEvent", "CustomEvent", "FormData", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"])
@@ -163,6 +163,7 @@ test("recovery works when enabled and a form already open stops submitting when 
   await submit(button("Send reset link").closest("form")!);
   assert.equal(mutations().length, 1);
   assert.equal(mutations()[0]?.path, "/api/auth/request-password-reset");
+  assert.deepEqual(mutations()[0]?.body, { email: "owner@example.test", redirectTo: "http://localhost:5173/app/reset-password" });
   assert.match(document.body.textContent!, /If this email has an account/);
   await act(async () => { client.setQueryData(["deployment-capabilities"], off); });
   await settle();
@@ -185,7 +186,7 @@ test("email changes use the enabled action and generic inbox confirmation", asyn
   input("email").value = "new@example.test";
   await submit(button("Save").closest("form")!);
   assert.deepEqual(mutations().map(({ path }) => path), ["/api/auth/update-user", "/api/auth/change-email"]);
-  assert.equal((mutations()[1]!.body as { newEmail: string }).newEmail, "new@example.test");
+  assert.deepEqual(mutations()[1]!.body, { newEmail: "new@example.test", callbackURL: "http://localhost:5173/app/account?emailChanged=true" });
   assert.ok(notices.includes("Check your inbox to confirm the change."));
 });
 
@@ -291,4 +292,26 @@ test("configured pending domains poll and pause when the target disappears", asy
   await settle();
   assert.equal(stop.mock.callCount(), 1);
   assert.equal(button("Check DNS now").disabled, true);
+});
+
+for (const path of [
+  "/app/cli-login?callback=http%3A%2F%2F127.0.0.1%3A54321%2F&state=s%2B1&label=My%20laptop&workspace=ws",
+  "/app/?invitation=i%2F1",
+]) test(`signup submits an app verification callback for ${path.split("?")[0]}`, async (t) => {
+  dom.reconfigure({ url: `http://localhost:5173${path}` });
+  t.after(() => dom.reconfigure({ url: "http://localhost:5173/app/account" }));
+  route = ({ path: requestPath }) => {
+    if (requestPath === "/api/capabilities") return Response.json(off);
+    if (requestPath === "/api/auth/sign-up/email") return Response.json({ message: "Fixture validation response" }, { status: 400 });
+    throw new Error(`Unexpected request ${requestPath}`);
+  };
+  await render(t, createElement(AuthForm));
+  await settle();
+  await click(button("Create one"));
+  input("name").value = "New user";
+  input("email").value = "new@example.test";
+  input("password").value = "password123";
+  await submit(button("Create account").closest("form")!);
+  const expected = path.includes("invitation=") ? "/app/accept-invitation?id=i%2F1" : path;
+  assert.equal((mutations()[0]!.body as { callbackURL: string }).callbackURL, `http://localhost:5173${expected}`);
 });
