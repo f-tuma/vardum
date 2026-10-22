@@ -19,7 +19,7 @@ agent ── stdio ──> @vardum/mcp
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.1
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.2
 ```
 
 Claude Desktop, Cursor and other JSON configs:
@@ -29,7 +29,7 @@ Claude Desktop, Cursor and other JSON configs:
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.4.1"],
+      "args": ["-y", "@vardum/mcp@0.4.2"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
@@ -37,7 +37,7 @@ Claude Desktop, Cursor and other JSON configs:
 ```
 
 The client starts the server; there is nothing to run by hand. These examples
-pin published **MCP 0.4.1**. Editable Vard reads and mutations require a server
+pin published **MCP 0.4.2**. Editable Vard reads and mutations require a server
 advertising `vardEditRevision: 1`; see [release compatibility](../npm-release.md).
 
 ## Configuration
@@ -79,13 +79,18 @@ advertising `vardEditRevision: 1`; see [release compatibility](../npm-release.md
 
 ## Guarded editing
 
-Published MCP **0.4.1** retains the [0.8 client release](../client-release-0.8.md)
-editor contract. See [0.8.1 publication evidence](../client-release-0.8.1.md#publication-evidence).
+Published MCP **0.4.2** retains the [0.8 client release](../client-release-0.8.md)
+editor contract and publishes help for output recipes. See
+[0.8.3 publication evidence and upgrade order](../client-release-0.8.3.md#upgrade-order).
 
-MCP 0.4.1 requires `vardEditRevision: 1` for editable Vard reads and mutations.
+MCP 0.4.2 requires `vardEditRevision: 1` for editable Vard reads and mutations.
 It uses dedicated `/editor` routes and refuses unsupported servers or missing
 endpoints without a legacy fallback. The separate `resolved: true` preview
 has no editor revision.
+
+Background, safe-area, SVG layer/adaptive-color and v2 renderer recipes also need
+the matching API and worker implementation. `vardEditRevision: 1` establishes
+guarded editing only; installing MCP 0.4.2 does not add server rendering support.
 
 Read `get_vard` first and retain the full manual-only definition and `revision`.
 Pass that **original** token as `expectedRevision` for update, replacement or

@@ -1,9 +1,9 @@
 # Import a folder into a Vard
 
-Use published **CLI 0.8.2** for folder import and the complete folder plan
+Use published **CLI 0.8.3** for folder import and the complete folder plan
 below. Import was introduced in CLI 0.7.0 and is absent from CLI 0.6.0.
 Verify the target backend before upgrading; see
-[release evidence and upgrade order](client-release-0.8.2.md) and
+[release evidence and upgrade order](client-release-0.8.3.md#upgrade-order) and
 [npm release status](npm-release.md).
 The server must advertise both `folderUploadResume: 1` and
 `folderVardImport: 1` before using the new command. Deploy the matching server
@@ -136,7 +136,7 @@ advertising `vardEditRevision: 1` offer dedicated [guarded editor routes](vard-e
 An import invalidates a previously read editor definition when it adds manual
 mappings, so a stale guarded save fails with 409 and keeps the imported mappings.
 Legacy clients and routes remain unguarded; published MCP 0.3.0 still uses them.
-MCP 0.4.1 uses the guarded routes and refuses legacy fallback. Read
+MCP 0.4.2 uses the guarded routes and refuses legacy fallback. Read
 `get_vard` first and pass its original revision as `expectedRevision` for update,
 replacement or deletion. Replacement items retain their existing manual `id`
 (or `null` for a new mapping) and explicitly copy literal `pinnedVersionId` to
