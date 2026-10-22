@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import sharp from "sharp";
+import sharp, { type Sharp } from "sharp";
 import { applyImageTransformation } from "./image-transform.js";
 import { getImageVariant } from "./image-variant.js";
 import { renderSvgRasterBackground } from "./svg-raster-background.js";
+import { CapacityError } from "./resource-budget.js";
 import type { Transformation } from "./transformation.js";
 
 const source = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect x="4" y="8" width="40" height="32" fill="#c8553d"/><rect x="16" y="16" width="16" height="16" fill="#204060" fill-opacity="0.5"/></svg>');
@@ -90,4 +91,77 @@ test("v2 rejects non-SVG sources and SVG output before touching the cache", asyn
   const record = { id: "not-real", storageKey: "must-not-be-read", mimeType: "image/png", size: 100 };
   await assert.rejects(getImageVariant(record, { format: "png", bg, render: "v2" }), /requires an SVG source/);
   await assert.rejects(getImageVariant({ ...record, mimeType: "image/svg+xml" }, { format: "svg", bg, render: "v2" }), /raster output format/);
+});
+
+test("fractional SVG geometry is rejected before raw allocation at ambiguous pixel boundaries", async () => {
+  for (const canvas of ['width="1.1" height="10"', 'viewBox="0 0 1.1 10"', 'width="10" height="1.1"']) {
+    const bytes = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" ${canvas}><rect width="100%" height="100%" fill="red"/></svg>`);
+    const recipe = { ...(canvas.startsWith('width="10"') ? { w: 128 } : { h: 128 }), format: "png", bg, render: "v2" } as const;
+    for (const limit of [1664, 1792]) {
+      const image = sharp(bytes);
+      let allocated = false;
+      image.raw = () => { allocated = true; throw new Error("raw allocation must not be reached"); };
+      await assert.rejects(renderSvgRasterBackground(image, recipe, "png", budget(limit)), error =>
+        error instanceof CapacityError && error.statusCode === 422 && /output pixel limit/.test(error.message));
+      assert.equal(allocated, false, `${canvas}, limit ${limit}: ambiguity rejected before raw`);
+    }
+    const result = await sharp(await renderSvgRasterBackground(sharp(bytes), recipe, "png", budget(4096))).metadata();
+    assert.deepEqual([result.width, result.height], "w" in recipe ? [128, 14] : [14, 128]);
+  }
+});
+
+test("a small cropped output cannot admit an excessive SVG loader canvas", async () => {
+  let allocated = false;
+  const image = {
+    timeout() { return this; },
+    async metadata() { return { format: "svg", width: 1, height: 100_000 }; },
+    raw() { allocated = true; throw new Error("raw allocation must not be reached"); },
+  } as unknown as Sharp;
+  await assert.rejects(renderSvgRasterBackground(image,
+    { w: 32, h: 32, fit: "cover", format: "png", bg, render: "v2" }, "png", budget()),
+    error => error instanceof CapacityError && error.statusCode === 422);
+  assert.equal(allocated, false);
+});
+
+test("unexpected native raw geometry or byte depth is rejected before a second pipeline", async () => {
+  for (const [data, info] of [
+    [Buffer.alloc(1), { width: 2, height: 2, channels: 4 }],
+    [Buffer.alloc(16), { width: 4, height: 1, channels: 4 }],
+  ] as const) {
+    const image = {
+      timeout() { return this; },
+      async metadata() { return { format: "svg", width: 2, height: 2 }; },
+      ensureAlpha() { return this; }, raw() { return this; },
+      async toBuffer() { return { data, info }; },
+    } as unknown as Sharp;
+    await assert.rejects(renderSvgRasterBackground(image,
+      { format: "png", bg, render: "v2" }, "png", budget(64)),
+      error => error instanceof CapacityError && error.statusCode === 422);
+  }
+});
+
+// The pre-VARD111 pipeline is an independent byte reference: admission may
+// reject an uncertain canvas but must not rewrite accepted resize parameters.
+async function previousV2(bytes: Buffer, recipe: Transformation, format: "png" | "webp" | "avif" | "jpeg") {
+  let image = sharp(bytes).timeout({ seconds: 30 });
+  await image.metadata();
+  if (recipe.pad) image = applyImageTransformation(image, { ...recipe, bg: undefined }, undefined);
+  else if (recipe.w || recipe.h) image = image.resize({ width: recipe.w, height: recipe.h,
+    fit: recipe.fit ?? "inside", background: { r: 0, g: 0, b: 0, alpha: 0 } });
+  const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return applyImageTransformation(sharp(data, {
+    raw: { width: info.width, height: info.height, channels: info.channels }, limitInputPixels: 16_777_216,
+  }).timeout({ seconds: 30 }), { format: recipe.format, q: recipe.q, bg: recipe.bg }, format).toBuffer();
+}
+
+test("admitted integer SVG outputs retain the exact encoded bytes of the previous v2 pipeline", async () => {
+  const wide = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="32"><rect x="4" y="4" width="80" height="24" fill="red" fill-opacity="0.5"/></svg>');
+  const geometries: Partial<Transformation>[] = [{}, { w: 48, fit: "fill" }, { h: 16, fit: "fill" }, { w: 192, fit: "fill" },
+    { w: 128 }, { h: 96 }, ...(["inside", "outside", "cover", "contain", "fill"] as const).map(fit => ({ w: 128, h: 96, fit })),
+    ...[0, 0.1, 12.5].map(pad => ({ w: 128, h: 96, fit: "contain", pad } as const))];
+  for (const format of ["png", "webp", "avif", "jpeg"] as const) for (const geometry of geometries) {
+    const recipe: Transformation = { ...geometry, format, q: 93, bg, render: "v2" };
+    assert.deepEqual(await renderSvgRasterBackground(sharp(wide), recipe, format, budget()),
+      await previousV2(wide, recipe, format), `${format}: ${JSON.stringify(geometry)}`);
+  }
 });

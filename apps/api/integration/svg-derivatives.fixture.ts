@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mutateLegacyVersion } from "./legacy-version.fixture.js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
@@ -105,4 +105,103 @@ export async function checkSvgDerivatives(t: TestContext, admin: Pool, objects: 
   assert.deepEqual((await app.inject({ url: originalUrl })).rawPayload, unsafe, "raw delivery keeps its existing original contract");
   objects.delete(storageKey);
   assert.deepEqual((await app.inject({ url })).rawPayload, generated.rawPayload, "retained cached SVG remains usable without rereading its original");
+
+  await t.test("fractional SVG misses reject safely while retained raster bytes keep their signed identity", async (fractionalTest) => {
+    const { config } = await import("../src/config.js");
+    // private-delivery awaits every subtest without concurrency. Keep the native
+    // reproduction tiny even against the old implementation: 1792 actual pixels
+    // exceed its metadata estimate of 1664, with no large allocation required.
+    const previousLimit = config.TRANSFORM_MAX_OUTPUT_PIXELS;
+    const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+    try {
+      for (const [name, dimensions] of [
+        ["intrinsic", 'width="1.1" height="10" viewBox="0 0 1.1 10"'],
+        ["viewbox", 'viewBox="0 0 1.1 10"'],
+      ]) {
+        const fractionalAssetId = randomUUID(), fractionalVersionId = randomUUID();
+        const fractionalVardId = randomUUID(), fractionalItemId = randomUUID();
+        const fractionalKey = `svg-fractional/${name}/${fractionalAssetId}`;
+        const fractionalStorageKey = `svg-fractional/${fractionalVersionId}`;
+        const fractionalSource = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" ${dimensions}><rect width="1.1" height="10" fill="#c8553d" fill-opacity="0.5"/></svg>`);
+        fractionalTest.after(async () => {
+          await admin.query("DELETE FROM vard WHERE id=$1", [fractionalVardId]);
+          await admin.query("DELETE FROM asset WHERE id=$1", [fractionalAssetId]);
+          for (const objectKey of objects.keys()) {
+            if (objectKey === fractionalStorageKey || objectKey.startsWith(`derived/v1/${fractionalVersionId}/`)) objects.delete(objectKey);
+          }
+        });
+        objects.set(fractionalStorageKey, fractionalSource);
+        const sourceMetadata = await sharp(fractionalSource).metadata();
+        assert.equal(sourceMetadata.width, 1); assert.equal(sourceMetadata.height, 10);
+        assert.equal(Math.ceil(1 * 128 / 10) * 128, 1664, "old metadata-only estimate fits the small test budget");
+        await admin.query("INSERT INTO asset(id,workspace_id,key,display_name,is_public,created_by,updated_by) VALUES ($1,'ws',$2,'Fractional SVG',true,'fixture','fixture')", [fractionalAssetId, fractionalKey]);
+        await admin.query("INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,width,height,created_by,updated_by) VALUES ($1,'ws',$2,1,'ready',$3,'fractional.svg','image/svg+xml',$4,$5,1,10,'fixture','fixture')", [fractionalVersionId, fractionalAssetId, fractionalStorageKey, fractionalSource.length, createHash("sha256").update(fractionalSource).digest("hex")]);
+        await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [fractionalVersionId, fractionalAssetId]);
+        await admin.query("INSERT INTO vard(id,workspace_id,name,is_public,created_by,updated_by) VALUES ($1,'ws',$2,true,'fixture','fixture')", [fractionalVardId, `Fractional SVG ${name} ${fractionalVardId}`]);
+        await admin.query("INSERT INTO vard_item(id,workspace_id,vard_id,asset_id,output_path,created_by,updated_by) VALUES ($1,'ws',$2,$3,'fractional.png','fixture','fixture')", [fractionalItemId, fractionalVardId, fractionalAssetId]);
+        for (const fractionalSpec of [
+          { h: 128, format: "png" },
+          { h: 128, format: "png", bg: "#204060", render: "v2" },
+        ] as const) {
+          const expectedCanonical = `h=128&fit=inside&format=png&q=80${"render" in fractionalSpec ? "&bg=%23204060&render=v2" : ""}`;
+          assert.equal(canonicalizeTransformation(fractionalSpec), expectedCanonical);
+          const fractionalUrl = transformedVersionUrl("demo", fractionalKey, fractionalVersionId, fractionalSpec);
+          const expectedSignature = createHmac("sha256", "isolated-test-transform-secret-at-least-32-characters")
+            .update(`demo/${fractionalKey}?${expectedCanonical}`).digest("base64url");
+          assert.equal(fractionalUrl, `/w/demo/__v/${fractionalVersionId}/${fractionalKey}?${expectedCanonical}&sig=${expectedSignature}`);
+          const fractionalDerivedKey = `derived/v1/${fractionalVersionId}/${digest(`v1:${expectedCanonical}`)}.png`;
+          await admin.query("UPDATE vard_item SET transformation=$1 WHERE id=$2", [JSON.stringify(fractionalSpec), fractionalItemId]);
+          const manifest = await app.inject({ url: `/v/${fractionalVardId}` });
+          assert.equal(manifest.statusCode, 200, manifest.body);
+          assert.equal(manifest.json().items[0].fingerprint, `${fractionalVersionId}:${expectedCanonical}`);
+
+          config.TRANSFORM_MAX_OUTPUT_PIXELS = previousLimit;
+          objects.set(fractionalStorageKey, fractionalSource);
+          const historical = await app.inject({ url: fractionalUrl });
+          assert.equal(historical.statusCode, 200, historical.body);
+          const captured = Buffer.from(historical.rawPayload);
+          const actual = await sharp(captured).metadata();
+          assert.equal(actual.width, 14); assert.equal(actual.height, 128);
+          assert.equal(actual.width! * actual.height!, 1792);
+          assert.deepEqual(objects.get(fractionalDerivedKey), captured, "accepted rendering keeps the existing derived/v1 key");
+
+          objects.delete(fractionalDerivedKey); // Only this captured derivative is absent.
+          config.TRANSFORM_MAX_OUTPUT_PIXELS = 1664;
+          const failure = await app.inject({ url: fractionalUrl });
+          assert.equal(failure.statusCode, 422, failure.body);
+          assert.equal(failure.headers["cache-control"], "private, no-store");
+          assert.match(failure.json().error, /SVG.*(?:limits|pixel|render)/i);
+          assert.match(failure.json().error, /smaller|re-export/i);
+          assert.equal(objects.has(fractionalDerivedKey), false, "rejected cache miss never PUTs a derivative");
+          assert.deepEqual(objects.get(fractionalStorageKey), fractionalSource);
+
+          objects.set(fractionalDerivedKey, captured); // Restore exact retained bytes, without regenerating.
+          objects.delete(fractionalStorageKey);
+          const retained = await app.inject({ url: fractionalUrl });
+          assert.equal(retained.statusCode, 200, retained.body);
+          assert.deepEqual(retained.rawPayload, captured, "cached historical output bypasses new geometry admission and original reads");
+          assert.deepEqual(objects.get(fractionalDerivedKey), captured);
+          assert.equal(objects.has(fractionalStorageKey), false);
+          assert.equal(transformedVersionUrl("demo", fractionalKey, fractionalVersionId, fractionalSpec), fractionalUrl);
+          assert.equal((await app.inject({ url: `/v/${fractionalVardId}` })).json().items[0].fingerprint, `${fractionalVersionId}:${expectedCanonical}`);
+        }
+
+        // The legacy background pipeline disables the SVG loader reload. Its
+        // existing 13x128 output remains admitted at the same 1664-pixel limit.
+        objects.set(fractionalStorageKey, fractionalSource);
+        const legacyBackground = { h: 128, format: "png", bg: "#204060" } as const;
+        const reference = await sharp(fractionalSource, { animated: true, limitInputPixels: 100_000_000 })
+          .pipelineColourspace("srgb").flatten({ background: legacyBackground.bg })
+          .resize({ height: 128, fit: "inside", background: legacyBackground.bg })
+          .removeAlpha().png({ quality: 80 }).toBuffer();
+        const backgroundResponse = await app.inject({ url: transformedVersionUrl("demo", fractionalKey, fractionalVersionId, legacyBackground) });
+        assert.equal(backgroundResponse.statusCode, 200, backgroundResponse.body);
+        assert.deepEqual(backgroundResponse.rawPayload, reference, "admitted legacy background keeps its pre-change encoded bytes");
+        const backgroundMetadata = await sharp(backgroundResponse.rawPayload).metadata();
+        assert.equal(backgroundMetadata.width, 13); assert.equal(backgroundMetadata.height, 128);
+      }
+    } finally {
+      config.TRANSFORM_MAX_OUTPUT_PIXELS = previousLimit;
+    }
+  });
 }
