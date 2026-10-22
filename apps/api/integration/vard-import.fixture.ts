@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 type ImportFile = {
   assetId: string;
@@ -31,6 +31,7 @@ export async function checkVardImport(
   const prefix = `vard-import-${randomUUID()}/`;
   const assetIds: string[] = [];
   const vardIds: string[] = [];
+  const useIds: string[] = [];
   const keyIds: string[] = [];
   const objectKeys: string[] = [];
   const content = Buffer.from(
@@ -41,11 +42,28 @@ export async function checkVardImport(
   const base = "/api/workspaces/ws/vards";
 
   t.after(async () => {
-    await admin.query("DELETE FROM vard WHERE id=ANY($1::uuid[])", [vardIds]);
+    await capable(async (client) => {
+      await client.query("DELETE FROM vard WHERE id=ANY($1::uuid[])", [vardIds]);
+      await client.query("DELETE FROM asset_use WHERE id=ANY($1::uuid[])", [useIds]);
+    });
     await admin.query("DELETE FROM asset WHERE id=ANY($1::uuid[])", [assetIds]);
     await admin.query("DELETE FROM apikey WHERE id=ANY($1::text[])", [keyIds]);
     for (const key of objectKeys) objects.delete(key);
   });
+
+  async function capable<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await admin.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('vardum.vard_definition_schema','2',true)");
+      const result = await operation(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
 
   const plan = (vardId: string, files: ImportFile[], principal = headers, workspaceId = "ws") =>
     app.inject({
@@ -61,6 +79,13 @@ export async function checkVardImport(
     app.inject({ url: `${base}/${vardId}/manifest`, headers: keyHeaders.read! });
   const patchRules = (vardId: string, folderRules: Rule[]) =>
     app.inject({ method: "PATCH", url: `${base}/${vardId}`, headers, payload: { folderRules } });
+  const editor = async (vardId: string) => successful(await app.inject({
+    url: `${base}/${vardId}/editor?definitionSchema=2`, headers,
+  }));
+  const bind = (vardId: string, expectedRevision: string, useId: string, file: ReadyFile, id: string | null = null) =>
+    app.inject({ method: "PUT", url: `${base}/${vardId}/editor/items`, headers,
+      payload: { definitionSchema: 2, expectedRevision,
+        items: [{ id, outputPath: file.outputPath, binding: { kind: "use", assetUseId: useId } }] } });
   const rows = async (vardId: string) =>
     (await admin.query("SELECT * FROM vard_item WHERE vard_id=$1 ORDER BY output_path", [vardId])).rows;
   const importedAudit = async (vardId: string) =>
@@ -85,6 +110,13 @@ export async function checkVardImport(
     }), 201);
     vardIds.push(body.id);
     return body.id as string;
+  }
+  async function makeUse(file: ReadyFile) {
+    const result = successful(await app.inject({ method: "POST", url: "/api/workspaces/ws/asset-uses", headers,
+      payload: { sourceAssetId: file.assetId, key: `${prefix}linked/${randomUUID()}`,
+        displayName: "Original import binding", transformation: null } }), 201);
+    useIds.push(result.id);
+    return result.id as string;
   }
   async function addVersion(
     file: ImportFile,
@@ -133,15 +165,16 @@ export async function checkVardImport(
     return id;
   }
   async function snapshot() {
-    const [assets, versions, vards, items] = await Promise.all([
+    const [assets, versions, vards, items, uses] = await Promise.all([
       admin.query("SELECT * FROM asset WHERE id=ANY($1::uuid[]) ORDER BY id", [assetIds]),
       admin.query("SELECT * FROM asset_version WHERE asset_id=ANY($1::uuid[]) ORDER BY id", [assetIds]),
       admin.query("SELECT * FROM vard WHERE id=ANY($1::uuid[]) ORDER BY id", [vardIds]),
       admin.query("SELECT * FROM vard_item WHERE vard_id=ANY($1::uuid[]) ORDER BY id", [vardIds]),
+      admin.query("SELECT * FROM asset_use WHERE id=ANY($1::uuid[]) ORDER BY id", [useIds]),
     ]);
-    const targetIds = [...assetIds, ...vardIds, ...versions.rows.map(row => row.id), ...items.rows.map(row => row.id)];
+    const targetIds = [...assetIds, ...vardIds, ...useIds, ...versions.rows.map(row => row.id), ...items.rows.map(row => row.id)];
     const audit = await admin.query("SELECT * FROM audit_event WHERE target_id=ANY($1::text[]) ORDER BY id", [targetIds]);
-    return { assets: assets.rows, versions: versions.rows, vards: vards.rows, items: items.rows, audit: audit.rows };
+    return { assets: assets.rows, versions: versions.rows, vards: vards.rows, items: items.rows, uses: uses.rows, audit: audit.rows };
   }
   async function scopedKey(actions: string[]) {
     const result = successful(await app.inject({
@@ -195,6 +228,43 @@ export async function checkVardImport(
     assert.equal(replay.kept, 8);
     assert.deepEqual(replay.files.map((file: any) => file.mappingId), result.files.map((file: any) => file.mappingId));
     assert.deepEqual(await snapshot(), after, "natural retry leaves IDs, settings, timestamps and audit intact");
+  });
+
+  await t.test("Original live-use imports refuse identical source bytes while source additions preserve the literal binding", async () => {
+    const file = await makeAsset("live/original", "linked/original.svg");
+    const extra = await makeAsset("live/additional", "additional.svg");
+    const vardId = await makeVard();
+    const useId = await makeUse(file);
+    const definition = await editor(vardId);
+    successful(await bind(vardId, definition.revision, useId, file));
+    const linked = (await rows(vardId))[0];
+    assert.equal(linked.asset_id, file.assetId);
+    assert.equal(linked.asset_use_id, useId);
+    assert.equal(linked.definition_schema, 2);
+    assert.equal(linked.version_id, null);
+    assert.equal(linked.transformation, null);
+    assert.equal(linked.writable, false);
+    const output = successful(await manifest(vardId)).items[0];
+    assert.equal(output.assetId, file.assetId);
+    assert.equal(output.writable, false);
+    assert.equal(output.pinned, false);
+    const before = await snapshot();
+    for (const result of [await plan(vardId, [input(extra), input(file)]), await apply(vardId, [extra, file])]) {
+      assert.equal(result.statusCode, 409, result.body);
+      assert.match(result.json().error, /Linked uses are read-only/);
+    }
+    assert.deepEqual(await snapshot(), before, "refused batches cannot append, change bindings or audit");
+    assert.equal(successful(await plan(vardId, [input(extra)])).files[0].mappingAction, "add");
+    assert.equal(successful(await apply(vardId, [extra])).added, 1);
+    const after = await rows(vardId);
+    assert.deepEqual(after.find(row => row.id === linked.id), linked);
+    const addition = after.find(row => row.id !== linked.id);
+    assert.equal(addition.definition_schema, 2, "source appends inherit the extended parent marker");
+    assert.equal(addition.asset_use_id, null);
+    assert.equal(addition.asset_id, extra.assetId);
+    const replayBefore = await snapshot();
+    assert.equal(successful(await apply(vardId, [extra])).kept, 1);
+    assert.deepEqual(await snapshot(), replayBefore, "source retry never reserializes a linked row");
   });
 
   await t.test("exact generated membership is kept without creating a manual mapping", async () => {
@@ -546,6 +616,33 @@ export async function checkVardImport(
       await Promise.allSettled(pending);
     }
   }
+
+  await t.test("a source-to-use rebind after preflight is rechecked by guarded import commit", async () => {
+    const file = await makeAsset("races/live-rebind", "live-rebind.svg");
+    const vardId = await makeVard();
+    const mappingId = await manual(vardId, file);
+    const useId = await makeUse(file);
+    assert.equal(successful(await plan(vardId, [input(file)])).files[0].mappingAction, "keep");
+    const definition = await editor(vardId);
+    const [rebound, refused] = await queued(
+      () => bind(vardId, definition.revision, useId, file, mappingId),
+      () => apply(vardId, [file]),
+    );
+    const saved = successful(rebound);
+    assert.equal(refused.statusCode, 409, refused.body);
+    assert.match(refused.json().error, /Linked uses are read-only/);
+    const mappings = await rows(vardId);
+    assert.equal(mappings.length, 1);
+    assert.equal(mappings[0].id, mappingId);
+    assert.equal(mappings[0].asset_use_id, useId);
+    assert.equal(mappings[0].asset_id, file.assetId);
+    assert.equal((await importedAudit(vardId)).length, 0);
+    assert.equal((await editor(vardId)).revision, saved.revision,
+      "refused import cannot mutate the editor configuration after the rebind");
+    const after = await snapshot();
+    assert.equal((await apply(vardId, [file])).statusCode, 409);
+    assert.deepEqual(await snapshot(), after);
+  });
 
   await t.test("a queued restore or namespace edit invalidates stale apply atomically", async () => {
     const file = await makeAsset("races/restore", "restore.svg");

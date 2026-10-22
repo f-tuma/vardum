@@ -18,6 +18,7 @@ import {
   pgEnum,
   pgPolicy,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
@@ -44,6 +45,14 @@ const tenantPolicy = (column: AnyPgColumn) =>
     for: "all",
     using: sql`${column} = current_setting('app.workspace_id', true)`,
     withCheck: sql`${column} = current_setting('app.workspace_id', true)`,
+  });
+
+const vardDefinitionPolicy = (column: AnyPgColumn) =>
+  pgPolicy("vard_definition_capability", {
+    as: "restrictive",
+    for: "all",
+    using: sql`${column} = 1 OR COALESCE(current_setting('vardum.vard_definition_schema', true), '') = '2'`,
+    withCheck: sql`${column} = 1 OR COALESCE(current_setting('vardum.vard_definition_schema', true), '') = '2'`,
   });
 
 // Global operational liveness only; no tenant identifiers or job payloads.
@@ -124,6 +133,7 @@ export const vard = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     isPublic: boolean("is_public").default(false).notNull(),
+    definitionSchema: smallint("definition_schema").$type<1 | 2>().notNull().default(1),
     folderRules: jsonb("folder_rules")
       .$type<VardFolderRule[]>()
       .default([])
@@ -141,12 +151,16 @@ export const vard = pgTable(
   (table) => [
     uniqueIndex("vard_workspace_name_uidx").on(table.workspaceId, table.name),
     unique("vard_workspace_id_unique").on(table.workspaceId, table.id),
+    unique("vard_workspace_id_definition_unique").on(table.workspaceId, table.id, table.definitionSchema),
     index("vard_workspace_idx").on(table.workspaceId),
     check(
       "vard_name_length_check",
       sql`length(${table.name}) between 1 and 80`,
     ),
+    check("vard_definition_schema_check", sql`${table.definitionSchema} IN (1, 2)`),
+    check("vard_folder_rules_definition_check", sql`public.vard_folder_rules_fit_definition(${table.folderRules}, ${table.definitionSchema})`),
     tenantPolicy(table.workspaceId),
+    vardDefinitionPolicy(table.definitionSchema),
     pgPolicy("public_vard_lookup", {
       for: "select",
       using: sql`${table.isPublic} = true`,
@@ -238,6 +252,7 @@ export const assetUse = pgTable(
   },
   (table) => [
     uniqueIndex("asset_use_workspace_key_uidx").on(table.workspaceId, table.key),
+    unique("asset_use_workspace_id_source_unique").on(table.workspaceId, table.id, table.sourceAssetId),
     index("asset_use_source_idx").on(table.workspaceId, table.sourceAssetId, table.key),
     foreignKey({ name: "asset_use_source_fk", columns: [table.workspaceId, table.sourceAssetId], foreignColumns: [asset.workspaceId, asset.id] }),
     check("asset_use_revision_check", sql`${table.revision} > 0`),
@@ -358,7 +373,9 @@ export const vardItem = pgTable(
       .notNull()
       .references(() => workspace.id, { onDelete: "cascade" }),
     vardId: uuid("vard_id").notNull(),
+    definitionSchema: smallint("definition_schema").$type<1 | 2>().notNull().default(1),
     assetId: uuid("asset_id").notNull(),
+    assetUseId: uuid("asset_use_id"),
     versionId: uuid("version_id"),
     outputPath: text("output_path").notNull(),
     transformation: jsonb("transformation").$type<VardTransformation>(),
@@ -377,9 +394,14 @@ export const vardItem = pgTable(
     uniqueIndex("vard_item_output_uidx").on(table.vardId, table.outputPath),
     foreignKey({
       name: "vard_item_vard_fk",
-      columns: [table.workspaceId, table.vardId],
-      foreignColumns: [vard.workspaceId, vard.id],
-    }).onDelete("cascade"),
+      columns: [table.workspaceId, table.vardId, table.definitionSchema],
+      foreignColumns: [vard.workspaceId, vard.id, vard.definitionSchema],
+    }).onUpdate("cascade").onDelete("cascade"),
+    foreignKey({
+      name: "vard_item_use_fk",
+      columns: [table.workspaceId, table.assetUseId, table.assetId],
+      foreignColumns: [assetUse.workspaceId, assetUse.id, assetUse.sourceAssetId],
+    }).onDelete("restrict"),
     foreignKey({
       name: "vard_item_asset_fk",
       columns: [table.workspaceId, table.assetId],
@@ -392,6 +414,10 @@ export const vardItem = pgTable(
     }),
     index("vard_item_workspace_idx").on(table.workspaceId),
     index("vard_item_vard_idx").on(table.vardId),
+    index("vard_item_parent_definition_idx").on(table.workspaceId, table.vardId, table.definitionSchema),
+    index("vard_item_use_idx").on(table.workspaceId, table.assetUseId, table.assetId),
+    check("vard_item_definition_schema_check", sql`${table.definitionSchema} IN (1, 2)`),
+    check("vard_item_use_binding_check", sql`${table.assetUseId} IS NULL OR (${table.definitionSchema} = 2 AND ${table.versionId} IS NULL AND ${table.transformation} IS NULL AND ${table.writable} = false)`),
     check(
       "vard_item_output_path_check",
       sql`length(${table.outputPath}) between 1 and 500 and ${table.outputPath} !~ '(^/|\\\\|(^|/)\\.\\.?(/|$))'`,
@@ -401,6 +427,7 @@ export const vardItem = pgTable(
       sql`not (${table.writable} and (${table.versionId} is not null or ${table.transformation} is not null))`,
     ),
     tenantPolicy(table.workspaceId),
+    vardDefinitionPolicy(table.definitionSchema),
   ],
 ).enableRLS();
 

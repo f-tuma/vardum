@@ -83,6 +83,53 @@ export type VardEditorItemInput = {
  writable: boolean;
 };
 
+/** Literal source mapping; independent of its currently resolved version. */
+export type VardSourceBinding = {
+ kind: "source";
+ assetId: string;
+ versionId: string | null;
+ transformation: Transformation | null;
+ writable: boolean;
+};
+
+/** Live settings belong to the library use; the Vard only owns its output path. */
+export type VardUseBinding = { kind: "use"; assetUseId: string };
+export type VardEditorItemInputV2 = {
+ id: string | null;
+ outputPath: string;
+ binding: VardSourceBinding | VardUseBinding;
+};
+export type VardEditorResolvedItemV2 = Omit<VardItem, "id" | "outputPath"> & {
+ availabilityError: string | null;
+};
+export type VardEditorItemV2 = {
+ id: string;
+ outputPath: string;
+ binding: VardSourceBinding | VardUseBinding;
+ resolved: VardEditorResolvedItemV2;
+ linkedUse: null | {
+  id: string;
+  key: string;
+  displayName: string;
+  revision: number;
+  sourceDisplayName: string;
+  sourceProcessing: boolean;
+ };
+};
+/** Schema 2 editor keeps literal intent separate from live resolution. */
+export type VardEditorDefinitionV2 = {
+ definitionSchema: 2;
+ storedDefinitionSchema: 1 | 2;
+ revision: string;
+ id: string;
+ workspaceId: string;
+ name: string;
+ isPublic: boolean;
+ updatedAt: string;
+ folderRules: VardFolderRule[];
+ items: VardEditorItemV2[];
+};
+
 export type SyncAsset = {
  id: string;
  key: string;

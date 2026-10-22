@@ -1,4 +1,4 @@
-import type { VardDefinition, VardEditorDefinition, VardFolderRule } from "@vardum/shared";
+import type { VardEditorDefinitionV2, VardEditorItemV2, VardFolderRule } from "@vardum/shared";
 import { mediaOutputPath } from "@vardum/shared";
 import { useInfiniteQuery, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -7,6 +7,7 @@ import {
   BoxesIcon,
   ChevronRightIcon,
   FolderIcon,
+  LinkIcon,
   PlusIcon,
   SearchIcon,
   Trash2Icon,
@@ -84,14 +85,14 @@ import {
   createTransformationUrl,
   createVard,
   ApiRequestError,
-  deleteVardEditor,
+  deleteVardEditorV2,
   getVard,
-  getVardEditor,
+  getVardEditorV2,
   getVardManifest,
   listSyncAssets,
   listVards,
-  replaceVardEditorItems,
-  updateVardEditor,
+  replaceVardEditorItemsV2,
+  updateVardEditorV2,
   isVardRevisionConflict,
   VardEditorUnavailableError,
   type AssetSummary,
@@ -99,20 +100,27 @@ import {
   type TransformationInput,
   type VardItem,
   type VardManifest,
+  type VardMetadata,
+  type AssetUseSummary,
+  listAssetUses,
 } from "./asset-api";
-import { assetBrowserQueryOptions, flattenAssetPages } from "./asset-queries";
+import { assetBrowserQueryOptions, assetUseQueryOptions, flattenAssetPages } from "./asset-queries";
+import { AssetUseDialog } from "./asset-uses";
 import { cliSetupCommand, cliSetupCommands, CLI_SETUP_VERSION } from "./cli-setup";
 import {
-  captureVardBaseline,
+  captureVardBaselineV2,
+  canReturnToSourceOnly,
   generatedOutputs,
   manualDraftItems,
+  manualDraftItemsV2,
   refreshVardPreview,
-  vardItemInputs,
-  type VardItemBaseline,
+  vardItemInputsV2,
+  type VardItemBaselineV2,
+  type DraftItemV2,
   type DraftItem,
 } from "./vard-editor-state";
 import { useDeploymentCapabilities } from "./capabilities";
-import { sourcePreview, transformedPreviewUrl } from "./vard-preview-url";
+import { linkedPreview, sourcePreview, transformedPreviewUrl } from "./vard-preview-url";
 import { workspaceCrumb, type WorkspaceRef } from "./workspace";
 
 function vardsCrumb(workspace: WorkspaceRef) {
@@ -381,15 +389,28 @@ export function VardEditor({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const capabilities = useDeploymentCapabilities();
+  const supportsV2 = capabilities.data?.vardDefinitionSchema === 2;
+  const editorKey = ["vard-editor", workspace.id, vardId, 2];
+  const editor = useQuery({
+    queryKey: editorKey,
+    queryFn: async () => {
+      const previous = queryClient.getQueryData<VardEditorDefinitionV2>(editorKey);
+      const next = await getVardEditorV2(workspace.id, vardId, capabilities.data);
+      if (previous && JSON.stringify(previous.items.map(({ resolved }) => resolved)) !== JSON.stringify(next.items.map(({ resolved }) => resolved))) {
+        // Refresh live output only. Captured item/form sessions remain untouched.
+        void refreshVardPreview(queryClient, workspace.id, vardId).catch(() => {});
+      }
+      return next;
+    },
+    enabled: supportsV2,
+    retry: false,
+    refetchInterval: (query) => query.state.data?.items.some((item) => item.linkedUse?.sourceProcessing) ? 3000 : false,
+  });
   const vard = useQuery({
     queryKey: ["vard", workspace.id, vardId],
     queryFn: () => getVard(workspace.id, vardId),
-  });
-  const editorKey = ["vard-editor", workspace.id, vardId];
-  const editor = useQuery({
-    queryKey: editorKey,
-    queryFn: () => getVardEditor(workspace.id, vardId),
-    enabled: capabilities.data?.vardEditRevision === 1,
+    // A legacy definition can be displayed, but never seeds a writable session.
+    enabled: capabilities.isFetched && (!supportsV2 || editor.isError),
     retry: false,
   });
   const definition = editor.data ?? vard.data;
@@ -406,20 +427,22 @@ export function VardEditor({
   const [outputPrefix, setOutputPrefix] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [itemSession, setItemSession] = useState<{
-    item: DraftItem;
+    item: DraftItemV2;
     isNew: boolean;
-    baseline: VardItemBaseline | null;
-    saved?: VardItem;
+    baseline: VardItemBaselineV2 | null;
+    saved?: VardEditorItemV2;
+    pickedUse?: AssetUseSummary;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [editBlock, setEditBlock] = useState("");
   const [draftEpoch, setDraftEpoch] = useState(0);
-  const items = useMemo(() => definition ? manualDraftItems(definition) : [], [definition]);
+  const items = useMemo(() => editor.data ? manualDraftItemsV2(editor.data)
+    : vard.data ? manualDraftItems(vard.data).map(sourceDraftV2) : [], [editor.data, vard.data]);
   const editReason = editBlock || (
     capabilities.isPending ? "Checking Vard editing availability…" :
     capabilities.isError ? "Could not check Vard editing availability. Reload the page to try again." :
-    capabilities.data?.vardEditRevision !== 1 ? "This server does not support safe Vard editing. Update the server to enable editing." :
+    !supportsV2 ? "This server does not support linked Vard editing. Update the server to enable editing." :
     editor.isError ? (editor.error instanceof ApiRequestError && editor.error.status === 404
       ? "This server does not support safe Vard editing. Update the server to enable editing."
       : errorMessage(editor.error, "The Vard editor could not load. Reload the page to try again.")) :
@@ -439,7 +462,7 @@ export function VardEditor({
   }
 
   function reportUnavailable(cause: unknown) {
-    if (cause instanceof VardEditorUnavailableError || (cause instanceof ApiRequestError && cause.status === 404)) {
+    if (cause instanceof VardEditorUnavailableError || (cause instanceof ApiRequestError && (cause.status === 404 || cause.code === "vard_definition_upgrade_required"))) {
       setEditBlock("This server does not support safe Vard editing. Update the server and reload the page to enable editing.");
     }
   }
@@ -455,23 +478,23 @@ export function VardEditor({
     }
   }
 
-  async function acceptSaved(saved: VardEditorDefinition) {
+  async function acceptSaved(saved: VardEditorDefinitionV2) {
     queryClient.setQueryData(editorKey, saved);
-    queryClient.setQueryData(["vard", workspace.id, vardId], saved);
     toast.success("Saved");
     await refreshAfterSave();
     return saved;
   }
 
-  async function persistItems(next: DraftItem[], baseline: VardItemBaseline) {
+  async function persistItems(next: DraftItemV2[], baseline: VardItemBaselineV2) {
     beginSave();
     try {
       await queryClient.cancelQueries({ queryKey: editorKey });
-      const saved = await replaceVardEditorItems(
+      const saved = await replaceVardEditorItemsV2(
         workspace.id,
         vardId,
         baseline.definition.revision,
-        vardItemInputs(next, new Set(baseline.items.map(({ id }) => id))),
+        vardItemInputsV2(next, new Set(baseline.items.map(({ id }) => id))),
+        capabilities.data,
       );
       return await acceptSaved(saved);
     } catch (cause) {
@@ -486,11 +509,12 @@ export function VardEditor({
     name?: string;
     isPublic?: boolean;
     folderRules?: VardFolderRule[];
-  }, baseline: VardEditorDefinition) {
+    returnToSourceOnly?: true;
+  }, baseline: VardEditorDefinitionV2) {
     beginSave();
     try {
       await queryClient.cancelQueries({ queryKey: editorKey });
-      return await acceptSaved(await updateVardEditor(workspace.id, vardId, baseline.revision, patch));
+      return await acceptSaved(await updateVardEditorV2(workspace.id, vardId, baseline.revision, patch, capabilities.data));
     } catch (cause) {
       reportUnavailable(cause);
       throw cause;
@@ -508,11 +532,10 @@ export function VardEditor({
         queryClient.cancelQueries({ queryKey: ["vard-preview", workspace.id, vardId] }),
       ]);
       const [fresh, freshPreview] = await Promise.allSettled([
-        queryClient.fetchQuery({ queryKey: editorKey, queryFn: () => getVardEditor(workspace.id, vardId), staleTime: 0, retry: false }),
+        queryClient.fetchQuery({ queryKey: editorKey, queryFn: () => getVardEditorV2(workspace.id, vardId, capabilities.data), staleTime: 0, retry: false }),
         queryClient.fetchQuery({ queryKey: ["vard-preview", workspace.id, vardId], queryFn: () => getVardManifest(workspace.id, vardId), staleTime: 0, retry: false }),
       ]);
       if (fresh.status === "rejected") throw fresh.reason;
-      queryClient.setQueryData(["vard", workspace.id, vardId], fresh.value);
       setItemSession(null);
       setDraftEpoch((current) => current + 1);
       if (freshPreview.status === "rejected") toast.warning("Vard reloaded. The output preview is still unavailable.");
@@ -526,14 +549,14 @@ export function VardEditor({
 
   function openItem(id: string) {
     if (savingRef.current) return;
-    const baseline = canEdit && editor.data ? captureVardBaseline(editor.data) : null;
+    const baseline = canEdit && editor.data ? captureVardBaselineV2(editor.data) : null;
     const item = (baseline?.items ?? items).find((current) => current.id === id);
-    if (item) setItemSession({ item, baseline, isNew: false, saved: definition?.items.find((current) => current.id === id) });
+    if (item) setItemSession({ item, baseline, isNew: false, saved: editor.data?.items.find((current) => current.id === id) });
   }
 
   function addItem(picked: { id: string; key: string; mimeType: string }) {
     if (!canEdit || savingRef.current || !editor.data) return;
-    const baseline = captureVardBaseline(editor.data);
+    const baseline = captureVardBaselineV2(editor.data);
     const filename = mediaOutputPath(picked.key.split("/").pop()!, picked.mimeType);
     setPickerOpen(false);
     setItemSession({
@@ -541,20 +564,28 @@ export function VardEditor({
       isNew: true,
       item: {
         id: crypto.randomUUID(),
-        assetId: picked.id,
         key: picked.key,
         outputPath: availableOutputPath(`${outputPrefix}${filename}`, baseline.items),
-        versionId: null,
-        transformation: null,
-        writable: false,
+        binding: { kind: "source", assetId: picked.id, versionId: null, transformation: null, writable: false },
       },
     });
   }
 
-  async function remove(baseline: VardEditorDefinition) {
+  function addUse(use: AssetUseSummary) {
+    if (!canEdit || savingRef.current || !editor.data) return;
+    const baseline = captureVardBaselineV2(editor.data);
+    const filename = mediaOutputPath(use.key.split("/").pop()!, use.outputMimeType);
+    setPickerOpen(false);
+    setItemSession({ baseline, isNew: true, pickedUse: use, item: {
+      id: crypto.randomUUID(), key: use.key, outputPath: availableOutputPath(`${outputPrefix}${filename}`, baseline.items),
+      binding: { kind: "use", assetUseId: use.id },
+    } });
+  }
+
+  async function remove(baseline: VardEditorDefinitionV2) {
     beginSave();
     try {
-      await deleteVardEditor(workspace.id, vardId, baseline.revision);
+      await deleteVardEditorV2(workspace.id, vardId, baseline.revision, capabilities.data);
       await queryClient.invalidateQueries({ queryKey: ["vards", workspace.id] });
       toast.success("Vard deleted");
       await navigate({ to: "/workspaces/$workspaceId/vards", params: { workspaceId: workspace.id } });
@@ -571,20 +602,22 @@ export function VardEditor({
       <>
         <AppHeader crumbs={[workspaceCrumb(workspace), vardsCrumb(workspace), { label: "Vard" }]} />
         <Page id="main">
-          {vard.isPending ? (
+          {capabilities.isPending || editor.isPending && supportsV2 || vard.isPending && vard.isFetching ? (
             <PageSkeleton />
           ) : (
             <Alert variant="destructive">
               <TriangleAlertIcon />
               <AlertTitle>Vard unavailable</AlertTitle>
-              <AlertDescription>{vard.error?.message}</AlertDescription>
+              <AlertDescription>{editReason || vard.error?.message}</AlertDescription>
             </Alert>
           )}
         </Page>
       </>
     );
 
-  const savedItems = new Map(definition.items.map((item) => [item.id, item]));
+  const savedItems = new Map((editor.data?.items.map((item) => ({ ...item.resolved, id: item.id, outputPath: item.outputPath,
+    downloadUrl: item.binding.kind === "use" ? linkedPreview(item).url : item.resolved.downloadUrl })) ?? vard.data?.items ?? [])
+    .map((item) => [item.id, item]));
 
   return (
     <>
@@ -642,7 +675,9 @@ export function VardEditor({
             </div>
           </TabsContent>
           <TabsContent value="preview">
-            <div className="pt-4"><ResolvedPreview preview={preview} saving={saving} onRefresh={() => void preview.refetch()} /></div>
+            <div className="pt-4"><ResolvedPreview preview={preview} saving={saving} onRefresh={() => {
+              void Promise.all([preview.refetch(), ...(supportsV2 ? [editor.refetch()] : [])]);
+            }} /></div>
           </TabsContent>
           <TabsContent value="setup">
             <div className="pt-4"><SetupGuide workspaceId={workspace.id} vardId={vardId} /></div>
@@ -656,14 +691,16 @@ export function VardEditor({
         </Tabs>
       </Page>
       {itemSession && (
-        <VardItemDialog
+        <VardBindingDialog
           key={itemSession.item.id}
           item={itemSession.item}
           isNew={itemSession.isNew}
-          source={assets.data?.assets.find(({ id }) => id === itemSession.item.assetId)}
-          workspaceId={workspace.id}
-          workspaceSlug={assets.data?.workspaceSlug}
+          assets={assets.data?.assets ?? []}
+          workspace={workspace}
+          workspaceSlug={assets.data?.workspaceSlug ?? workspace.slug}
           saved={itemSession.saved}
+          live={editor.data?.items.find(({ id }) => id === itemSession.item.id)}
+          pickedUse={itemSession.pickedUse}
           canEdit={canEdit && Boolean(itemSession.baseline)}
           saving={saving}
           onReload={reloadEditor}
@@ -685,7 +722,8 @@ export function VardEditor({
         />
       )}
       <AssetPickerDialog open={pickerOpen && canEdit} workspace={workspace} destination={outputPrefix}
-        addedAssetIds={new Set(items.map(({ assetId }) => assetId))} onPick={addItem} onClose={() => setPickerOpen(false)} />
+        addedAssetIds={new Set(items.flatMap(({ binding }) => binding.kind === "source" ? [binding.assetId] : []))}
+        onPick={addItem} onPickUse={addUse} onClose={() => setPickerOpen(false)} />
     </>
   );
 }
@@ -719,7 +757,9 @@ function OutputPath({
   );
 }
 
-function itemBadge(item: DraftItem) {
+function itemBadge(draft: DraftItemV2) {
+  if (draft.binding.kind === "use") return "Live library use";
+  const item = draft.binding;
   if (item.transformation) return (item.transformation.format ?? "resized").toUpperCase();
   if (item.versionId) return "Pinned";
   return item.writable ? "Writable" : "Latest";
@@ -734,7 +774,7 @@ function OutputGrid({
   onOpenItem,
   onAdd,
 }: {
-  items: DraftItem[];
+  items: DraftItemV2[];
   prefix: string;
   savedItems: Map<string, VardItem>;
   canEdit: boolean;
@@ -803,7 +843,7 @@ function OutputGrid({
                 <span className="truncate font-mono text-xs">
                   {item.outputPath.slice(prefix.length)}
                 </span>
-                <span data-pinned={Boolean(item.versionId && !item.transformation)} className="text-xs text-muted-foreground data-[pinned=true]:text-warning">{itemBadge(item)}</span>
+                <span data-pinned={item.binding.kind === "source" && Boolean(item.binding.versionId && !item.binding.transformation)} className="text-xs text-muted-foreground data-[pinned=true]:text-warning">{item.binding.kind === "use" && !saved?.downloadUrl ? "Unavailable · " : ""}{itemBadge(item)}</span>
               </span>
             </button>
           </li>
@@ -821,18 +861,18 @@ function FolderRulesForm({
   onSave,
   onReload,
 }: {
-  vard: VardDefinition;
-  editor?: VardEditorDefinition;
+  vard: VardMetadata;
+  editor?: VardEditorDefinitionV2;
   canEdit: boolean;
   saving: boolean;
-  onSave: (rules: VardFolderRule[], baseline: VardEditorDefinition) => Promise<VardEditorDefinition>;
+  onSave: (rules: VardFolderRule[], baseline: VardEditorDefinitionV2) => Promise<VardEditorDefinitionV2>;
   onReload: () => Promise<void>;
 }) {
   const id = useId();
   const definition = editor ?? vard;
   const [syncedDefinition, setSyncedDefinition] = useState(definition);
   const [draft, setDraft] = useState(() => withRowIds(definition.folderRules));
-  const [baseline, setBaseline] = useState(() => editor ? captureVardBaseline(editor).definition : null);
+  const [baseline, setBaseline] = useState(() => editor ? captureVardBaselineV2(editor).definition : null);
   const [dirty, setDirty] = useState(false);
   const [failure, setFailure] = useState<VardSaveFailure | null>(null);
   const pendingRef = useRef(false);
@@ -840,7 +880,7 @@ function FolderRulesForm({
   if (definition !== syncedDefinition && !dirty) {
     setSyncedDefinition(definition);
     setDraft(withRowIds(definition.folderRules));
-    setBaseline(editor ? captureVardBaseline(editor).definition : null);
+    setBaseline(editor ? captureVardBaselineV2(editor).definition : null);
   }
   const editable = canEdit && !saving && !failure?.conflict;
 
@@ -862,7 +902,7 @@ function FolderRulesForm({
     try {
       const saved = await onSave(draft.map(({ sourcePrefix, outputPrefix }) => ({ sourcePrefix, outputPrefix })), baseline);
       setSyncedDefinition(saved);
-      setBaseline(captureVardBaseline(saved).definition);
+      setBaseline(captureVardBaselineV2(saved).definition);
       setDraft(withRowIds(saved.folderRules));
       setDirty(false);
     } catch (cause) {
@@ -980,7 +1020,7 @@ function FolderRulesForm({
                   disabled={!editable}
                   onClick={() => {
                     setDraft(withRowIds(definition.folderRules));
-                    setBaseline(editor ? captureVardBaseline(editor).definition : null);
+                    setBaseline(editor ? captureVardBaselineV2(editor).definition : null);
                     setSyncedDefinition(definition);
                     setFailure(null);
                     setDirty(false);
@@ -1014,7 +1054,7 @@ function ResolvedPreview({
     <Card>
       <CardHeader>
         <CardTitle>What <code>vardum pull</code> writes</CardTitle>
-        <CardDescription>Saved configuration only. Folder outputs are read-only.</CardDescription>
+        <CardDescription>Saved configuration with current library settings. Folder outputs are read-only.</CardDescription>
         <CardAction>
           <Button variant="outline" size="sm" disabled={saving || preview.isFetching} onClick={onRefresh}>
             {preview.isFetching && <Spinner data-icon="inline-start" />}
@@ -1208,28 +1248,28 @@ function VardSettings({
   onDelete,
   onReload,
 }: {
-  vard: VardDefinition;
-  editor?: VardEditorDefinition;
+  vard: VardMetadata;
+  editor?: VardEditorDefinitionV2;
   vardId: string;
   canEdit: boolean;
   saving: boolean;
-  onSave: (patch: { name?: string; isPublic?: boolean }, baseline: VardEditorDefinition) => Promise<VardEditorDefinition>;
-  onDelete: (baseline: VardEditorDefinition) => Promise<void>;
+  onSave: (patch: { name?: string; isPublic?: boolean; returnToSourceOnly?: true }, baseline: VardEditorDefinitionV2) => Promise<VardEditorDefinitionV2>;
+  onDelete: (baseline: VardEditorDefinitionV2) => Promise<void>;
   onReload: () => Promise<void>;
 }) {
   const id = useId();
   const definition = editor ?? vard;
   const [syncedDefinition, setSyncedDefinition] = useState(definition);
   const [draft, setDraft] = useState(() => ({ name: definition.name, isPublic: definition.isPublic }));
-  const [baseline, setBaseline] = useState(() => editor ? captureVardBaseline(editor).definition : null);
+  const [baseline, setBaseline] = useState(() => editor ? captureVardBaselineV2(editor).definition : null);
   const [dirty, setDirty] = useState(false);
   const [failure, setFailure] = useState<VardSaveFailure | null>(null);
-  const [deleteBaseline, setDeleteBaseline] = useState<VardEditorDefinition | null>(null);
+  const [deleteBaseline, setDeleteBaseline] = useState<VardEditorDefinitionV2 | null>(null);
   const pendingRef = useRef(false);
   if (definition !== syncedDefinition && !dirty) {
     setSyncedDefinition(definition);
     setDraft({ name: definition.name, isPublic: definition.isPublic });
-    setBaseline(editor ? captureVardBaseline(editor).definition : null);
+    setBaseline(editor ? captureVardBaselineV2(editor).definition : null);
   }
   const editable = canEdit && !saving && !failure?.conflict;
 
@@ -1247,7 +1287,7 @@ function VardSettings({
     try {
       const saved = await onSave(draft, baseline);
       setSyncedDefinition(saved);
-      setBaseline(captureVardBaseline(saved).definition);
+      setBaseline(captureVardBaselineV2(saved).definition);
       setDraft({ name: saved.name, isPublic: saved.isPublic });
       setDirty(false);
     } catch (cause) { setFailure(vardSaveFailure(cause)); }
@@ -1298,6 +1338,19 @@ function VardSettings({
           </form>
         </CardContent>
       </Card>
+      {canEdit && baseline && canReturnToSourceOnly(baseline) ? <Card>
+        <CardHeader>
+          <CardTitle>Source-only editing</CardTitle>
+          <CardDescription>No linked uses remain. You can allow older editors to edit this Vard again.</CardDescription>
+        </CardHeader>
+        <CardFooter><Button variant="outline" disabled={!editable || dirty} onClick={async () => {
+          if (!editable || dirty || pendingRef.current) return;
+          pendingRef.current = true; setFailure(null);
+          try { await onSave({ returnToSourceOnly: true }, baseline); }
+          catch (cause) { setFailure(vardSaveFailure(cause)); }
+          finally { pendingRef.current = false; }
+        }}>Return to source-only editing</Button></CardFooter>
+      </Card> : null}
       {canEdit && (
         <Card>
           <CardHeader>
@@ -1305,7 +1358,7 @@ function VardSettings({
             <CardDescription>Removes the file list only. Assets are not touched.</CardDescription>
             <CardAction>
               <Button variant="destructive" disabled={!editable} onClick={() => {
-                if (baseline) setDeleteBaseline(captureVardBaseline(baseline).definition);
+                if (baseline) setDeleteBaseline(captureVardBaselineV2(baseline).definition);
               }}>Delete</Button>
             </CardAction>
           </CardHeader>
@@ -1328,7 +1381,138 @@ function VardSettings({
   );
 }
 
-function VardItemDialog({
+function sourceDraftV2({ id, key, outputPath, assetId, versionId, transformation, writable }: DraftItem): DraftItemV2 {
+  return { id, key, outputPath, binding: { kind: "source", assetId, versionId, transformation, writable } };
+}
+
+function VardBindingDialog({ item, saved, live, pickedUse: initialUse, assets, workspace, workspaceSlug,
+  isNew, canEdit, saving, onReload, onSave, onRemove, onClose }: {
+  item: DraftItemV2; saved?: VardEditorItemV2; live?: VardEditorItemV2; pickedUse?: AssetUseSummary;
+  assets: SyncAsset[]; workspace: WorkspaceRef; workspaceSlug: string; isNew: boolean;
+  canEdit: boolean; saving: boolean; onReload: () => Promise<void>; onSave: (draft: DraftItemV2) => Promise<void>;
+  onRemove: () => Promise<void>; onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(item);
+  const [rebind, setRebind] = useState(false);
+  const [pickedUse, setPickedUse] = useState(initialUse);
+  const [settings, setSettings] = useState<AssetUseSummary | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const boundUseId = draft.binding.kind === "use" ? draft.binding.assetUseId : undefined;
+  const savedUse = boundUseId ? [live, saved].find((row) => row?.binding.kind === "use" && row.binding.assetUseId === boundUseId) : undefined;
+  const selectedUse = draft.binding.kind === "use" && pickedUse?.id === draft.binding.assetUseId ? pickedUse : undefined;
+  async function openSettings() {
+    if (loadingSettings || draft.binding.kind !== "use") return;
+    const referenceId = draft.binding.assetUseId;
+    const key = savedUse?.linkedUse?.key ?? selectedUse?.key;
+    const sourceId = savedUse?.resolved.assetId ?? selectedUse?.sourceAssetId;
+    if (!key || !sourceId) throw new Error("Linked use settings are unavailable. Rebind or remove this file.");
+    setLoadingSettings(true);
+    try {
+      let cursor: string | null = null;
+      const seen = new Set<string>();
+      do {
+        // oxlint-disable-next-line no-await-in-loop -- each page needs the previous cursor
+        const page = await listAssetUses(workspace.id, "", key, cursor, sourceId);
+        const found = page.uses.find(({ id }) => id === referenceId);
+        if (found) { setSettings(found); return; }
+        cursor = page.nextCursor;
+        if (cursor && seen.has(cursor)) throw new Error("Linked use settings could not be loaded. Try again.");
+        if (cursor) seen.add(cursor);
+      } while (cursor);
+      throw new Error("Linked use no longer exists. Rebind or remove this file.");
+    } finally { setLoadingSettings(false); }
+  }
+  if (rebind) return <AssetPickerDialog open workspace={workspace} destination={draft.outputPath}
+    addedAssetIds={new Set()} onClose={() => setRebind(false)}
+    onPick={(source) => { setDraft({ ...draft, key: source.key, binding: { kind: "source", assetId: source.id, versionId: null, transformation: null, writable: false } }); setPickedUse(undefined); setRebind(false); }}
+    onPickUse={(use) => { setDraft({ ...draft, key: use.key, binding: { kind: "use", assetUseId: use.id } }); setPickedUse(use); setRebind(false); }} />;
+  if (draft.binding.kind === "source") {
+    const sourceDraft: DraftItem = { id: draft.id, key: draft.key, outputPath: draft.outputPath, ...draft.binding };
+    const sourceSaved = saved?.binding.kind === "source" ? { id: saved.id, outputPath: saved.outputPath, ...saved.resolved } : undefined;
+    return <SourceVardItemDialog key={draft.binding.assetId} item={sourceDraft} isNew={isNew}
+      source={assets.find(({ id }) => id === sourceDraft.assetId)} workspaceId={workspace.id} workspaceSlug={workspaceSlug}
+      saved={sourceSaved} canEdit={canEdit} saving={saving} onReload={onReload} onClose={onClose} onRemove={onRemove}
+      onSave={(next) => onSave(sourceDraftV2(next))}
+      onRebind={(next) => { setDraft(sourceDraftV2(next)); setRebind(true); }} />;
+  }
+  return <>
+    <LinkedVardItemDialog key={draft.binding.assetUseId} item={draft} saved={savedUse} pickedUse={selectedUse}
+      workspace={workspace} isNew={isNew} canEdit={canEdit} saving={saving} loadingSettings={loadingSettings}
+      onSettings={openSettings} onReload={onReload} onSave={onSave} onRemove={onRemove} onClose={onClose}
+      onRebind={(next) => { setDraft(next); setRebind(true); }} />
+    {settings ? <AssetUseDialog workspace={workspace} use={settings} onClose={() => setSettings(null)} /> : null}
+  </>;
+}
+
+function LinkedVardItemDialog({ item, saved, pickedUse, workspace, isNew, canEdit, saving, loadingSettings,
+  onSettings, onReload, onSave, onRemove, onClose, onRebind }: {
+  item: DraftItemV2; saved?: VardEditorItemV2; pickedUse?: AssetUseSummary; workspace: WorkspaceRef;
+  isNew: boolean; canEdit: boolean; saving: boolean; loadingSettings: boolean;
+  onSettings: () => Promise<void>; onReload: () => Promise<void>; onSave: (draft: DraftItemV2) => Promise<void>;
+  onRemove: () => Promise<void>; onClose: () => void; onRebind: (draft: DraftItemV2) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState(item);
+  const [failure, setFailure] = useState<VardSaveFailure | null>(null);
+  const pendingRef = useRef(false);
+  const editable = canEdit && !saving && !loadingSettings && !failure?.conflict;
+  const unavailable = saved?.resolved.availabilityError ?? pickedUse?.availabilityError;
+  const output = linkedPreview(saved);
+  const previewUrl = unavailable ? null : saved ? output.url : pickedUse?.previewUrl ?? null;
+  const mimeType = saved ? output.mimeType : pickedUse?.outputMimeType;
+  const sourceId = saved?.resolved.assetId ?? pickedUse?.sourceAssetId;
+  const sourceKey = saved?.resolved.key ?? pickedUse?.sourceKey ?? "";
+  async function run(action: () => Promise<void>) {
+    if (!editable || pendingRef.current) return;
+    pendingRef.current = true; setFailure(null);
+    try { await action(); } catch (cause) { setFailure(vardSaveFailure(cause)); }
+    finally { pendingRef.current = false; }
+  }
+  async function reload() {
+    if (saving || pendingRef.current) return;
+    pendingRef.current = true;
+    try { await onReload(); } catch (cause) { setFailure(vardSaveFailure(cause, true)); }
+    finally { pendingRef.current = false; }
+  }
+  return <Dialog open onOpenChange={(open) => { if (!open && !saving && !pendingRef.current) onClose(); }}>
+    <DialogContent size="lg" showCloseButton={!saving}>
+      <form onSubmit={(event) => { event.preventDefault(); if (draft.outputPath) void run(() => onSave(draft)); }}>
+        <FieldGroup>
+          <DialogHeader><DialogTitle>{isNew ? "Add linked file" : "Linked file settings"}</DialogTitle>
+            <DialogDescription>{saved?.linkedUse?.displayName ?? pickedUse?.displayName ?? draft.key}</DialogDescription>
+          </DialogHeader>
+          <Badge variant="secondary"><LinkIcon />Live library use</Badge>
+          <FieldDescription>Settings are inherited live from this library use. Changes in the library update this file; its project path stays fixed. Linked files are read-only for <code>vardum push</code>.</FieldDescription>
+          <div className="flex h-40 items-center justify-center overflow-hidden rounded-lg border bg-muted bg-cells">
+            <AssetThumb url={previewUrl} mimeType={mimeType} label={`Output preview of ${draft.key}`} controls />
+          </div>
+          {unavailable || !previewUrl ? <Alert variant="destructive"><TriangleAlertIcon /><AlertTitle>Linked output unavailable</AlertTitle>
+            <AlertDescription>{unavailable ?? "No ready output is available. You can rebind or remove this file."}</AlertDescription></Alert> : null}
+          <Field><FieldLabel htmlFor={`${id}-path`}>Project path</FieldLabel><Input id={`${id}-path`} required spellCheck={false}
+            value={draft.outputPath} disabled={!editable} onChange={(event) => setDraft((current) => ({ ...current, outputPath: event.target.value }))} /></Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" disabled={!editable} onClick={() => onRebind(draft)}>Change binding</Button>
+            <Button type="button" variant="outline" disabled={loadingSettings || saving || Boolean(failure?.conflict) || !saved?.linkedUse && !pickedUse} onClick={() => {
+              setFailure((current) => current?.conflict ? current : null);
+              void onSettings().catch((cause) => setFailure((current) => current?.conflict ? current : vardSaveFailure(cause)));
+            }}>{loadingSettings ? <Spinner data-icon="inline-start" /> : null}Use settings</Button>
+            {sourceId ? <Link className="min-w-0 truncate text-sm underline" to="/workspaces/$workspaceId/assets/$assetId"
+              params={{ workspaceId: workspace.id, assetId: sourceId }} search={{ from: sourceKey.includes("/") ? `${sourceKey.split("/").slice(0, -1).join("/")}/` : "" }}>
+              Source: {saved?.linkedUse?.sourceDisplayName ?? pickedUse?.sourceDisplayName ?? sourceKey}</Link> : null}
+          </div>
+          <FieldDescription><span className="font-mono break-all">{saved?.linkedUse?.key ?? pickedUse?.key ?? draft.key}</span></FieldDescription>
+          {failure ? <VardSaveNotice failure={failure} pending={saving} onReload={reload} /> : null}
+          {canEdit ? <DialogFooter><div className="flex w-full justify-between gap-2">
+            <Button type="button" variant="destructive" disabled={!editable} onClick={() => void run(onRemove)}>{isNew ? "Discard" : "Remove"}</Button>
+            <Button type="submit" disabled={!editable || !draft.outputPath}>{saving ? <Spinner data-icon="inline-start" /> : null}{isNew ? "Add linked file" : "Save"}</Button>
+          </div></DialogFooter> : null}
+        </FieldGroup>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+function SourceVardItemDialog({
   item,
   isNew,
   source,
@@ -1341,6 +1525,7 @@ function VardItemDialog({
   onSave,
   onRemove,
   onClose,
+  onRebind,
 }: {
   item: DraftItem;
   isNew: boolean;
@@ -1354,6 +1539,7 @@ function VardItemDialog({
   onSave: (item: DraftItem) => Promise<void>;
   onRemove: () => Promise<void>;
   onClose: () => void;
+  onRebind: (draft: DraftItem) => void;
 }) {
   const id = useId();
   const [draft, setDraft] = useState(item);
@@ -1447,6 +1633,8 @@ function VardItemDialog({
                 onChange={(event) => change({ outputPath: event.target.value })}
               />
             </Field>
+
+            <Button type="button" variant="outline" disabled={!editable} onClick={() => onRebind(draft)}>Change binding</Button>
 
             <Field>
               <FieldLabel htmlFor={`${id}-format`}>Format</FieldLabel>
@@ -1610,6 +1798,7 @@ function AssetPickerDialog({
   destination,
   addedAssetIds,
   onPick,
+  onPickUse,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1617,6 +1806,7 @@ function AssetPickerDialog({
   destination: string;
   addedAssetIds: Set<string>;
   onPick: (asset: { id: string; key: string; mimeType: string }) => void;
+  onPickUse: (use: AssetUseSummary) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -1628,7 +1818,11 @@ function AssetPickerDialog({
           </DialogDescription>
         </DialogHeader>
         {open && (
-          <AssetPicker workspace={workspace} addedAssetIds={addedAssetIds} onPick={onPick} />
+          <Tabs defaultValue="source">
+            <TabsList><TabsTrigger value="source">Source mapping</TabsTrigger><TabsTrigger value="use">Linked library use</TabsTrigger></TabsList>
+            <TabsContent value="source"><div className="pt-3"><AssetPicker workspace={workspace} addedAssetIds={addedAssetIds} onPick={onPick} /></div></TabsContent>
+            <TabsContent value="use"><div className="pt-3"><VardUsePicker workspace={workspace} onPick={onPickUse} /></div></TabsContent>
+          </Tabs>
         )}
       </DialogContent>
     </Dialog>
@@ -1721,6 +1915,32 @@ function AssetPicker({
   );
 }
 
+function VardUsePicker({ workspace, onPick }: { workspace: WorkspaceRef; onPick: (use: AssetUseSummary) => void }) {
+  const [search, setSearch] = useState("");
+  const needle = useDebouncedValue(search.trim());
+  const listing = useInfiniteQuery(assetUseQueryOptions(workspace.id, "", needle, undefined, true));
+  const uses = [...new Map(listing.data?.pages.flatMap((page) => page.uses).map((use) => [use.id, use])).values()];
+  return <div className="flex flex-col gap-4">
+    <FieldDescription>Link a library use to follow its saved settings live. You can use the same source or use more than once.</FieldDescription>
+    <Input type="search" aria-label="Find library use" placeholder="Search uses by name or path" value={search} onChange={(event) => setSearch(event.target.value)} />
+    {listing.isPending ? <Spinner /> : null}
+    {listing.isError ? <Alert variant="destructive"><TriangleAlertIcon /><AlertTitle>Library uses could not load</AlertTitle>
+      <AlertDescription>{listing.error.message}<Button variant="outline" onClick={() => void listing.refetch()}>Retry</Button></AlertDescription></Alert> : null}
+    {uses.length ? <ul className="grid max-h-96 grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3" aria-label="Library uses">
+      {uses.map((use) => <li key={use.id}><button type="button" disabled={Boolean(use.availabilityError) || !use.currentVersionId}
+        title={use.availabilityError ?? (!use.currentVersionId ? "No ready source version" : undefined)}
+        className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50" onClick={() => onPick(use)}>
+        <span className="flex aspect-4/3 w-full overflow-hidden bg-muted bg-cells"><AssetThumb url={use.availabilityError ? null : use.previewUrl} mimeType={use.outputMimeType} label={`Preview of ${use.displayName}`} /></span>
+        <span className="flex min-w-0 flex-col gap-1 p-2.5 text-sm"><span className="truncate">{use.displayName}</span>
+          <span className="truncate font-mono text-xs text-muted-foreground">{use.key}</span><span className="truncate text-xs text-muted-foreground">Source: {use.sourceDisplayName}</span>
+          <span className="text-xs text-muted-foreground">{use.availabilityError ?? (use.sourceProcessing ? "Updating source…" : use.currentVersionId ? "Live settings" : "No ready source")}</span>
+        </span>
+      </button></li>)}
+    </ul> : !listing.isPending && !listing.isError ? <Empty><EmptyHeader><EmptyTitle>No matching library uses</EmptyTitle><EmptyDescription>Create a use in the asset library, then link it here.</EmptyDescription></EmptyHeader></Empty> : null}
+    {listing.hasNextPage ? <Button variant="outline" disabled={listing.isFetching} onClick={() => void listing.fetchNextPage({ cancelRefetch: false })}>Load more library uses</Button> : null}
+  </div>;
+}
+
 function PickerAsset({
   asset,
   workspaceSlug,
@@ -1766,9 +1986,9 @@ function withRowIds(rules: VardFolderRule[]) {
 }
 
 // The Vard's own output paths, browsed as the directory tree `vardum pull` writes.
-function outputTree(items: DraftItem[], prefix: string) {
+function outputTree(items: DraftItemV2[], prefix: string) {
   const folders = new Map<string, number>();
-  const files: DraftItem[] = [];
+  const files: DraftItemV2[] = [];
   for (const item of items) {
     if (!item.outputPath.startsWith(prefix)) continue;
     const remainder = item.outputPath.slice(prefix.length);
@@ -1788,7 +2008,7 @@ function outputTree(items: DraftItem[], prefix: string) {
 }
 
 // Clicking the same asset twice would otherwise collide on the per-Vard unique output path.
-function availableOutputPath(candidate: string, items: DraftItem[]) {
+function availableOutputPath(candidate: string, items: DraftItemV2[]) {
   const taken = new Set(items.map(({ outputPath }) => outputPath));
   if (!taken.has(candidate)) return candidate;
   const [, base, extension] = candidate.match(/^(.*?)(\.[^./]*)?$/) ?? [];

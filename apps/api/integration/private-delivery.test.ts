@@ -292,12 +292,13 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
         {
           ...oldVard,
           folder_rules: [],
+          definition_schema: 1,
         },
       );
       assert.deepEqual(
         (await sql("SELECT * FROM vard_item WHERE vard_id=$1", [oldVardId]))
           .rows,
-        oldItems,
+        oldItems.map((item) => ({ ...item, definition_schema: 1, asset_use_id: null })),
       );
       const afterKeys = (await sql("SELECT * FROM apikey ORDER BY id")).rows;
       assert.deepEqual(
@@ -1877,6 +1878,12 @@ test("private delivery: disposable PostgreSQL, real auth/routes, fake object HTT
     const { checkVardEditor } = await import("./vard-editor.fixture.js");
     await checkVardEditor(editorTest, { admin: admin!, app, objects, keyHeaders, cookies,
       setCopyHook: (hook) => { beforeObjectCopy = hook; },
+    });
+  });
+  await t.test("VARD schema2 live-use editor under the production database role", async (editorTest) => {
+    const { checkVardEditorV2 } = await import("./vard-editor-v2.fixture.js");
+    await checkVardEditorV2(editorTest, { admin: admin!, app, objects, keyHeaders, cookies,
+      root, cliPath: vardImportCliPath,
     });
   });
   await t.test("VARD import through the real CLI, uploads, worker and pull", async (importCliTest) => {

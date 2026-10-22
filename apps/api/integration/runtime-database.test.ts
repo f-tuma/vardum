@@ -239,6 +239,20 @@ test(
       },
     );
     assert.ok(runtime);
+    await t.test("Vard definition migration preserves the historical source-only subset", async (migrationTest) => {
+      const { checkVardDefinitionMigration } = await import("./vard-definition-migration.fixture.js");
+      await checkVardDefinitionMigration(migrationTest, {
+        adminConnectionString: connection("postgres"),
+        migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
+        scratchRoot: root,
+      });
+    });
+    await t.test("Vard definition runtime guards, tuple constraints and races", async (definitionTest) => {
+      const { checkVardDefinitionDatabase } = await import("./vard-definition-database.fixture.js");
+      await checkVardDefinitionDatabase(definitionTest, {
+        admin: admin!, runtime: runtime!, runtimeConnectionString: connection("varda_app"),
+      });
+    });
     const tenantAssets = new Map<
       string,
       { assetId: string; versionId: string }

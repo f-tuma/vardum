@@ -11,11 +11,11 @@ import {
   vardItem,
   workspace,
 } from "./db/app-schema.js";
-import { db } from "./db/index.js";
-import { inWorkspace } from "./db/tenant.js";
+import { inVardDefinitionRead, inWorkspace, inWorkspaceSnapshot } from "./db/tenant.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
 import { registerVardEditorRoutes } from "./vard-editor.js";
-import { buildVardPayload } from "./vard-payload.js";
+import { buildVardPayload, buildVardPayloadInTransaction } from "./vard-payload.js";
+import { assertVardDefinitionProtocol, legacyVardInput, VardDefinitionUpgradeError, vardDefinitionUpgradeFailure } from "./vard-definition-model.js";
 import { registerVardImportRoutes } from "./vard-import.js";
 import { transformationSchema } from "./transformation.js";
 
@@ -106,7 +106,7 @@ export function registerVardRoutes(app: FastifyInstance) {
 
   api.post(
     "/api/workspaces/:workspaceId/vards",
-    { schema: { params: workspaceParams, body: vardBody } },
+    { schema: { params: workspaceParams, body: legacyVardInput(vardBody) } },
     async (request, reply) => {
       const { workspaceId } = request.params;
       const authorization = await authorizeAsset(request, workspaceId, [
@@ -154,6 +154,7 @@ export function registerVardRoutes(app: FastifyInstance) {
         });
         return reply.code(201).send(created);
       } catch (error) {
+        if (error instanceof VardDefinitionUpgradeError) return vardDefinitionUpgradeFailure(reply);
         if (isUniqueViolation(error))
           return reply.code(409).send({ error: "Vard name already exists" });
         throw error;
@@ -173,18 +174,22 @@ export function registerVardRoutes(app: FastifyInstance) {
         return reply
           .code(authorization.statusCode)
           .send({ error: authorization.error });
-      const definition = await buildVardPayload(workspaceId, vardId, {
-        resolveFolders: false,
-      });
-      return definition
-        ? definition
-        : reply.code(404).send({ error: "Vard not found" });
+      try {
+        const definition = await inWorkspaceSnapshot(workspaceId, async (transaction) => {
+          await assertVardDefinitionProtocol(transaction, workspaceId, vardId, 1);
+          return buildVardPayloadInTransaction(transaction, workspaceId, vardId, { resolveFolders: false });
+        });
+        return definition ? definition : reply.code(404).send({ error: "Vard not found" });
+      } catch (error) {
+        if (error instanceof VardDefinitionUpgradeError) return vardDefinitionUpgradeFailure(reply);
+        throw error;
+      }
     },
   );
 
   api.patch(
     "/api/workspaces/:workspaceId/vards/:vardId",
-    { schema: { params: vardParams, body: updateVardBody } },
+    { schema: { params: vardParams, body: legacyVardInput(updateVardBody) } },
     async (request, reply) => {
       const { workspaceId, vardId } = request.params;
       const authorization = await authorizeAsset(request, workspaceId, [
@@ -197,6 +202,7 @@ export function registerVardRoutes(app: FastifyInstance) {
       try {
         const updated = await inWorkspace(workspaceId, async (transaction) => {
           await lockWorkspaceContent(transaction, workspaceId);
+          await assertVardDefinitionProtocol(transaction, workspaceId, vardId, 1);
           const [record] = await transaction
             .update(vard)
             .set({
@@ -229,6 +235,7 @@ export function registerVardRoutes(app: FastifyInstance) {
           ? updated
           : reply.code(404).send({ error: "Vard not found" });
       } catch (error) {
+        if (error instanceof VardDefinitionUpgradeError) return vardDefinitionUpgradeFailure(reply);
         if (isUniqueViolation(error))
           return reply.code(409).send({ error: "Vard name already exists" });
         throw error;
@@ -238,7 +245,7 @@ export function registerVardRoutes(app: FastifyInstance) {
 
   api.put(
     "/api/workspaces/:workspaceId/vards/:vardId/items",
-    { schema: { params: vardParams, body: replaceItemsBody } },
+    { schema: { params: vardParams, body: legacyVardInput(replaceItemsBody) } },
     async (request, reply) => {
       const { workspaceId, vardId } = request.params;
       const authorization = await authorizeAsset(request, workspaceId, [
@@ -249,18 +256,15 @@ export function registerVardRoutes(app: FastifyInstance) {
           .code(authorization.statusCode)
           .send({ error: authorization.error });
 
-      const duplicatePath = duplicate(
-        request.body.items.map(({ outputPath }) =>
-          outputPath.normalize("NFC").toLowerCase(),
-        ),
-      );
-      if (duplicatePath)
-        return reply
-          .code(400)
-          .send({ error: `Duplicate output path: ${duplicatePath}` });
-
       const result = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceContent(transaction, workspaceId);
+        await assertVardDefinitionProtocol(transaction, workspaceId, vardId, 1);
+        const duplicatePath = duplicate(
+          request.body.items.map(({ outputPath }) =>
+            outputPath.normalize("NFC").toLowerCase(),
+          ),
+        );
+        if (duplicatePath) return { duplicatePath };
         const [target] = await transaction
           .select({ id: vard.id })
           .from(vard)
@@ -341,8 +345,14 @@ export function registerVardRoutes(app: FastifyInstance) {
           requestId: request.id,
         });
         return "updated" as const;
+      }).catch((error: unknown) => {
+        if (error instanceof VardDefinitionUpgradeError) return "upgrade" as const;
+        throw error;
       });
 
+      if (typeof result === "object")
+        return reply.code(400).send({ error: `Duplicate output path: ${result.duplicatePath}` });
+      if (result === "upgrade") return vardDefinitionUpgradeFailure(reply);
       if (result === "missing")
         return reply.code(404).send({ error: "Vard not found" });
       if (result === "invalid-asset")
@@ -373,6 +383,7 @@ export function registerVardRoutes(app: FastifyInstance) {
           .send({ error: authorization.error });
       const deleted = await inWorkspace(workspaceId, async (transaction) => {
         await lockWorkspaceContent(transaction, workspaceId);
+        await assertVardDefinitionProtocol(transaction, workspaceId, vardId, 1);
         const [record] = await transaction
           .delete(vard)
           .where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)))
@@ -389,7 +400,11 @@ export function registerVardRoutes(app: FastifyInstance) {
           requestId: request.id,
         });
         return record;
+      }).catch((error: unknown) => {
+        if (error instanceof VardDefinitionUpgradeError) return "upgrade" as const;
+        throw error;
       });
+      if (deleted === "upgrade") return vardDefinitionUpgradeFailure(reply);
       return deleted
         ? reply.code(204).send()
         : reply.code(404).send({ error: "Vard not found" });
@@ -490,12 +505,10 @@ export function registerVardRoutes(app: FastifyInstance) {
     "/v/:vardId",
     { schema: { params: publicVardParams } },
     async (request, reply) => {
-      const [record] = await db
+      const [record] = await inVardDefinitionRead((transaction) => transaction
         .select({ workspaceId: vard.workspaceId })
         .from(vard)
-        .where(
-          and(eq(vard.id, request.params.vardId), eq(vard.isPublic, true)),
-        );
+        .where(and(eq(vard.id, request.params.vardId), eq(vard.isPublic, true))));
       if (!record) return reply.code(404).send({ error: "Vard not found" });
       const authorization = await authorizeAsset(request, record.workspaceId, [
         "read",
@@ -503,7 +516,7 @@ export function registerVardRoutes(app: FastifyInstance) {
       const manifest = await buildVardPayload(
         record.workspaceId,
         request.params.vardId,
-        { anonymous: !("principal" in authorization) },
+        { anonymous: !("principal" in authorization), requirePublic: true },
       );
       return manifest
         ? manifest

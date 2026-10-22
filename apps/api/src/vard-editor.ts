@@ -6,10 +6,15 @@ import { z } from "zod";
 import { authorizeAsset } from "./authorization.js";
 import { asset, assetVersion, auditEvent, vard, vardItem } from "./db/app-schema.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
-import { inWorkspace, type Transaction } from "./db/tenant.js";
+import { inWorkspace, inWorkspaceSnapshot, type Transaction } from "./db/tenant.js";
 import { folderRulesSchema, vardOutputPath } from "./vard-folder-rules.js";
 import { buildVardPayloadInTransaction } from "./vard-payload.js";
 import { transformationSchema } from "./transformation.js";
+import { assertVardDefinitionProtocol, VardDefinitionUpgradeError,
+  vardDefinitionUpgradeFailure } from "./vard-definition-model.js";
+import { deleteEditorV2, editorGetQuery, editorPayloadV2, patchEditorV2,
+  replaceEditorItemsV2, VardEditorV2Error, v2DeleteQuery, v2ItemsBody,
+  v2PatchBody } from "./vard-editor-v2.js";
 
 const params = z.object({ workspaceId: z.string().min(1), vardId: z.uuid() });
 const revision = z.string().regex(/^v1:[a-f0-9]{64}$/, "Invalid editor revision");
@@ -48,20 +53,21 @@ class EditorError extends Error {
 export function registerVardEditorRoutes(app: FastifyInstance) {
   const api = app.withTypeProvider<ZodTypeProvider>();
   const url = "/api/workspaces/:workspaceId/vards/:vardId/editor";
-  api.get(url, { schema: { params } }, async (request, reply) => {
+  api.get(url, { schema: { params, querystring: editorGetQuery } }, async (request, reply) => {
     const { workspaceId, vardId } = request.params;
     const authorization = await authorizeAsset(request, workspaceId, ["read"]);
     if (!("principal" in authorization))
       return reply.code(authorization.statusCode).send({ error: authorization.error });
     try {
-      return await inWorkspace(workspaceId, async (tx) => {
-        await lockWorkspaceContent(tx, workspaceId);
+      return await inWorkspaceSnapshot(workspaceId, async (tx) => {
+        if ("definitionSchema" in request.query)
+          return editorPayloadV2(tx, workspaceId, vardId);
         return editorPayload(tx, workspaceId, vardId);
       });
     } catch (error) { return editorFailure(reply, error); }
   });
 
-  api.patch(url, { schema: { params, body: patchBody } }, async (request, reply) => {
+  api.patch(url, { schema: { params, body: z.union([patchBody, v2PatchBody]) } }, async (request, reply) => {
     const { workspaceId, vardId } = request.params;
     const authorization = await authorizeAsset(request, workspaceId, ["read", "update"]);
     if (!("principal" in authorization))
@@ -69,6 +75,9 @@ export function registerVardEditorRoutes(app: FastifyInstance) {
     try {
       return await inWorkspace(workspaceId, async (tx) => {
         await lockWorkspaceContent(tx, workspaceId);
+        if ("definitionSchema" in request.body)
+          return patchEditorV2(tx, workspaceId, vardId, request.body, authorization.principal, request.id);
+        await assertVardDefinitionProtocol(tx, workspaceId, vardId, 1);
         const state = await editableState(tx, workspaceId, vardId);
         compareRevision(state.revision, request.body.expectedRevision);
         const { expectedRevision: _expectedRevision, ...fields } = request.body;
@@ -89,7 +98,7 @@ export function registerVardEditorRoutes(app: FastifyInstance) {
     } catch (error) { return editorFailure(reply, error); }
   });
 
-  api.put(`${url}/items`, { schema: { params, body: itemsBody } }, async (request, reply) => {
+  api.put(`${url}/items`, { schema: { params, body: z.union([itemsBody, v2ItemsBody]) } }, async (request, reply) => {
     const { workspaceId, vardId } = request.params;
     const authorization = await authorizeAsset(request, workspaceId, ["read", "update"]);
     if (!("principal" in authorization))
@@ -97,6 +106,9 @@ export function registerVardEditorRoutes(app: FastifyInstance) {
     try {
       return await inWorkspace(workspaceId, async (tx) => {
         await lockWorkspaceContent(tx, workspaceId);
+        if ("definitionSchema" in request.body)
+          return replaceEditorItemsV2(tx, workspaceId, vardId, request.body, authorization.principal, request.id);
+        await assertVardDefinitionProtocol(tx, workspaceId, vardId, 1);
         const state = await editableState(tx, workspaceId, vardId);
         compareRevision(state.revision, request.body.expectedRevision);
         const desired = request.body.items;
@@ -152,7 +164,9 @@ export function registerVardEditorRoutes(app: FastifyInstance) {
     } catch (error) { return editorFailure(reply, error); }
   });
 
-  api.delete(url, { schema: { params, querystring: z.object({ expectedRevision: revision }).strict() } }, async (request, reply) => {
+  api.delete(url, { schema: { params, querystring: z.union([
+    z.object({ expectedRevision: revision }).strict(), v2DeleteQuery,
+  ]) } }, async (request, reply) => {
     const { workspaceId, vardId } = request.params;
     const authorization = await authorizeAsset(request, workspaceId, ["delete"]);
     if (!("principal" in authorization))
@@ -160,6 +174,10 @@ export function registerVardEditorRoutes(app: FastifyInstance) {
     try {
       await inWorkspace(workspaceId, async (tx) => {
         await lockWorkspaceContent(tx, workspaceId);
+        if ("definitionSchema" in request.query)
+          return deleteEditorV2(tx, workspaceId, vardId, request.query.expectedRevision,
+            authorization.principal, request.id);
+        await assertVardDefinitionProtocol(tx, workspaceId, vardId, 1);
         const state = await editableState(tx, workspaceId, vardId);
         compareRevision(state.revision, request.query.expectedRevision);
         await tx.delete(vard).where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)));
@@ -197,6 +215,7 @@ async function editableState(tx: Transaction, workspaceId: string, vardId: strin
 }
 
 async function editorPayload(tx: Transaction, workspaceId: string, vardId: string) {
+  await assertVardDefinitionProtocol(tx, workspaceId, vardId, 1);
   const state = await editableState(tx, workspaceId, vardId);
   const definition = await buildVardPayloadInTransaction(tx, workspaceId, vardId, {
     resolveFolders: false, includePinnedVersionId: true,
@@ -249,6 +268,11 @@ function canonical(value: unknown): string {
 }
 
 function editorFailure(reply: FastifyReply, error: unknown) {
+  if (error instanceof VardDefinitionUpgradeError) return vardDefinitionUpgradeFailure(reply);
+  if (error instanceof VardEditorV2Error) return reply.code(error.status).send({
+    ...(error.code ? { code: error.code } : {}), error: error.message,
+    ...(error.currentRevision ? { currentRevision: error.currentRevision } : {}),
+  });
   if (error instanceof EditorError) return reply.code(error.status).send(error.currentRevision ? {
     code: "vard_revision_conflict", error: error.message, currentRevision: error.currentRevision,
   } : { error: error.message });

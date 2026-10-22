@@ -11,7 +11,7 @@ import {
   knownUsageCheck,
 } from "./db/app-schema.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
-import { inWorkspace, type Transaction } from "./db/tenant.js";
+import { inWorkspace, inWorkspaceSnapshot, type Transaction } from "./db/tenant.js";
 import {
   bindingStatus,
   checkSchema,
@@ -142,6 +142,7 @@ async function targetResolver(
         vardId,
         {
           includePinnedVersionId: true,
+          includeBindingIdentity: true,
           selectedTargets: [...targets.values()],
         },
       );
@@ -201,10 +202,9 @@ async function targetResolver(
       if (!item) return missing("output_missing");
       if (item.assetId !== target.assetId) return missing("output_rebound");
       transformation = canonicalizeTransformation(item.transformation ?? {});
-      outputConfiguration = JSON.stringify([
-        item.pinnedVersionId ?? null,
-        transformation,
-      ]);
+      outputConfiguration = item.bindingIdentity?.kind === "use"
+        ? JSON.stringify(["use", item.bindingIdentity.assetUseId, transformation])
+        : JSON.stringify([item.pinnedVersionId ?? null, transformation]);
       versionId = item.versionId;
       label = `${payload.name} / ${target.outputPath} (${sourceAsset.displayName})`;
     }
@@ -384,7 +384,7 @@ export function registerKnownUsageRoutes(app: FastifyInstance) {
       const auth = await authorizeAsset(request, workspaceId, ["read"]);
       if (!("principal" in auth))
         return reply.code(auth.statusCode).send({ error: auth.error });
-      return inWorkspace(workspaceId, async (tx) => {
+      return inWorkspaceSnapshot(workspaceId, async (tx) => {
         const rows = await tx
           .select()
           .from(knownUsage)
@@ -415,7 +415,7 @@ export function registerKnownUsageRoutes(app: FastifyInstance) {
       if (!("principal" in auth))
         return reply.code(auth.statusCode).send({ error: auth.error });
       return checked(reply, () =>
-        inWorkspace(workspaceId, async (tx) => {
+        inWorkspaceSnapshot(workspaceId, async (tx) => {
           const rows = await tx
             .select()
             .from(knownUsage)

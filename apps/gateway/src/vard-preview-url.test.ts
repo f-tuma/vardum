@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SyncAsset, VardItem } from "@vardum/shared";
+import type { SyncAsset, VardItem, VardEditorItemV2 } from "@vardum/shared";
 import type { DraftItem } from "./vard-editor-state";
-import { sourcePreview, transformedPreviewUrl } from "./vard-preview-url";
+import { linkedPreview, sourcePreview, transformedPreviewUrl } from "./vard-preview-url";
 
 test("source previews stay on the app origin and honor pinned versions", () => {
   const item = { key: "brand/a #1.png", versionId: "old-version" } as DraftItem;
@@ -29,6 +29,18 @@ test("source previews stay on the app origin and honor pinned versions", () => {
       .url,
     null,
   );
+});
+
+test("linked preview uses captured canonical output and has no source-original fallback", () => {
+  const item = { binding: { kind: "use", assetUseId: "use" }, resolved: {
+    versionId: "ready", fingerprint: "recipe", downloadUrl: "/w/demo/__v/ready/source.svg?pad=20&sig=signed",
+    mimeType: "image/png", availabilityError: null,
+  } } as VardEditorItemV2;
+  assert.deepEqual(linkedPreview(item), { url: item.resolved.downloadUrl, mimeType: "image/png" });
+  assert.equal(linkedPreview({ ...item, resolved: { ...item.resolved, availabilityError: "Incompatible use" } }).url, null);
+  assert.equal(linkedPreview({ ...item, resolved: { ...item.resolved, versionId: null } }).url, null);
+  assert.equal(linkedPreview({ ...item, resolved: { ...item.resolved, downloadUrl: null } }).url, null);
+  assert.equal(linkedPreview(undefined).url, null);
 });
 
 test("a pinned transformed output previews and restores its actual original source MIME", () => {

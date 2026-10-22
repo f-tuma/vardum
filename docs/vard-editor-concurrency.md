@@ -3,8 +3,9 @@
 Deployments supporting guarded edits advertise `vardEditRevision: 1` from
 `GET /api/capabilities`. Clients must use the dedicated editor routes to obtain
 and submit revisions. The legacy definition, PATCH, item-replacement and DELETE
-routes retain their previous behavior; an `expectedRevision` field on a legacy
-request does not make that request guarded.
+routes retain their previous behavior for source-only definitions; an
+`expectedRevision` field on a legacy request does not make it guarded. Definitions
+containing live library-use bindings require the protocol below.
 
 | Request | Required guard | Response |
 | --- | --- | --- |
@@ -28,8 +29,9 @@ read and update because they return the full definition; DELETE requires delete.
 A foreign or absent Vard returns 404 only after workspace authorization. No
 revision is included in unauthorized or missing responses.
 
-All editor reads and writes acquire the workspace content advisory lock inside
-one tenant-scoped transaction. A write reads persisted state and compares its
+Editor reads capture one tenant-scoped repeatable-read, read-only transaction.
+Writes acquire the workspace content advisory lock inside one tenant transaction.
+A write reads persisted state and compares its
 guard before domain validation, no-op detection, mutation, or audit. Its response
 is read within that same transaction, without opening a nested transaction. A
 stale write returns HTTP 409:
@@ -89,3 +91,53 @@ stable IDs, pins, swaps/cycles, exact creation metadata, no-op and import replay
 legacy invalidation, source-only stability, asset-delete and failed-copy
 cascades, strict guard validation, atomic stale/invalid rejection, coherent
 responses, and tenant authorization.
+
+## Live library-use definitions
+
+The API advertises `vardDefinitionSchema: 2` separately from
+`vardEditRevision: 1`. A client must verify the former capability, request
+`GET .../editor?definitionSchema=2`, and validate the returned `definitionSchema: 2`
+before enabling this editor. An old server returning a schema-1 body is not a
+fallback. Use the returned `v2:` revision for schema-2 writes.
+
+| Request | Discriminator and guard |
+| --- | --- |
+| `GET .../editor` | Query `definitionSchema=2` |
+| `PATCH .../editor` | Body `definitionSchema: 2`, `expectedRevision`, editable metadata |
+| `PUT .../editor/items` | Body `definitionSchema: 2`, `expectedRevision`, complete literal items |
+| `DELETE .../editor` | Query `definitionSchema=2`, `expectedRevision` |
+
+An item has `id`, `outputPath` and a literal `binding`. A source binding has
+`kind: "source"`, `assetId`, explicit nullable `versionId`/`transformation` and
+`writable`. A live binding has only `kind: "use"` and `assetUseId`; adding a pin,
+recipe or writable field is invalid even for an Original use. The response keeps
+current `resolved` output and `linkedUse` diagnostics separate. Never build an
+input by copying those live values into the literal binding.
+
+`storedDefinitionSchema` reports the persisted format (1 or 2). The first live
+binding atomically upgrades the parent and existing children to format 2 before
+inserting it. Removing the last live binding leaves format 2. An explicit schema-2
+PATCH with `returnToSourceOnly: true` may downgrade only after all bindings are
+removed; an unsafe request returns `409 vard_definition_has_bindings` without
+partial metadata, item or audit changes. The gateway exposes this as
+**Return to source-only editing**. The API rejects false or unknown intent fields.
+
+Schema-1 editor and legacy definition GET/PATCH/whole-list PUT/DELETE requests
+against format 2 return `409 vard_definition_upgrade_required` with
+`requiredDefinitionSchema: 2`, before OCC or domain validation. They expose no
+schema-1 editable revision. Do not retry by flattening a use into its source.
+Schema-1 projections and revision hashes for source-only definitions are unchanged.
+
+The v2 token hashes literal stored format, binding/source identities and exact
+PostgreSQL creation/update metadata. Use settings and revisions, current source
+versions, resolved recipes, URLs and diagnostics are excluded. Refreshing a live
+output does not dirty or replace an unsaved literal draft. An exact retained
+manual UUID/use identity may round-trip while unavailable; a newly selected use
+must belong to the workspace and have a usable ready current source. Configuration
+writes retain the existing no-op, ID, creation-time and atomic path-swap rules.
+
+Migration 0020 enforces the workspace/use/source tuple and capability boundary in
+PostgreSQL as well. Physical connections stay at baseline capability 1; new API
+transactions set exact schema 2 locally and return to baseline afterward. Old
+binaries cannot see format-2 rows or delete them through a source cascade.
+Do not set schema-2 capability persistently to bypass an old binary's guard.

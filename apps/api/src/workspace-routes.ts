@@ -12,6 +12,7 @@ import {
   assetVersion,
   assetUse,
   auditEvent,
+  vard,
   workspace as workspaceTable,
 } from "./db/app-schema.js";
 import { apikey, member, user } from "./db/auth-schema.js";
@@ -564,6 +565,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
               eq(apikey.referenceId, workspaceId),
             ),
           );
+        await transaction.delete(vard).where(eq(vard.workspaceId, workspaceId));
         await transaction.delete(assetUse).where(eq(assetUse.workspaceId, workspaceId));
         await transaction
           .delete(workspaceTable)

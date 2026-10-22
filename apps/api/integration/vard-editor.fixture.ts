@@ -13,7 +13,7 @@ type ReadyFile = { assetId: string; versionId: string; key: string; outputPath: 
   checksum: string; mimeType: string; size: number };
 type Definition = { id: string; name: string; isPublic: boolean; revision: string;
   folderRules: { sourcePrefix: string; outputPrefix: string }[];
-  items: (EditorItem & { pinnedVersionId: string | null; key: string })[] };
+  items: (EditorItem & { pinnedVersionId: string | null; key: string; downloadUrl: string | null })[] };
 
 // Runs in private-delivery's disposable PostgreSQL with its production RLS role.
 export async function checkVardEditor(t: TestContext, fixture: {
@@ -316,10 +316,40 @@ export async function checkVardEditor(t: TestContext, fixture: {
     conflict(stale, definition.revision);
     assert.deepEqual(await editor(id), definition);
     assert.equal((await snapshot(id)).audit.filter(row => row.action === "vard.items_updated").length, 1);
-    const [freshGet, update] = await queued(() => get(id), () => patch(id, definition.revision, { isPublic: true }));
-    assert.deepEqual(ok(freshGet), definition);
-    assert.equal(ok(update).isPublic, true);
-    assert.notEqual(update.json().revision, definition.revision);
+  });
+
+  await t.test("editor GET keeps its complete repeatable-read snapshot while later configuration and source changes commit", async () => {
+    const id = await makeVard(), file = await makeAsset("snapshot/a.svg");
+    const definition = ok(await put(id, (await editor(id)).revision, [add(file)])) as Definition;
+    const nextVersion = randomUUID();
+    await admin.query("INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,created_by,updated_by) SELECT $1,workspace_id,asset_id,2,'ready',$2,filename,mime_type,size,checksum,created_by,updated_by FROM asset_version WHERE id=$3", [nextVersion, `${prefix}${nextVersion}`, file.versionId]);
+    objects.set(`${prefix}${nextVersion}`, bytes); objectKeys.push(`${prefix}${nextVersion}`);
+    const blocker = await admin.connect();
+    let pending: Promise<Awaited<ReturnType<typeof app.inject>>> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("LOCK TABLE vard_item IN ACCESS EXCLUSIVE MODE");
+      pending = Promise.resolve(get(id)); void pending.catch(() => {});
+      const deadline = Date.now() + 5_000;
+      let waiting = false;
+      while (Date.now() < deadline) {
+        waiting = (await admin.query("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='vard_item'::regclass AND NOT granted) AS waiting")).rows[0].waiting;
+        if (waiting) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(waiting, true, "GET must reach its item SELECT before the concurrent commit");
+      await admin.query("UPDATE vard SET name='Committed after GET snapshot',updated_at=now() WHERE id=$1", [id]);
+      await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [nextVersion, file.assetId]);
+      await blocker.query("COMMIT");
+      assert.deepEqual(ok(await pending), definition, "response definition and revision both come from the earlier snapshot");
+      const next = await editor(id);
+      assert.equal(next.name, "Committed after GET snapshot");
+      assert.notEqual(next.revision, definition.revision);
+      assert.equal(next.items[0]!.versionId, nextVersion);
+    } finally {
+      await blocker.query("ROLLBACK"); blocker.release();
+      if (pending) await pending;
+    }
   });
 
   await t.test("folder-rule editors and import observe the same serialized membership in both orders", async () => {

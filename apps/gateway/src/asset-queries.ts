@@ -18,10 +18,10 @@ export function assetBrowserQueryOptions(workspaceId: string, prefix = "", searc
 
 // Source uploads can finish after the user leaves source/history observers.
 // Poll only while a linked source is processing; keep its previous ready preview.
-export function assetUseQueryOptions(workspaceId: string, prefix = "", search = "", sourceAssetId?: string) {
+export function assetUseQueryOptions(workspaceId: string, prefix = "", search = "", sourceAssetId?: string, recursive = false) {
   return infiniteQueryOptions({
-    queryKey: ["asset-uses", workspaceId, prefix, search, sourceAssetId],
-    queryFn: ({ pageParam, signal }) => listAssetUses(workspaceId, prefix, search, pageParam, sourceAssetId, signal),
+    queryKey: ["asset-uses", workspaceId, prefix, search, sourceAssetId, ...(recursive ? ["recursive"] : [])],
+    queryFn: ({ pageParam, signal }) => listAssetUses(workspaceId, prefix, search, pageParam, sourceAssetId, signal, recursive),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     staleTime: 30_000,
@@ -69,6 +69,8 @@ export function assetVersionHistoryQueryOptions(
             { queryKey: ["assets", workspaceId] },
             { throwOnError: true },
           ),
+          queryClient.invalidateQueries({ queryKey: ["vard-editor", workspaceId] }, { throwOnError: true }),
+          queryClient.invalidateQueries({ queryKey: ["vard-preview", workspaceId] }, { throwOnError: true }),
         ]);
         // Keep repeated history polls bounded, but allow a failed refresh to retry.
         refreshedCurrentVersionId = history.currentVersionId;

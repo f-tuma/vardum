@@ -1,22 +1,34 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
-import { asset, assetVersion, vard, vardItem, workspace, type VardTransformation } from "./db/app-schema.js";
-import { inWorkspace, type Transaction } from "./db/tenant.js";
+import { asset, assetUse, assetVersion, vard, vardItem, workspace, type VardTransformation } from "./db/app-schema.js";
+import { inWorkspaceSnapshot, type Transaction } from "./db/tenant.js";
+import { useCompatibilityIssue } from "./asset-use-model.js";
+import { useIssue, useRows } from "./asset-use-query.js";
 import { canonicalizeTransformation, transformedVersionUrl } from "./transformation.js";
 import { folderItemId, folderOutputPath, MAX_VARD_OUTPUTS, validateResolvedOutputs } from "./vard-folder-rules.js";
+
+export type VardPayloadOptions = {
+  anonymous?: boolean;
+  requirePublic?: boolean;
+  resolveFolders?: boolean;
+  includePinnedVersionId?: boolean;
+  /** Internal inventory identity; never part of the consumer manifest. */
+  includeBindingIdentity?: true;
+  /** Authenticated editor details; never part of the consumer manifest. */
+  includeEditorDiagnostics?: true;
+  selectedTargets?: ReadonlyArray<{ assetId: string; outputPath: string }>;
+};
 
 export async function buildVardPayload(
   workspaceId: string,
   vardId: string,
   {
     anonymous = false,
+    requirePublic = false,
     resolveFolders = true,
-  }: {
-    anonymous?: boolean;
-    resolveFolders?: boolean;
-  } = {},
+  }: Pick<VardPayloadOptions, "anonymous" | "requirePublic" | "resolveFolders"> = {},
 ) {
-  return inWorkspace(workspaceId, (transaction) =>
-    buildVardPayloadInTransaction(transaction, workspaceId, vardId, { anonymous, resolveFolders }),
+  return inWorkspaceSnapshot(workspaceId, (transaction) =>
+    buildVardPayloadInTransaction(transaction, workspaceId, vardId, { anonymous, requirePublic, resolveFolders }),
   );
 }
 
@@ -24,12 +36,9 @@ export async function buildVardPayloadInTransaction(
   transaction: Transaction,
   workspaceId: string,
   vardId: string,
-  { anonymous = false, resolveFolders = true, includePinnedVersionId = false, selectedTargets }: {
-    anonymous?: boolean;
-    resolveFolders?: boolean;
-    includePinnedVersionId?: boolean;
-    selectedTargets?: ReadonlyArray<{ assetId: string; outputPath: string }>;
-  } = {},
+  { anonymous = false, requirePublic = false, resolveFolders = true,
+    includePinnedVersionId = false, includeBindingIdentity, includeEditorDiagnostics,
+    selectedTargets }: VardPayloadOptions = {},
 ) {
   const [record] = await transaction
     .select({
@@ -43,12 +52,13 @@ export async function buildVardPayloadInTransaction(
     .from(vard)
     .innerJoin(workspace, eq(workspace.id, vard.workspaceId))
     .where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)));
-  if (!record) return null;
+  if (!record || (requirePublic && !record.isPublic)) return null;
 
   const items = await transaction
     .select({
       id: vardItem.id,
       assetId: vardItem.assetId,
+      assetUseId: vardItem.assetUseId,
       isPublic: asset.isPublic,
       key: asset.key,
       outputPath: vardItem.outputPath,
@@ -58,8 +68,8 @@ export async function buildVardPayloadInTransaction(
       currentVersionId: asset.currentVersionId,
     })
     .from(vardItem)
-    .innerJoin(asset, eq(asset.id, vardItem.assetId))
-    .where(eq(vardItem.vardId, vardId))
+    .innerJoin(asset, and(eq(asset.workspaceId, workspaceId), eq(asset.id, vardItem.assetId)))
+    .where(and(eq(vardItem.workspaceId, workspaceId), eq(vardItem.vardId, vardId)))
     .orderBy(asc(vardItem.outputPath));
   if (anonymous && items.some((item) => !item.isPublic)) return null;
   if (resolveFolders && record.folderRules.length) {
@@ -98,6 +108,7 @@ export async function buildVardPayloadInTransaction(
         items.push({
           ...member,
           id: folderItemId(member.assetId, outputPath),
+          assetUseId: null,
           outputPath,
           transformation: null,
           writable: false,
@@ -127,6 +138,15 @@ export async function buildVardPayloadInTransaction(
         selections.has(JSON.stringify([item.assetId, item.outputPath])),
       )
     : items;
+  // Start from the literal rows, then look up only their selected use IDs.
+  // Missing joins retain their output and resolve unavailable, never Original.
+  const useIds = [...new Set(selectedItems.flatMap((item) => item.assetUseId ? [item.assetUseId] : []))];
+  const uses = useIds.length
+    ? await useRows(transaction, workspaceId).where(and(
+        eq(assetUse.workspaceId, workspaceId), inArray(assetUse.id, useIds),
+      ))
+    : [];
+  const useById = new Map(uses.map((use) => [use.id, use]));
   const versionIds = [
     ...new Set(
       selectedItems
@@ -143,6 +163,8 @@ export async function buildVardPayloadInTransaction(
           checksum: assetVersion.checksum,
           mimeType: assetVersion.mimeType,
           size: assetVersion.size,
+          width: assetVersion.width,
+          height: assetVersion.height,
         })
         .from(assetVersion)
         .where(
@@ -165,7 +187,22 @@ export async function buildVardPayloadInTransaction(
     items: selectedItems.map((item) => {
       const versionId = item.pinnedVersionId ?? item.currentVersionId;
       const version = versionId ? byId.get(versionId) : undefined;
-      const transformation = item.transformation ?? null;
+      const use = item.assetUseId ? useById.get(item.assetUseId) : undefined;
+      const linkedUse = use?.sourceAssetId === item.assetId ? use : undefined;
+      const transformation = item.assetUseId
+        ? linkedUse?.transformation ?? null
+        : item.transformation ?? null;
+      const ready = version?.status === "ready" && version.assetId === item.assetId;
+      const availabilityError = item.assetUseId
+        ? !linkedUse
+          ? "The linked library use is unavailable"
+          : useIssue(linkedUse) ?? useCompatibilityIssue(
+              item.outputPath, linkedUse.outputMimeType,
+              ready ? version.mimeType : null, transformation,
+              { width: version?.width ?? null, height: version?.height ?? null },
+            )
+        : ready ? null : "The source has no ready selected version";
+      const available = ready && (!item.assetUseId || !availabilityError);
       const encodedKey = item.key
         .split("/")
         .map(encodeURIComponent)
@@ -175,21 +212,32 @@ export async function buildVardPayloadInTransaction(
         assetId: item.assetId,
         key: item.key,
         outputPath: item.outputPath,
-        writable: item.writable,
-        pinned: Boolean(item.pinnedVersionId),
-        ...(includePinnedVersionId ? { pinnedVersionId: item.pinnedVersionId } : {}),
+        writable: item.assetUseId ? false : item.writable,
+        pinned: item.assetUseId ? false : Boolean(item.pinnedVersionId),
+        ...(includePinnedVersionId ? { pinnedVersionId: item.assetUseId ? null : item.pinnedVersionId } : {}),
+        ...(includeBindingIdentity ? { bindingIdentity: item.assetUseId
+          ? { kind: "use" as const, assetUseId: item.assetUseId }
+          : { kind: "source" as const } } : {}),
+        ...(includeEditorDiagnostics && !anonymous ? {
+          availabilityError,
+          linkedUse: linkedUse ? {
+            id: linkedUse.id, key: linkedUse.key, displayName: linkedUse.displayName,
+            revision: linkedUse.revision, sourceDisplayName: linkedUse.sourceDisplayName,
+            sourceProcessing: linkedUse.sourceProcessing,
+          } : null,
+        } : {}),
         transformation,
-        versionId: version?.status === "ready" ? version.id : null,
-        sourceChecksum: version?.status === "ready" ? version.checksum : null,
+        versionId: available ? version.id : null,
+        sourceChecksum: available ? version.checksum : null,
         sourceMimeType: version?.mimeType ?? null,
-        mimeType: outputMimeType(version?.mimeType ?? null, transformation),
-        size: transformation ? null : (version?.size ?? null),
+        mimeType: item.assetUseId ? linkedUse?.outputMimeType ?? null : outputMimeType(version?.mimeType ?? null, transformation),
+        size: item.assetUseId && !available ? null : transformation ? null : (version?.size ?? null),
         fingerprint:
-          version?.status === "ready"
+          available
             ? `${version.id}:${canonicalizeTransformation(transformation ?? {})}`
             : null,
         downloadUrl:
-          version?.status === "ready"
+          available
             ? transformation
               ? transformedVersionUrl(
                   record.workspaceSlug,

@@ -7,6 +7,7 @@ import { checkLargePresignedPost } from "./smoke-large-presigned-post.mjs";
 import { checkBackupRestore } from "./smoke-backup-restore.mjs";
 import { checkSvgCompatibilityLifecycle } from "./smoke-svg-compatibility.mjs";
 import { checkUploadIntegrity } from "./smoke-upload-integrity.mjs";
+import { checkVardUsePublicClients } from "./smoke-vard-use-clients.mjs";
 
 const base = process.env.SMOKE_URL;
 let cookie = "";
@@ -185,4 +186,5 @@ await checkResourceBudgets({ base, cookie, workspaceId: workspace.id, assetId: a
 await checkLargePresignedPost({ request, workspaceId: workspace.id, workspaceSlug: workspace.slug });
 await checkSvgCompatibilityLifecycle({ base, cookie, workspaceId: workspace.id, workspaceSlug: workspace.slug });
 await checkBackupRestore({ base, cookie, workspaceId: workspace.id, otherWorkspaceId: secondary.id, assetId: asset.id, versionId: version.id });
+await checkVardUsePublicClients({ base, cookie, workspaceId: workspace.id, otherWorkspaceId: secondary.id });
 console.log("Production smoke test passed");

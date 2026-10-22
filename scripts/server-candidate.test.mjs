@@ -190,8 +190,11 @@ test("candidate uses exact saved images, keeps independent clients and never bui
   const f = await fixture();
   try {
     const manifest = await validateCandidate(f.directory, { execute: f.execute, expectedCommit: commit });
-    assert.equal(manifest.migrations.length, 20);
-    assert.equal(manifest.migrations.at(-1).file, "migrations/0019_upload_object_integrity.sql");
+    assert.equal(manifest.migrations.length, 21);
+    const lastMigration = manifest.migrations.at(-1);
+    assert.equal(lastMigration.file, "migrations/0020_vard_definition_bindings.sql");
+    assert.equal(lastMigration.sha256, hash(await readFile(new URL("../apps/api/drizzle/0020_vard_definition_bindings.sql", import.meta.url))));
+    assert.equal(lastMigration.sha256, hash(await readFile(join(f.directory, lastMigration.file))));
     const compose = await readFile(join(f.directory, "compose.production.yml"), "utf8");
     assert.doesNotMatch(compose, /build:|vardum-api:smoke/);
     assert.equal((compose.match(/pull_policy: never/g) ?? []).length, 7);
@@ -1444,7 +1447,7 @@ test("new source client versions remain distinct from the actual public compatib
   } finally { await f.close(); }
 });
 
-for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe time", "fractional time", "string time", "index order", "tag order", "current tag order", "missing 0015", "missing 0016", "missing 0017", "missing 0018", "missing 0019", "unreviewed 0020", "duplicate JSON time"]) {
+for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe time", "fractional time", "string time", "index order", "tag order", "current tag order", "missing 0015", "missing 0016", "missing 0017", "missing 0018", "missing 0019", "missing 0020", "unknown current tag", "duplicate current tag", "unreviewed 0021", "duplicate JSON time"]) {
   test(`migration journal ${problem} fails before Docker mutation despite recomputed hashes`, async () => {
     const f = await fixture();
     try {
@@ -1458,13 +1461,16 @@ for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe
       else if (problem === "string time") journal.entries[0].when = String(journal.entries[0].when);
       else if (problem === "index order") journal.entries[1].idx = 0;
       else if (problem === "tag order") [journal.entries[0].tag, journal.entries[1].tag] = [journal.entries[1].tag, journal.entries[0].tag];
-      else if (problem === "current tag order") [journal.entries[17].tag, journal.entries[18].tag] = [journal.entries[18].tag, journal.entries[17].tag];
+      else if (problem === "current tag order") [journal.entries[19].tag, journal.entries[20].tag] = [journal.entries[20].tag, journal.entries[19].tag];
       else if (problem === "missing 0015") journal.entries.splice(15, 1);
       else if (problem === "missing 0016") journal.entries.splice(16, 1);
       else if (problem === "missing 0017") journal.entries.splice(17, 1);
       else if (problem === "missing 0018") journal.entries.splice(18, 1);
-      else if (problem === "missing 0019") journal.entries.pop();
-      else if (problem === "unreviewed 0020") journal.entries.push({ ...journal.entries.at(-1), idx: 20, tag: "0020_unreviewed", when: journal.entries.at(-1).when + 1 });
+      else if (problem === "missing 0019") journal.entries.splice(19, 1);
+      else if (problem === "missing 0020") journal.entries.pop();
+      else if (problem === "unknown current tag") journal.entries[20].tag = "0020_unreviewed";
+      else if (problem === "duplicate current tag") journal.entries[20].tag = journal.entries[19].tag;
+      else if (problem === "unreviewed 0021") journal.entries.push({ ...journal.entries.at(-1), idx: 21, tag: "0021_unreviewed", when: journal.entries.at(-1).when + 1 });
       let bytes = JSON.stringify(journal);
       if (problem === "duplicate JSON time") bytes = bytes.replace(/"when":(\d+)/, '"when":$1,"when":$1');
       await writeFile(path, bytes);
@@ -1475,7 +1481,7 @@ for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe
   });
 }
 
-for (const migrationTag of ["0017_asset_uses", "0018_asset_archive", "0019_upload_object_integrity"]) for (const problem of ["missing SQL", "SQL byte drift", "declared hash drift", "recomputed inventory hash"]) {
+for (const migrationTag of ["0017_asset_uses", "0018_asset_archive", "0019_upload_object_integrity", "0020_vard_definition_bindings"]) for (const problem of ["missing SQL", "SQL byte drift", "declared hash drift", "recomputed inventory hash"]) {
   test(`${migrationTag} migration ${problem} fails before Docker mutation`, async () => {
     const f = await fixture();
     try {

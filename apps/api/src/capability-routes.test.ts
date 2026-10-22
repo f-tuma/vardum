@@ -30,7 +30,7 @@ test("public capabilities expose exactly the supported actions with and without 
       assert.deepEqual(JSON.parse(stdout), {
         status: 200,
         cache: "no-store",
-        body: { passwordRecovery: enabled, emailChange: enabled, invitations: enabled, folderUploadResume: 1, folderVardImport: 1, vardEditRevision: 1 },
+        body: { passwordRecovery: enabled, emailChange: enabled, invitations: enabled, folderUploadResume: 1, folderVardImport: 1, vardEditRevision: 1, vardDefinitionSchema: 2 },
       });
     });
   }
