@@ -141,6 +141,13 @@
       "when": 1792668000000,
       "tag": "0019_upload_object_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792671600000,
+      "tag": "0020_vard_definition_bindings",
+      "breakpoints": true
     }
   ]
 }

@@ -32,10 +32,32 @@ JPEG requires a different use. An unrecognized extension is rejected.
 
 Settings and removal require the revision that was read. A concurrent change
 returns `409`; reload the settings before trying again. Removing a use keeps its
-source, all source versions and every other use. Empty containing folders can be
-removed separately. Source deletion returns `409 source_in_use` while uses remain;
+source, all source versions and every other use. A use referenced by a Vard
+cannot be removed: the API returns `409 asset_use_in_use` after checking its
+revision. Remove or rebind those Vard outputs first. Empty containing folders can
+be removed separately. Source deletion returns `409 source_in_use` while uses remain;
 remove or replace those uses first. Whole-workspace deletion explicitly removes
-its uses before deleting the workspace and its sources.
+its Vards, then its uses, before deleting the workspace and its sources.
+
+## Link a use to a Vard
+
+In a Vard, choose **Add asset**, then **Linked library use**. Select a ready use,
+choose the project output path and save. **Live library use** outputs inherit the
+use's settings; **Use settings** opens the library settings rather than storing
+another recipe in the Vard. A source mapping still has independent output settings.
+
+Changing a use's dimensions, safe area or background updates every Vard output
+linked to that use when its live manifest is resolved. Other uses of the same
+source keep their own settings. The Vard's project path stays fixed. A source or
+format change incompatible with that path makes the linked output unavailable;
+it does not substitute the original bytes. Existing unavailable links can still
+be inspected, rebound or removed.
+
+Linked outputs have no separate pin, transformation or writable setting. They
+are read-only for push and Vard import, including an **Original** use and a target
+whose checksum already matches. A normal pull captures the current resolution;
+`pull --frozen` retains its captured source version, complete transformation,
+canonical immutable URL and checksums. Editing the use never changes that lock.
 
 ## Delivery and privacy
 
@@ -108,7 +130,8 @@ Workspace routes:
 
 - `GET /api/workspaces/:workspaceId/asset-uses`: authenticated, bounded keyset
   traversal (`prefix`, literal `search`, optional `sourceAssetId`, `limit` up to
-  100, `cursor` from `nextCursor`). It returns use identities, their direct source,
+  100, `cursor` from `nextCursor`). `recursive=true` includes descendants for
+  the Vard picker; omission or `recursive=false` keeps direct-child listing. It returns use identities, their direct source,
   inherited visibility/current version, settings, revision, availability and
   canonical preview URLs and source-processing state. Active library views refresh
   while a referenced source is processing, retaining its previous ready preview
@@ -134,16 +157,18 @@ an alias target even for old clients; an old multi-file client may already have
 completed unrelated files before it encounters a collision. This is not a new
 whole-batch transactional upload guarantee.
 
-Existing Vard manual mappings can already reuse a source with independent output
-settings. They are not live bindings to library-use settings. **Originals-only
-folder rules remain originals-only**: adding a use does not silently add a Vard
-output. Explicit live Vard bindings and opt-in folder inclusion are follow-up work
-with definition/version guards. Existing schema-2 frozen snapshots keep the same
-canonical source URLs, captured transforms, version IDs and checksums.
+Vard manual outputs explicitly choose a source mapping or a live library-use
+binding. **Originals-only folder rules remain originals-only**: adding a use does
+not silently add a Vard output. Folder inclusion of uses is separate follow-up
+work. Existing schema-2 frozen snapshots keep the same canonical source URLs,
+captured transforms, version IDs and checksums. The matching gateway/API use
+[editor definition schema 2](vard-editor-concurrency.md#live-library-use-definitions)
+for linked configuration; immutable manifest and lock schemas do not change.
 
 The known-usage registry continues to describe explicitly registered consumers of
-sources. The linked-use list proves internal source references, not a complete
-inventory of external clients or their cache state.
+sources and records live Vard bindings in its configuration identity. The
+linked-use list proves internal source references, not a complete inventory of
+external clients or their cache state.
 
 ## Migration and operations
 
@@ -161,3 +186,11 @@ provisioning grants access to the new table. Runtime probes verify its RLS polic
 and the backup/restore acceptance includes a real linked use and its delivered
 bytes. A rollback must not drop this table while references are in use; roll the
 application forward or remove uses deliberately before schema rollback.
+
+Migration `0020_vard_definition_bindings` adds Vard/item format markers and
+workspace/use/source foreign keys. Deploy the matching migrator, API and gateway
+before creating live bindings. Old definition writers cannot edit a format-2
+Vard. After removing its last binding, use **Return to source-only editing** to
+explicitly restore source-only editing; removal alone keeps format 2. Keep the
+migration during image rollback and never grant old binaries persistent schema-2
+capability. See [upgrade and rollback review](server-release.md#upgrade-and-rollback-review).

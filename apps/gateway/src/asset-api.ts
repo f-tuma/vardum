@@ -8,6 +8,10 @@ import type {
   VardDefinition,
   VardEditorDefinition,
   VardEditorItemInput,
+  VardEditorDefinitionV2,
+  VardEditorItemInputV2,
+  VardSourceBinding,
+  VardUseBinding,
   VardFolderRule,
 } from "@vardum/shared";
 
@@ -37,6 +41,7 @@ export type DeploymentCapabilities = {
   emailChange: boolean;
   invitations: boolean;
   vardEditRevision?: number;
+  vardDefinitionSchema?: number;
 };
 
 export function getDeploymentCapabilities() {
@@ -309,8 +314,8 @@ export class ApiRequestError extends Error {
 }
 
 export class VardEditorUnavailableError extends Error {
-  constructor() {
-    super("This server did not supply a valid Vard revision. Editing is unavailable until the server is updated.");
+  constructor(message = "This server did not supply a valid Vard revision. Editing is unavailable until the server is updated.") {
+    super(message);
     this.name = "VardEditorUnavailableError";
   }
 }
@@ -380,6 +385,98 @@ export function deleteVardEditor(workspaceId: string, vardId: string, expectedRe
   return request<void>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?${query}`, {
     method: "DELETE",
   });
+}
+
+function object(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+const nullableString = (value: unknown) => value === null || typeof value === "string";
+const nonemptyString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+function onlyKeys(value: Record<string, unknown>, keys: string[]) {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+function recipe(value: unknown): boolean {
+  if (value === null) return true;
+  if (!object(value)) return false;
+  return Object.entries(value).every(([key, field]) => {
+    if (field === undefined) return ["w", "h", "q", "pad", "fit", "format", "render", "bg", "layer", "darkLayer", "darkColor"].includes(key);
+    if (["w", "h", "q", "pad"].includes(key)) return typeof field === "number" && Number.isFinite(field);
+    if (key === "fit") return ["cover", "contain", "fill", "inside", "outside"].includes(String(field));
+    if (key === "format") return ["avif", "jpeg", "png", "webp", "svg"].includes(String(field));
+    if (key === "render") return field === "v2";
+    return ["bg", "layer", "darkLayer", "darkColor"].includes(key) && typeof field === "string";
+  });
+}
+function literalBinding(value: unknown): value is VardSourceBinding | VardUseBinding {
+  if (!object(value)) return false;
+  if (value.kind === "use") return onlyKeys(value, ["kind", "assetUseId"]) && nonemptyString(value.assetUseId);
+  return value.kind === "source" && onlyKeys(value, ["kind", "assetId", "versionId", "transformation", "writable"])
+    && nonemptyString(value.assetId) && nullableString(value.versionId) && recipe(value.transformation) && typeof value.writable === "boolean";
+}
+function requireEditorV2(capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined, expectedRevision?: string) {
+  if (capabilities?.vardDefinitionSchema !== 2 || (expectedRevision !== undefined && !/^v2:[a-f0-9]{64}$/.test(expectedRevision))) {
+    throw new VardEditorUnavailableError("This server does not support linked Vard editing. Update the server and reload the page to enable editing.");
+  }
+}
+function invalidVardEditorV2(): never {
+  throw new VardEditorUnavailableError("This server did not return a complete schema 2 Vard definition. Editing is unavailable until the server is updated.");
+}
+function checkedVardEditorV2(value: unknown): VardEditorDefinitionV2 {
+  if (!object(value) || value.definitionSchema !== 2 || ![1, 2].includes(Number(value.storedDefinitionSchema))
+    || typeof value.storedDefinitionSchema !== "number" || typeof value.revision !== "string" || !/^v2:[a-f0-9]{64}$/.test(value.revision)
+    || ![value.id, value.workspaceId, value.name, value.updatedAt].every(nonemptyString) || typeof value.isPublic !== "boolean"
+    || !Array.isArray(value.folderRules) || !value.folderRules.every((rule) => object(rule) && onlyKeys(rule, ["sourcePrefix", "outputPrefix"])
+      && typeof rule.sourcePrefix === "string" && typeof rule.outputPrefix === "string") || !Array.isArray(value.items)) return invalidVardEditorV2();
+  const ids = new Set<string>();
+  for (const item of value.items) {
+    if (!object(item) || !nonemptyString(item.id) || ids.has(item.id) || !nonemptyString(item.outputPath) || !literalBinding(item.binding)
+      || !object(item.resolved)) return invalidVardEditorV2();
+    ids.add(item.id);
+    const resolved = item.resolved;
+    if (![resolved.assetId, resolved.key].every(nonemptyString) || ![resolved.versionId, resolved.sourceChecksum, resolved.mimeType, resolved.fingerprint, resolved.downloadUrl, resolved.availabilityError].every(nullableString)
+      || (resolved.sourceMimeType !== undefined && !nullableString(resolved.sourceMimeType)) || !recipe(resolved.transformation)
+      || typeof resolved.pinned !== "boolean" || typeof resolved.writable !== "boolean"
+      || !(resolved.size === null || (typeof resolved.size === "number" && Number.isFinite(resolved.size) && resolved.size >= 0))) return invalidVardEditorV2();
+    if (item.binding.kind === "source") {
+      if (item.linkedUse !== null || item.binding.assetId !== resolved.assetId) return invalidVardEditorV2();
+    } else {
+      if (value.storedDefinitionSchema !== 2 || resolved.pinned || resolved.writable) return invalidVardEditorV2();
+      if (resolved.availabilityError !== null && [resolved.versionId, resolved.sourceChecksum, resolved.fingerprint, resolved.downloadUrl].some((field) => field !== null)) return invalidVardEditorV2();
+      if (item.linkedUse !== null && (!object(item.linkedUse) || item.linkedUse.id !== item.binding.assetUseId
+        || ![item.linkedUse.key, item.linkedUse.displayName, item.linkedUse.sourceDisplayName].every(nonemptyString)
+        || !Number.isInteger(item.linkedUse.revision) || Number(item.linkedUse.revision) < 1 || typeof item.linkedUse.sourceProcessing !== "boolean")) return invalidVardEditorV2();
+    }
+  }
+  return value as unknown as VardEditorDefinitionV2;
+}
+
+export async function getVardEditorV2(workspaceId: string, vardId: string, capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  requireEditorV2(capabilities);
+  return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?definitionSchema=2`));
+}
+export async function updateVardEditorV2(workspaceId: string, vardId: string, expectedRevision: string,
+  input: { name?: string; isPublic?: boolean; folderRules?: VardFolderRule[]; returnToSourceOnly?: true },
+  capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  requireEditorV2(capabilities, expectedRevision);
+  return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor`, {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, definitionSchema: 2, expectedRevision }),
+  }));
+}
+export async function replaceVardEditorItemsV2(workspaceId: string, vardId: string, expectedRevision: string,
+  items: VardEditorItemInputV2[], capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  requireEditorV2(capabilities, expectedRevision);
+  if (!items.every((item) => (item.id === null || nonemptyString(item.id)) && nonemptyString(item.outputPath) && literalBinding(item.binding))) {
+    throw new VardEditorUnavailableError("The Vard draft contains an invalid literal binding. Reload before editing.");
+  }
+  return checkedVardEditorV2(await request<unknown>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor/items`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ definitionSchema: 2, expectedRevision, items }),
+  }));
+}
+export function deleteVardEditorV2(workspaceId: string, vardId: string, expectedRevision: string,
+  capabilities: Pick<DeploymentCapabilities, "vardDefinitionSchema"> | undefined) {
+  requireEditorV2(capabilities, expectedRevision);
+  const query = new URLSearchParams({ definitionSchema: "2", expectedRevision });
+  return request<void>(`/api/workspaces/${workspaceId}/vards/${vardId}/editor?${query}`, { method: "DELETE" });
 }
 
 export async function listSyncAssets(workspaceId: string) {
@@ -625,10 +722,11 @@ export type AssetUseSummary = {
 
 export type AssetUsePage = { uses: AssetUseSummary[]; nextCursor: string | null };
 export function listAssetUses(workspaceId: string, prefix: string, search: string, cursor: string | null,
-  sourceAssetId?: string, signal?: AbortSignal) {
+  sourceAssetId?: string, signal?: AbortSignal, recursive = false) {
   const query = new URLSearchParams({ prefix, search, limit: "50" });
   if (cursor) query.set("cursor", cursor);
   if (sourceAssetId) query.set("sourceAssetId", sourceAssetId);
+  if (recursive) query.set("recursive", "true");
   return request<AssetUsePage>(`/api/workspaces/${workspaceId}/asset-uses?${query}`, { signal });
 }
 

@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import test, { after, type TestContext } from "node:test";
 import { JSDOM } from "jsdom";
 import { act, createElement } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { VardEditorDefinition } from "@vardum/shared";
+import type { VardEditorDefinition, VardEditorDefinitionV2 } from "@vardum/shared";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost:5173/", pretendToBeVisual: true });
 for (const key of ["window", "document", "navigator", "HTMLElement", "HTMLInputElement", "Element", "Node", "Document", "Event", "MouseEvent", "CustomEvent", "FormData", "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"])
   Object.defineProperty(globalThis, key, { configurable: true, value: key === "window" ? dom.window : Reflect.get(dom.window, key) });
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }) });
+// Query timers determine browser/server behavior at module initialization.
+const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { RouterContextProvider, createRootRoute, createRouter, createMemoryHistory } = await import("@tanstack/react-router");
 const { createRoot } = await import("react-dom/client");
 const { VardEditor } = await import("./vards");
@@ -17,8 +18,8 @@ const { SidebarProvider } = await import("./components/ui/sidebar");
 const { toast } = await import("sonner");
 after(() => dom.window.close());
 
-const revision = `v1:${"a".repeat(64)}`;
-const freshRevision = `v1:${"b".repeat(64)}`;
+const revision = `v2:${"a".repeat(64)}`;
+const freshRevision = `v2:${"b".repeat(64)}`;
 const original: VardEditorDefinition = {
   schema: 1, id: "vard", workspaceId: "workspace", name: "Original", isPublic: false, updatedAt: "2026-01-01", revision,
   folderRules: [{ sourcePrefix: "brand/", outputPrefix: "public/" }],
@@ -32,15 +33,43 @@ const original: VardEditorDefinition = {
   ],
 };
 type Call = { url: string; path: string; method: string; body: Record<string, unknown> | null };
+// Retain source-focused fixtures while exercising their explicit v2 wire shape.
+function wireEditor(value: unknown): VardEditorDefinitionV2 {
+  if ((value as VardEditorDefinitionV2).definitionSchema === 2) return value as VardEditorDefinitionV2;
+  const source = value as VardEditorDefinition;
+  return {
+    definitionSchema: 2, storedDefinitionSchema: 1, revision: source.revision,
+    id: source.id, workspaceId: source.workspaceId, name: source.name, isPublic: source.isPublic,
+    updatedAt: source.updatedAt, folderRules: source.folderRules,
+    items: source.items.map((item) => ({ id: item.id, outputPath: item.outputPath,
+      binding: { kind: "source", assetId: item.assetId, versionId: item.pinnedVersionId ?? null, transformation: item.transformation, writable: item.writable },
+      resolved: { ...item, availabilityError: null }, linkedUse: null })),
+  };
+}
+async function editorResponse(response: Response) {
+  return response.status === 200 ? Response.json(wireEditor(await response.json())) : response;
+}
+function sourceItems(body: Record<string, unknown>): Array<Record<string, unknown>> {
+  assert.equal(body.definitionSchema, 2);
+  return (body.items as Array<Record<string, unknown>>).map((item) => {
+    assert.equal(Object.hasOwn(item, "assetId"), false, "source identity belongs inside the literal binding");
+    const binding = item.binding as Record<string, unknown>;
+    assert.equal(binding.kind, "source");
+    return Object.assign({ id: item.id, outputPath: item.outputPath }, binding);
+  });
+}
 async function render(t: TestContext, options: {
   capability?: number;
   editor?: unknown;
   editorStatus?: number;
   editorRead?: () => Response | Promise<Response>;
   mutation?: (call: Call) => Response | Promise<Response>;
+  rawEditor?: boolean;
+  uses?: Array<Record<string, unknown>>;
+  usesRead?: (url: URL) => Response | Promise<Response>;
 } = {}) {
   const calls: Call[] = [];
-  let current = original;
+  let current: VardEditorDefinition | VardEditorDefinitionV2 = original;
   t.mock.method(toast, "success", () => "toast");
   t.mock.method(toast, "warning", () => "toast");
   t.mock.method(toast, "error", () => "toast");
@@ -49,13 +78,24 @@ async function render(t: TestContext, options: {
     const path = requestUrl.pathname;
     const call = { url: requestUrl.href, path, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null };
     calls.push(call);
+    if (path.endsWith("/transform-url")) return Response.json({ url: "/w/workspace/__v/ready/source.png?format=png&sig=signed" });
     if (call.method !== "GET") {
       assert.ok(path.includes("/editor"), "No UI mutation may use a legacy route");
-      return options.mutation ? options.mutation(call) : Response.json(current);
+      return editorResponse(options.mutation ? await options.mutation(call) : Response.json(current));
     }
-    if (path === "/api/capabilities") return Response.json({ vardEditRevision: options.capability ?? 1 });
-    if (path.endsWith("/editor")) return options.editorRead ? options.editorRead() : Response.json(options.editor ?? current, { status: options.editorStatus ?? 200 });
-    if (path.endsWith("/manifest") || path.endsWith("/vards/vard")) return Response.json(current);
+    if (path === "/api/capabilities") return Response.json({ vardEditRevision: 1, vardDefinitionSchema: options.capability ?? 2 });
+    if (path.endsWith("/editor")) {
+      const response = options.editorRead ? await options.editorRead() : Response.json(options.editor ?? current, { status: options.editorStatus ?? 200 });
+      return options.rawEditor ? response : editorResponse(response);
+    }
+    if (path.endsWith("/manifest") || path.endsWith("/vards/vard")) {
+      const manifest = "definitionSchema" in current ? { ...current, schema: 1, items: current.items.map(({ id, outputPath, resolved }) => ({ ...resolved, id, outputPath })) } : current;
+      return Response.json(manifest);
+    }
+    if (path.endsWith("/asset-uses")) return options.usesRead ? options.usesRead(requestUrl) : Response.json({ uses: options.uses ?? [], nextCursor: null });
+    if (path.endsWith("/assets/real-source")) return Response.json({ id: "real-source", key: "source.png", displayName: "Source", isPublic: false,
+      currentVersionId: "ready", latestVersionId: "ready", status: "ready", error: null, mimeType: "image/png", size: 24,
+      width: 64, height: 64, thumbnailUrl: null, updatedAt: "2026-01-01" });
     if (path.endsWith("/sync/assets")) return Response.json({ assets: [], workspaceSlug: "workspace", nextCursor: null });
     if (path.endsWith("/vards")) return Response.json({ vards: [] });
     if (path.endsWith("/assets")) return Response.json({ assets: [{
@@ -83,7 +123,7 @@ async function render(t: TestContext, options: {
     await act(async () => { root.unmount(); client.clear(); await new Promise((resolve) => setTimeout(resolve, 15)); });
     container.remove();
   });
-  return { client, calls, setServer: (definition: VardEditorDefinition) => { current = definition; } };
+  return { client, calls, setServer: (definition: VardEditorDefinition | VardEditorDefinitionV2) => { current = definition; } };
 }
 async function settle() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); }); }
 function button(text: string, scope: ParentNode = document): HTMLButtonElement {
@@ -126,14 +166,14 @@ test("item saves retain the full original baseline across refetch and remain ope
   const pane = dialog();
   await change(field("Project path", pane), "edited.svg");
   const refetched = { ...original, revision: freshRevision, items: [original.items[0]!] };
-  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard"], refetched); });
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], wireEditor(refetched)); });
   await settle();
   const form = button("Save", pane).closest("form")!;
   await submit(form); await submit(form);
   assert.equal(mutations(calls).length, 1);
   const body = mutations(calls)[0]!.body!;
   assert.equal(body.expectedRevision, revision);
-  const items = body.items as Array<Record<string, unknown>>;
+  const items = sourceItems(body);
   assert.deepEqual(items.map(({ id }) => id), original.items.map(({ id }) => id));
   assert.equal(items[0]?.outputPath, "edited.svg");
   assert.equal(items[0]?.versionId, "missing-pin");
@@ -164,7 +204,7 @@ test("a solid background is saved on the output while literal pins and other map
   assert.equal(hex.checkValidity(), true);
   await submit(button("Save", pane).closest("form")!);
   const body = mutations(calls)[0]!.body!;
-  const items = body.items as Array<Record<string, unknown>>;
+  const items = sourceItems(body);
   assert.equal(body.expectedRevision, revision);
   assert.equal(items[0]!.versionId, "missing-pin");
   assert.equal(items[0]!.id, original.items[0]!.id);
@@ -183,7 +223,7 @@ test("saving an existing SVG background recipe preserves its legacy renderer omi
   await change(field("Width", pane), "180");
   await change(field("Project path", pane), "edited.png");
   await submit(button("Save", pane).closest("form")!);
-  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  const items = sourceItems(mutations(calls)[0]!.body!);
   assert.deepEqual(items[0]!.transformation, { ...transformation, w: 180 });
   assert.equal(Object.hasOwn(items[0]!.transformation as object, "render"), false);
 });
@@ -210,7 +250,7 @@ test("safe area locks contain, blocks incomplete or invalid canvas settings, and
   await change(field("Safe area (%)", pane), "20");
   assert.equal(button("Save", pane).disabled, false);
   await submit(button("Save", pane).closest("form")!);
-  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  const items = sourceItems(mutations(calls)[0]!.body!);
   assert.deepEqual(items[0]!.transformation, { format: "png", pad: 20, fit: "contain", w: 180, h: 180 });
   assert.equal(items[0]!.versionId, "missing-pin");
   assert.deepEqual(items[1]!.transformation, original.items[1]!.transformation);
@@ -246,7 +286,7 @@ test("native-size SVG saves selected and adaptive layers without a raster qualit
   await click(document.getElementById(adaptiveLabel.htmlFor)!);
   await change(field("Dark-mode color", pane), "#e8e4d9");
   await submit(button("Save", pane).closest("form")!);
-  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  const items = sourceItems(mutations(calls)[0]!.body!);
   assert.deepEqual(items[0]!.transformation, { format: "svg", fit: "contain", layer: "neutral-arm", darkLayer: "neutral-arm", darkColor: "#e8e4d9" });
   assert.deepEqual(items[1]!.transformation, original.items[1]!.transformation);
 });
@@ -277,7 +317,7 @@ test("settings and folder rules retain original values and tokens while dirty ac
   await change(name, "Unsaved name");
   await click(button("Folder rules"));
   await change(field("Workspace folder"), "draft/");
-  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard"], { ...original, revision: freshRevision, name: "Remote name", isPublic: true, folderRules: [{ sourcePrefix: "remote/", outputPrefix: "new/" }] }); });
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], wireEditor({ ...original, revision: freshRevision, name: "Remote name", isPublic: true, folderRules: [{ sourcePrefix: "remote/", outputPrefix: "new/" }] })); });
   await settle();
   assert.equal(field("Workspace folder").value, "draft/");
   assert.equal(field("Project folder").value, "public/");
@@ -305,7 +345,7 @@ test("settings and folder rules retain original values and tokens while dirty ac
 test("pristine form hydration pairs displayed values with the refetched token before editing", async (t) => {
   const { client, calls } = await render(t);
   await click(button("Settings"));
-  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard"], { ...original, revision: freshRevision, name: "Hydrated", isPublic: true }); });
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], wireEditor({ ...original, revision: freshRevision, name: "Hydrated", isPublic: true })); });
   await settle();
   assert.equal(field("Name").value, "Hydrated");
   await change(field("Name"), "Changed");
@@ -338,7 +378,7 @@ test("adding an asset submits null for the new mapping and waits for acceptance"
   assert.ok(pick); await click(pick);
   assert.match(dialog().textContent!, /Add file/);
   await submit(button("Add file", dialog()).closest("form")!);
-  const items = mutations(calls)[0]?.body?.items as Array<{ id: string | null; assetId: string }>;
+  const items = sourceItems(mutations(calls)[0]!.body!);
   assert.deepEqual(items.map(({ id }) => id), [...original.items.map(({ id }) => id), null]);
   assert.equal(items[2]?.assetId, "asset-new");
   assert.equal(button("Add file", dialog()).disabled, true);
@@ -352,7 +392,7 @@ test("deletion preserves its captured token and typed conflict has a deliberate 
   await click(button("Settings"));
   await change(field("Name"), "Unsaved");
   await click(button("Delete"));
-  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard"], { ...original, revision: freshRevision, name: "Remote" }); });
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], wireEditor({ ...original, revision: freshRevision, name: "Remote" })); });
   await settle();
   await click(button("Delete Vard"));
   assert.equal(mutations(calls).length, 1);
@@ -402,4 +442,204 @@ test("a failed conflict reload retains drafts and allows a later deliberate read
   await click(button("Reload and discard changes", dialog()));
   assert.equal(document.querySelector('[role="dialog"]'), null);
   assert.equal(mutations(calls).length, 1);
+});
+
+const libraryUse = {
+  kind: "use", id: "library-use", key: "mobile/icon.png", displayName: "Mobile icon", sourceAssetId: "real-source", sourceKey: "source.png",
+  sourceDisplayName: "Source", sourceMimeType: "image/png", sourceWidth: 64, sourceHeight: 64, sourceProcessing: false,
+  currentVersionId: "ready", isPublic: false, transformation: null, outputMimeType: "image/png", revision: 1,
+  updatedAt: "2026-01-01", availabilityError: null, previewUrl: "/w/workspace/__v/ready/source.png",
+};
+function linkedDefinition(): VardEditorDefinitionV2 {
+  return {
+    ...wireEditor(original), storedDefinitionSchema: 2, items: [{
+      id: "11111111-1111-4111-8111-111111111111", outputPath: "fixed-icon.png", binding: { kind: "use", assetUseId: "library-use" },
+      linkedUse: { id: "library-use", key: "mobile/icon.png", displayName: "Mobile icon", sourceDisplayName: "Source", revision: 1, sourceProcessing: false },
+      resolved: { assetId: "real-source", key: "source.png", versionId: "ready", sourceChecksum: "checksum", mimeType: "image/png", sourceMimeType: "image/png",
+        transformation: null, writable: false, pinned: false, size: 24, fingerprint: "current-recipe", downloadUrl: libraryUse.previewUrl, availabilityError: null },
+    }],
+  };
+}
+function linkedFileButton() {
+  const found = document.querySelector<HTMLButtonElement>('button[aria-label="Settings for fixed-icon.png"]');
+  assert.ok(found); return found;
+}
+
+test("linked Original path edits keep a literal use and live refresh never replaces the draft baseline", async (t) => {
+  const definition = linkedDefinition();
+  const { calls, client } = await render(t, { editor: definition });
+  assert.equal([...document.querySelectorAll("button")].some((element) => element.textContent === "Return to source-only editing"), false);
+  await click(linkedFileButton());
+  const pane = dialog();
+  assert.match(pane.textContent!, /Settings are inherited live/);
+  assert.match(pane.textContent!, /read-only for/);
+  assert.doesNotMatch(pane.textContent!, /Pin this version|Writable/);
+  assert.equal(pane.querySelector("select"), null, "a linked Original must not expose recipe controls");
+  assert.equal(pane.querySelector("img")?.getAttribute("src"), libraryUse.previewUrl);
+  await change(field("Project path", pane), "unsaved-path.png");
+  const refreshed = linkedDefinition();
+  refreshed.items[0]!.resolved = { ...refreshed.items[0]!.resolved, transformation: { w: 180, h: 180, pad: 20, fit: "contain", format: "png" },
+    fingerprint: "new-recipe", downloadUrl: "/w/workspace/__v/ready/source.png?w=180&pad=20&sig=new" };
+  refreshed.items[0]!.linkedUse!.revision = 2;
+  await act(async () => { client.setQueryData(["vard-editor", "workspace", "vard", 2], refreshed); });
+  await settle();
+  assert.equal(field("Project path", pane).value, "unsaved-path.png");
+  assert.match(pane.querySelector("img")!.getAttribute("src")!, /w=180&pad=20/);
+  await submit(button("Save", pane).closest("form")!);
+  const body = mutations(calls)[0]!.body!;
+  assert.equal(body.expectedRevision, revision);
+  assert.deepEqual(body.items, [{ id: definition.items[0]!.id, outputPath: "unsaved-path.png", binding: { kind: "use", assetUseId: "library-use" } }]);
+});
+
+test("unavailable linked output remains editable without rendering source-original bytes", async (t) => {
+  const definition = linkedDefinition();
+  definition.items[0]!.resolved = { ...definition.items[0]!.resolved, versionId: null, sourceChecksum: null,
+    fingerprint: null, downloadUrl: null, availabilityError: "Output format no longer matches the project path" };
+  const { calls } = await render(t, { editor: definition });
+  await click(linkedFileButton());
+  assert.match(dialog().textContent!, /Linked output unavailable/);
+  assert.equal(dialog().querySelector("img"), null);
+  await change(field("Project path", dialog()), "repaired.png");
+  await submit(button("Save", dialog()).closest("form")!);
+  assert.deepEqual((mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>)[0]?.binding, { kind: "use", assetUseId: "library-use" });
+});
+
+test("a linked stale409 keeps all write controls locked until deliberate reload", async (t) => {
+  const { calls } = await render(t, { editor: linkedDefinition(), uses: [libraryUse],
+    mutation: () => Response.json({ code: "vard_revision_conflict", error: "Vard changed; reload before saving.", currentRevision: freshRevision }, { status: 409 }) });
+  await click(linkedFileButton());
+  await change(field("Project path", dialog()), "kept-after-conflict.png");
+  await submit(button("Save", dialog()).closest("form")!);
+  assert.equal(button("Use settings", dialog()).disabled, true);
+  assert.equal(button("Change binding", dialog()).disabled, true);
+  await click(button("Use settings", dialog()));
+  await submit(button("Save", dialog()).closest("form")!);
+  assert.equal(mutations(calls).length, 1);
+  assert.equal(field("Project path", dialog()).value, "kept-after-conflict.png");
+  assert.match(dialog().textContent!, /Your unsaved changes are kept/);
+});
+
+test("picker loads nested uses recursively, excludes unavailable choices and allows another instance of the same use", async (t) => {
+  const definition = linkedDefinition();
+  const { calls } = await render(t, { editor: definition, uses: [libraryUse, { ...libraryUse, id: "unavailable-use", displayName: "Unavailable", availabilityError: "Source is incompatible" }] });
+  await click(button("Add asset"));
+  await click(button("Linked library use", dialog()));
+  const unavailable = [...dialog().querySelectorAll("button")].find((element) => element.textContent?.includes("Unavailable"))!;
+  assert.equal(unavailable.disabled, true);
+  const pick = [...dialog().querySelectorAll("button")].find((element) => element.textContent?.includes("Mobile icon"))!;
+  assert.equal(pick.disabled, false, "an already linked use can be added again");
+  await click(pick);
+  assert.equal(field("Project path", dialog()).value, "icon.png");
+  await submit(button("Add linked file", dialog()).closest("form")!);
+  const useCall = calls.find(({ path }) => path.endsWith("/asset-uses"))!;
+  assert.equal(new URL(useCall.url).searchParams.get("recursive"), "true");
+  const items = mutations(calls)[0]!.body!.items as Array<Record<string, unknown>>;
+  assert.deepEqual(items[0], { id: definition.items[0]!.id, outputPath: "fixed-icon.png", binding: { kind: "use", assetUseId: "library-use" } });
+  assert.deepEqual(items[1], { id: null, outputPath: "icon.png", binding: { kind: "use", assetUseId: "library-use" } });
+});
+
+test("rebinding to another use preserves the manual ID and independently edited project path", async (t) => {
+  const definition = linkedDefinition();
+  const other = { ...libraryUse, id: "other-use", key: "tablet/wide.png", displayName: "Tablet icon" };
+  const { calls } = await render(t, { editor: definition, uses: [other] });
+  await click(linkedFileButton());
+  await change(field("Project path", dialog()), "kept-custom-path.png");
+  await click(button("Change binding", dialog()));
+  await click(button("Linked library use", dialog()));
+  const choice = [...dialog().querySelectorAll("button")].find((element) => element.textContent?.includes("Tablet icon"))!;
+  await click(choice);
+  assert.equal(field("Project path", dialog()).value, "kept-custom-path.png");
+  await submit(button("Save", dialog()).closest("form")!);
+  assert.deepEqual(mutations(calls)[0]!.body!.items, [{ id: definition.items[0]!.id, outputPath: "kept-custom-path.png", binding: { kind: "use", assetUseId: "other-use" } }]);
+});
+
+test("linked settings open the existing library dialog through the exact paged reference", async (t) => {
+  const { calls } = await render(t, { editor: linkedDefinition(), uses: [libraryUse] });
+  await click(linkedFileButton());
+  await click(button("Use settings", dialog()));
+  assert.match(document.body.textContent!, /Linked use settings/);
+  assert.match(document.body.textContent!, /These settings apply only to this use/);
+  const reference = calls.find(({ path }) => path.endsWith("/asset-uses"))!;
+  assert.equal(new URL(reference.url).searchParams.get("sourceAssetId"), "real-source");
+  assert.equal(new URL(reference.url).searchParams.get("search"), "mobile/icon.png");
+  assert.equal(mutations(calls).length, 0);
+});
+
+test("settings lookup keeps rebinding disabled until its current use has loaded", async (t) => {
+  let finish!: (response: Response) => void;
+  await render(t, { editor: linkedDefinition(), usesRead: () => new Promise((resolve) => { finish = resolve; }) });
+  await click(linkedFileButton());
+  await click(button("Use settings", dialog()));
+  assert.equal(button("Change binding", dialog()).disabled, true);
+  assert.equal(button("Save", dialog()).disabled, true);
+  await act(async () => { finish(Response.json({ uses: [libraryUse], nextCursor: null })); });
+  await settle();
+  assert.match(document.body.textContent!, /Linked use settings/);
+});
+
+test("library picker follows the cursor before offering a later use", async (t) => {
+  const { calls } = await render(t, { usesRead: (url) => Response.json(url.searchParams.has("cursor")
+    ? { uses: [libraryUse], nextCursor: null }
+    : { uses: [{ ...libraryUse, id: "unavailable", displayName: "Unavailable", availabilityError: "Unavailable" }], nextCursor: "mobile/first" }) });
+  await click(button("Add asset"));
+  await click(button("Linked library use", dialog()));
+  await click(button("Load more library uses", dialog()));
+  const choice = [...dialog().querySelectorAll("button")].find((element) => element.textContent?.includes("Mobile icon"));
+  assert.ok(choice); assert.equal(choice.disabled, false);
+  assert.equal(calls.filter(({ path }) => path.endsWith("/asset-uses")).length, 2);
+  assert.equal(new URL(calls.find(({ url }) => url.includes("cursor="))!.url).searchParams.get("cursor"), "mobile/first");
+});
+
+test("explicit preview refresh updates the independent Files output resolution", async (t) => {
+  let next = linkedDefinition(), reads = 0;
+  await render(t, { editorRead: () => { reads++; return Response.json(next); } });
+  assert.equal(linkedFileButton().querySelector("img")?.getAttribute("src"), libraryUse.previewUrl);
+  next = linkedDefinition();
+  next.items[0]!.resolved = { ...next.items[0]!.resolved, fingerprint: "externally-edited", downloadUrl: "/w/workspace/__v/ready/source.png?pad=20&sig=external" };
+  await click(button("Preview"));
+  await click(button("Refresh"));
+  assert.equal(reads, 2);
+  assert.match(linkedFileButton().querySelector("img")!.getAttribute("src")!, /pad=20&sig=external/);
+});
+
+test("source-only return is explicit schema2 PATCH and is absent while a binding remains", async (t) => {
+  const sourceOnly = { ...wireEditor(original), storedDefinitionSchema: 2 as const };
+  const { calls } = await render(t, { editor: sourceOnly });
+  await click(button("Settings"));
+  await click(button("Return to source-only editing"));
+  assert.deepEqual(mutations(calls)[0]!.body, { returnToSourceOnly: true, definitionSchema: 2, expectedRevision: revision });
+});
+
+test("a schema1 body returned200 after ignored negotiation never enables v2 writes", async (t) => {
+  const { calls } = await render(t, { rawEditor: true });
+  assert.match(document.body.textContent!, /Vard editing unavailable/);
+  assert.equal(button("Add asset").disabled, true);
+  assert.equal(mutations(calls).length, 0);
+});
+
+test("processing refresh stops at ready and preserves the open literal draft", { timeout: 9000 }, async (t) => {
+  let processing = true, reads = 0;
+  const definition = linkedDefinition();
+  const { calls } = await render(t, { editorRead: () => {
+    reads++;
+    const next = linkedDefinition();
+    next.items[0]!.linkedUse!.sourceProcessing = processing;
+    if (!processing) next.items[0]!.resolved = { ...next.items[0]!.resolved, versionId: "processed", fingerprint: "processed", downloadUrl: "/w/workspace/__v/processed/source.png" };
+    return Response.json(next);
+  } });
+  await click(linkedFileButton());
+  await change(field("Project path", dialog()), "unsaved-during-processing.png");
+  processing = false;
+  const deadline = Date.now() + 4500;
+  while (!dialog().querySelector('img[src*="__v/processed/"]')) {
+    assert.ok(Date.now() < deadline, "the bounded processing poll must display the ready output");
+    // oxlint-disable-next-line no-await-in-loop -- advance browser timers until the bounded poll resolves
+    await settle();
+  }
+  assert.equal(field("Project path", dialog()).value, "unsaved-during-processing.png");
+  const finishedReads = reads;
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 3200)); });
+  assert.equal(reads, finishedReads, "editor polling stops when the source finishes processing");
+  await submit(button("Save", dialog()).closest("form")!);
+  assert.deepEqual(mutations(calls)[0]!.body!.items, [{ id: definition.items[0]!.id, outputPath: "unsaved-during-processing.png", binding: { kind: "use", assetUseId: "library-use" } }]);
 });

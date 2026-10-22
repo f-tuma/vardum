@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { VardDefinition, VardEditorDefinition, VardEditorItemInput, VardItem, VardManifest } from "@vardum/shared";
+import type { VardDefinition, VardEditorDefinition, VardEditorItemInput, VardItem, VardManifest, VardEditorDefinitionV2, VardEditorItemInputV2 } from "@vardum/shared";
 import type { VardMetadata } from "./asset-api";
 
 export type DraftItem = Pick<
@@ -78,4 +78,40 @@ export function vardItemInputs(items: DraftItem[], existingIds: Set<string>): Va
     transformation,
     writable,
   }));
+}
+
+export type DraftItemV2 = { id: string; key: string; outputPath: string; binding: VardEditorItemInputV2["binding"] };
+export type VardItemBaselineV2 = { definition: VardEditorDefinitionV2; items: DraftItemV2[] };
+
+export function manualDraftItemsV2(definition: VardEditorDefinitionV2): DraftItemV2[] {
+  return definition.items.map(({ id, outputPath, binding, linkedUse, resolved }) => ({
+    id, outputPath, key: binding.kind === "use" ? linkedUse?.key ?? resolved.key : resolved.key,
+    binding: binding.kind === "use" ? { kind: "use", assetUseId: binding.assetUseId }
+      : { ...binding, transformation: binding.transformation ? { ...binding.transformation } : null },
+  }));
+}
+
+export function captureVardBaselineV2(definition: VardEditorDefinitionV2): VardItemBaselineV2 {
+  const captured: VardEditorDefinitionV2 = {
+    ...definition, folderRules: definition.folderRules.map((rule) => ({ ...rule })),
+    items: definition.items.map((item) => ({
+      ...item,
+      binding: item.binding.kind === "use" ? { ...item.binding } : { ...item.binding, transformation: item.binding.transformation ? { ...item.binding.transformation } : null },
+      resolved: { ...item.resolved, transformation: item.resolved.transformation ? { ...item.resolved.transformation } : null },
+      linkedUse: item.linkedUse ? { ...item.linkedUse } : null,
+    })),
+  };
+  return { definition: captured, items: manualDraftItemsV2(captured) };
+}
+
+export function vardItemInputsV2(items: DraftItemV2[], existingIds: Set<string>): VardEditorItemInputV2[] {
+  return items.map(({ id, outputPath, binding }) => ({
+    id: existingIds.has(id) ? id : null, outputPath,
+    binding: binding.kind === "use" ? { kind: "use", assetUseId: binding.assetUseId }
+      : { ...binding, transformation: binding.transformation ? { ...binding.transformation } : null },
+  }));
+}
+
+export function canReturnToSourceOnly(definition: VardEditorDefinitionV2) {
+  return definition.storedDefinitionSchema === 2 && definition.items.every(({ binding }) => binding.kind === "source");
 }

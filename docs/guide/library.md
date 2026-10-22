@@ -26,6 +26,14 @@ Getting files in, keeping their history, deciding who can read them.
 - Pinned projects keep their version. Projects on latest get the restored one
   at their next pull; stable URLs follow at once.
 
+## Reuse output settings
+
+Create a linked use in the library to give one source its own output dimensions,
+safe area and format. In a Vard, choose **Add asset → Linked library use** to
+follow those settings live. Source mappings keep independent settings. Normal
+pull updates a linked output; frozen pull keeps the captured output unchanged.
+See [library uses](../library-uses.md) for unavailable outputs, removal and compatibility.
+
 ## Visibility
 
 - New assets are private.

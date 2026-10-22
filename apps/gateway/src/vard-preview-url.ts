@@ -1,4 +1,4 @@
-import type { SyncAsset, VardItem } from "@vardum/shared";
+import type { SyncAsset, VardItem, VardEditorItemV2 } from "@vardum/shared";
 import type { DraftItem } from "./vard-editor-state";
 
 export function transformedPreviewUrl(sourceUrl: string | null, signedUrl: string | undefined) {
@@ -25,5 +25,14 @@ export function sourcePreview(
         ? `/w/${encodeURIComponent(workspaceSlug)}/__v/${encodeURIComponent(version)}/${item.key.split("/").map(encodeURIComponent).join("/")}`
         : null,
     mimeType,
+  };
+}
+
+export function linkedPreview(item: VardEditorItemV2 | undefined) {
+  const resolved = item?.binding.kind === "use" ? item.resolved : undefined;
+  return {
+    url: resolved && !resolved.availabilityError && resolved.versionId && resolved.fingerprint
+      ? resolved.downloadUrl : null,
+    mimeType: resolved?.mimeType ?? null,
   };
 }

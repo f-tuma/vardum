@@ -8,6 +8,10 @@ import {
   isVardRevisionConflict,
   replaceVardEditorItems,
   updateVardEditor,
+  getVardEditorV2,
+  updateVardEditorV2,
+  replaceVardEditorItemsV2,
+  deleteVardEditorV2,
 } from "./asset-api.js";
 
 const revision = `v1:${"a".repeat(64)}`;
@@ -34,6 +38,76 @@ test("guarded editor requests carry the opaque baseline, existing/null IDs and d
   assert.deepEqual(calls[2]?.body, { expectedRevision: revision, items: [{ ...item, id: "mapping" }, { ...item, id: null }] });
   assert.equal(new URL(calls[3]!.url, "http://example.test").searchParams.get("expectedRevision"), revision);
   assert.equal(calls[3]?.method, "DELETE");
+});
+
+const capabilitiesV2 = { vardDefinitionSchema: 2 };
+const revisionV2 = `v2:${"a".repeat(64)}`;
+const linked = {
+  id: "linked", outputPath: "public/logo.png", binding: { kind: "use", assetUseId: "library-use" },
+  linkedUse: { id: "library-use", key: "mobile/logo.png", displayName: "Mobile logo", sourceDisplayName: "Logo", revision: 3, sourceProcessing: false },
+  resolved: { assetId: "real-source", key: "logo.svg", versionId: "ready-version", sourceChecksum: "source-sha", sourceMimeType: "image/svg+xml",
+    mimeType: "image/png", size: 24, transformation: { w: 64, h: 64, pad: 12.5, fit: "contain", format: "png" }, writable: false, pinned: false,
+    fingerprint: "fingerprint", downloadUrl: "/w/demo/__v/ready-version/logo.svg?format=png&sig=signed", availabilityError: null },
+};
+const definitionV2 = { definitionSchema: 2, storedDefinitionSchema: 2, revision: revisionV2, id: "vard", workspaceId: "workspace",
+  name: "Linked", isPublic: false, updatedAt: "2026-01-01", folderRules: [], items: [linked] };
+
+test("schema2 requests preserve the literal use, send explicit negotiation and never fall back", async (t) => {
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null });
+    return init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json(definitionV2);
+  });
+  const saved = await getVardEditorV2("workspace", "vard", capabilitiesV2);
+  assert.equal(saved.items[0]?.binding.kind, "use");
+  await updateVardEditorV2("workspace", "vard", revisionV2, { returnToSourceOnly: true }, capabilitiesV2);
+  await replaceVardEditorItemsV2("workspace", "vard", revisionV2, [{ id: "linked", outputPath: "other.png", binding: { kind: "use", assetUseId: "library-use" } }], capabilitiesV2);
+  await deleteVardEditorV2("workspace", "vard", revisionV2, capabilitiesV2);
+  assert.equal(calls[0]?.url, "/api/workspaces/workspace/vards/vard/editor?definitionSchema=2");
+  assert.deepEqual(calls[1]?.body, { returnToSourceOnly: true, definitionSchema: 2, expectedRevision: revisionV2 });
+  assert.deepEqual(calls[2]?.body, { definitionSchema: 2, expectedRevision: revisionV2,
+    items: [{ id: "linked", outputPath: "other.png", binding: { kind: "use", assetUseId: "library-use" } }] });
+  assert.equal(new URL(calls[3]!.url, "http://example.test").searchParams.get("definitionSchema"), "2");
+  assert.equal(calls.length, 4);
+});
+
+test("schema2 rejects missing capability, ignored negotiation, invalid tokens and flattenable bindings", async (t) => {
+  let calls = 0;
+  let response: unknown = definition;
+  t.mock.method(globalThis, "fetch", async () => { calls++; return Response.json(response); });
+  await Promise.all([undefined, {}, { vardDefinitionSchema: 1 }].map((cap) =>
+    assert.rejects(getVardEditorV2("workspace", "vard", cap), VardEditorUnavailableError)));
+  assert.equal(calls, 0);
+  await assert.rejects(getVardEditorV2("workspace", "vard", capabilitiesV2), VardEditorUnavailableError);
+  for (const malformed of [
+    { ...definitionV2, definitionSchema: 1 }, { ...definitionV2, storedDefinitionSchema: "2" }, { ...definitionV2, revision },
+    { ...definitionV2, items: [{ ...linked, binding: { ...linked.binding, transformation: null } }] },
+    { ...definitionV2, items: [{ ...linked, binding: { kind: "use" } }] },
+    { ...definitionV2, items: [{ ...linked, resolved: { ...linked.resolved, writable: true } }] },
+    { ...definitionV2, items: [{ ...linked, resolved: { ...linked.resolved, availabilityError: "Unavailable" } }] },
+    { ...definitionV2, items: [{ ...linked, linkedUse: { ...linked.linkedUse, sourceProcessing: undefined } }] },
+  ]) {
+    response = malformed;
+    // oxlint-disable-next-line no-await-in-loop -- test each response before replacing the shared mock
+    await assert.rejects(getVardEditorV2("workspace", "vard", capabilitiesV2), VardEditorUnavailableError);
+  }
+  const beforeWrites = calls;
+  await assert.rejects(updateVardEditorV2("workspace", "vard", revision, { name: "Wrong protocol" }, capabilitiesV2), VardEditorUnavailableError);
+  await assert.rejects(replaceVardEditorItemsV2("workspace", "vard", revisionV2, [{ id: "linked", outputPath: "logo.png", binding: { kind: "use", assetUseId: "library-use", assetId: "source" } } as never], capabilitiesV2), VardEditorUnavailableError);
+  assert.equal(calls, beforeWrites);
+});
+
+test("schema2 keeps unavailable literal rows repairable and preserves typed409 without retry", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (_url: string, init?: RequestInit) => {
+    calls++;
+    if (init?.method) return Response.json({ code: "vard_revision_conflict", error: "Vard changed; reload before saving.", currentRevision: `v2:${"b".repeat(64)}` }, { status: 409 });
+    return Response.json({ ...definitionV2, items: [{ ...linked, linkedUse: null, resolved: { ...linked.resolved,
+      versionId: null, sourceChecksum: null, fingerprint: null, downloadUrl: null, availabilityError: "Source unavailable" } }] });
+  });
+  assert.deepEqual((await getVardEditorV2("workspace", "vard", capabilitiesV2)).items[0]?.binding, linked.binding);
+  await assert.rejects(updateVardEditorV2("workspace", "vard", revisionV2, { name: "New" }, capabilitiesV2), isVardRevisionConflict);
+  assert.equal(calls, 2);
 });
 
 test("structured stale conflicts remain distinct from output collisions and retain currentRevision without retry", async (t) => {

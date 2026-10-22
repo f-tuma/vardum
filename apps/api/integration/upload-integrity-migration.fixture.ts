@@ -112,6 +112,7 @@ export async function checkUploadIntegrityMigration(
     )).rows;
     const beforeAsset = (await admin.query("SELECT * FROM asset WHERE id=$1", [assetId])).rows;
     const beforePin = (await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows;
+    const expectedPin = beforePin.map((item) => ({ ...item, definition_schema: 1, asset_use_id: null }));
 
     migrationClient = await admin.connect();
     writerClient = await admin.connect();
@@ -182,7 +183,7 @@ export async function checkUploadIntegrityMigration(
       "upgrading preserves every historical pending/processing/failed/ready field",
     );
     assert.deepEqual((await admin.query("SELECT * FROM asset WHERE id=$1", [assetId])).rows, beforeAsset);
-    assert.deepEqual((await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows, beforePin,
+    assert.deepEqual((await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows, expectedPin,
       "ready current/pinned identity, historical source key and checksum are unchanged");
     const ledgerSql = "SELECT version_id,workspace_id,asset_id,storage_key,created_at FROM asset_upload WHERE version_id=ANY($1::uuid[]) ORDER BY version_id";
     const ledger = (await admin.query(ledgerSql, [versionIds])).rows;
@@ -229,7 +230,7 @@ export async function checkUploadIntegrityMigration(
           "runtime cleanup does not rewrite historical statuses, ready keys or checksums",
         );
         assert.deepEqual((await admin.query("SELECT * FROM asset WHERE id=$1", [assetId])).rows, beforeAsset);
-        assert.deepEqual((await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows, beforePin,
+        assert.deepEqual((await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [vardId])).rows, expectedPin,
           "current and pinned references survive historical ready cleanup");
         assert.deepEqual((await admin.query(ledgerSql, [versionIds])).rows, ledger);
 

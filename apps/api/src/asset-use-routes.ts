@@ -5,7 +5,7 @@ import { z } from "zod";
 import { authorizeAsset } from "./authorization.js";
 import { assetKey } from "./asset-key.js";
 import { createUseSchema, useCompatibilityIssue, useOutputMime, useSettingsSchema } from "./asset-use-model.js";
-import { asset, assetFolder, assetUse, assetVersion, auditEvent, workspace } from "./db/app-schema.js";
+import { asset, assetFolder, assetUse, assetVersion, auditEvent, vardItem, workspace } from "./db/app-schema.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
 import { useRows, useIssue } from "./asset-use-query.js";
 import { inWorkspace } from "./db/tenant.js";
@@ -15,12 +15,15 @@ const workspaceParams = z.object({ workspaceId: z.string().min(1) });
 const useParams = workspaceParams.extend({ useId: z.uuid() });
 const revision = z.number().int().positive();
 const prefix = z.string().max(255).regex(/^(?:[a-z0-9][a-z0-9._-]*\/)*$/).default("");
+const useInUse = { status: 409 as const, code: "asset_use_in_use",
+  error: "Linked use is referenced by a Vard; remove or rebind its items before removing the use" };
 export function registerAssetUseRoutes(app: FastifyInstance) {
   const api = app.withTypeProvider<ZodTypeProvider>();
   api.get("/api/workspaces/:workspaceId/asset-uses", {
     schema: { params: workspaceParams, querystring: z.object({
       prefix, search: z.string().trim().max(255).default(""), sourceAssetId: z.uuid().optional(),
       cursor: assetKey.optional(), limit: z.coerce.number().int().min(1).max(100).default(50),
+      recursive: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
     }).strict() },
   }, async (request, reply) => {
     const { workspaceId } = request.params;
@@ -34,7 +37,7 @@ export function registerAssetUseRoutes(app: FastifyInstance) {
         query.cursor ? gt(assetUse.key, query.cursor) : undefined,
         sql`starts_with(${assetUse.key}, ${query.prefix})`,
         query.search ? sql`(${assetUse.key} ilike ${literal(query.search)} escape '\\' or ${assetUse.displayName} ilike ${literal(query.search)} escape '\\')`
-          : query.sourceAssetId ? undefined : sql`position('/' in substring(${assetUse.key} from length(${query.prefix}) + 1)) = 0`,
+          : query.sourceAssetId || query.recursive ? undefined : sql`position('/' in substring(${assetUse.key} from length(${query.prefix}) + 1)) = 0`,
       )).orderBy(asc(assetUse.key)).limit(query.limit + 1);
       const page = rows.slice(0, query.limit);
       const [info] = await tx.select({ slug: workspace.slug }).from(workspace).where(eq(workspace.id, workspaceId));
@@ -129,6 +132,10 @@ export function registerAssetUseRoutes(app: FastifyInstance) {
       const [row] = await tx.select().from(assetUse).where(and(eq(assetUse.workspaceId, workspaceId), eq(assetUse.id, useId)));
       if (!row) return { status: 404 as const, error: "Linked use not found" };
       if (row.revision !== request.query.expectedRevision) return { status: 409 as const, error: "Linked use changed; reload before removing" };
+      const [reference] = await tx.select({ id: vardItem.id }).from(vardItem).where(and(
+        eq(vardItem.workspaceId, workspaceId), eq(vardItem.assetUseId, useId),
+      )).limit(1);
+      if (reference) return useInUse;
       await tx.delete(assetUse).where(eq(assetUse.id, useId));
       await tx.insert(auditEvent).values({ workspaceId,
         actorType: authorization.principal.actorType, actorId: authorization.principal.actorId,
@@ -136,11 +143,26 @@ export function registerAssetUseRoutes(app: FastifyInstance) {
         metadata: { key: row.key, sourceAssetId: row.sourceAssetId }, requestId: request.id,
       });
       return null;
+    }).catch((error: unknown) => {
+      // The transaction has rolled back before translating the FK race backstop.
+      if (isUseReferenceViolation(error)) return useInUse;
+      throw error;
     });
-    return result ? reply.code(result.status).send({ error: result.error }) : reply.code(204).send();
+    if (!result) return reply.code(204).send();
+    const { status, ...error } = result;
+    return reply.code(status).send(error);
   });
 }
 
 function literal(search: string) {
   return `%${search.replace(/[\\%_]/g, (value) => `\\${value}`)}%`;
+}
+
+function isUseReferenceViolation(error: unknown) {
+  for (let depth = 0; depth < 4 && error && typeof error === "object"; depth += 1) {
+    const candidate = error as { code?: unknown; constraint?: unknown; cause?: unknown };
+    if (candidate.code === "23503" && candidate.constraint === "vard_item_use_fk") return true;
+    error = candidate.cause;
+  }
+  return false;
 }

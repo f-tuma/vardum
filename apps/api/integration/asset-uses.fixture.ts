@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import sharp from "sharp";
 import { mutateLegacyVersion } from "./legacy-version.fixture.js";
 
@@ -29,6 +29,72 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
   const stable = (key: string, extra = {}) => app.inject({ url: `/w/demo/${key}`, headers, ...extra });
   let one: { id: string; revision: number };
   let two: { id: string; revision: number };
+  const bindingVardIds: string[] = [], bindingUseIds: string[] = [];
+  t.after(async () => {
+    await capable(async (client) => {
+      await client.query("DELETE FROM vard WHERE id=ANY($1::uuid[])", [bindingVardIds]);
+      await client.query("DELETE FROM asset_use WHERE id=ANY($1::uuid[])", [bindingUseIds]);
+    });
+  });
+  async function capable<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await admin.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('vardum.vard_definition_schema','2',true)");
+      const result = await operation(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
+  async function editor(vardId: string) {
+    const response = await app.inject({ url: `${api}/vards/${vardId}/editor?definitionSchema=2`, headers });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json();
+  }
+  async function bindingVard() {
+    const response = await app.inject({ method: "POST", url: `${api}/vards`, headers,
+      payload: { name: `Use binding ${randomUUID()}` } });
+    assert.equal(response.statusCode, 201, response.body);
+    bindingVardIds.push(response.json().id);
+    return editor(response.json().id);
+  }
+  const bind = (vardId: string, expectedRevision: string, useId: string) =>
+    app.inject({ method: "PUT", url: `${api}/vards/${vardId}/editor/items`, headers,
+      payload: { definitionSchema: 2, expectedRevision,
+        items: [{ id: null, outputPath: "linked.svg", binding: { kind: "use", assetUseId: useId } }] } });
+  async function waitForLock(predicate: string, count = 1) {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const result = await admin.query(`SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE NOT l.granted AND ${predicate}`);
+      if (result.rows[0].n >= count) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.fail("expected real PostgreSQL lock waiters before releasing the barrier");
+  }
+  async function queued<A, B>(firstAction: () => PromiseLike<A>, secondAction: () => PromiseLike<B>): Promise<[A, B]> {
+    const blocker = await admin.connect();
+    const pending: Promise<unknown>[] = [];
+    const predicate = "l.locktype='advisory' AND l.classid=74122 AND l.objid=((hashtext('ws')::bigint & 4294967295)::oid) AND l.objsubid=2";
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock(74122,hashtext('ws'))");
+      const first = Promise.resolve().then(firstAction);
+      pending.push(first); void first.catch(() => {});
+      await waitForLock(predicate);
+      const second = Promise.resolve().then(secondAction);
+      pending.push(second); void second.catch(() => {});
+      await waitForLock(predicate, 2);
+      await blocker.query("COMMIT");
+      return await Promise.all([first, second]);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await Promise.allSettled(pending);
+    }
+  }
 
   await t.test("three independent uses share bytes/current and preserve source-only CLI listing", async () => {
     const a = await create("reuse/web/logo.png"); assert.equal(a.statusCode, 201, a.body); one = a.json();
@@ -247,21 +313,132 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     await assert.rejects(admin.query("INSERT INTO asset_use(workspace_id,source_asset_id,key,display_name,output_mime_type,created_by,updated_by) VALUES ('other-ws',$1,'bad-reference','Bad','image/svg+xml','fixture','fixture')", [sourceId]), /foreign key/);
   });
 
-  await t.test("authorized whole-workspace deletion removes linked records before source cascade", async () => {
+  await t.test("use deletion checks revision before live references and refuses without mutation or audit", async () => {
+    const created = await create(`reuse/bound/${randomUUID()}`, null);
+    assert.equal(created.statusCode, 201, created.body);
+    const useId = created.json().id;
+    bindingUseIds.push(useId);
+    const definition = await bindingVard();
+    const bound = await bind(definition.id, definition.revision, useId);
+    assert.equal(bound.statusCode, 200, bound.body);
+    const before = (await admin.query("SELECT * FROM asset_use WHERE id=$1", [useId])).rows;
+    const auditBefore = (await admin.query("SELECT * FROM audit_event WHERE target_id=$1 ORDER BY id", [useId])).rows;
+    const stale = await app.inject({ method: "DELETE", url: `${api}/asset-uses/${useId}?expectedRevision=2`, headers });
+    assert.equal(stale.statusCode, 409, stale.body);
+    assert.equal(stale.json().code, undefined, "OCC precedes the reference diagnostic");
+    const refused = await app.inject({ method: "DELETE", url: `${api}/asset-uses/${useId}?expectedRevision=1`, headers });
+    assert.equal(refused.statusCode, 409, refused.body);
+    assert.equal(refused.json().code, "asset_use_in_use");
+    assert.deepEqual((await admin.query("SELECT * FROM asset_use WHERE id=$1", [useId])).rows, before);
+    assert.deepEqual((await admin.query("SELECT * FROM audit_event WHERE target_id=$1 ORDER BY id", [useId])).rows, auditBefore);
+    const cleared = await app.inject({ method: "PUT", url: `${api}/vards/${definition.id}/editor/items`, headers,
+      payload: { definitionSchema: 2, expectedRevision: bound.json().revision, items: [] } });
+    assert.equal(cleared.statusCode, 200, cleared.body);
+    const removed = await app.inject({ method: "DELETE", url: `${api}/asset-uses/${useId}?expectedRevision=1`, headers });
+    assert.equal(removed.statusCode, 204, removed.body);
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM asset WHERE id=$1", [sourceId])).rows[0].n, 1);
+  });
+
+  await t.test("binding creation and use deletion serialize in both guarded orders", async () => {
+    for (const bindingFirst of [true, false]) {
+      const created = await create(`reuse/bind-delete/${randomUUID()}`, null);
+      assert.equal(created.statusCode, 201, created.body);
+      const useId = created.json().id;
+      bindingUseIds.push(useId);
+      const definition = await bindingVard();
+      const add = () => bind(definition.id, definition.revision, useId);
+      const remove = () => app.inject({ method: "DELETE", url: `${api}/asset-uses/${useId}?expectedRevision=1`, headers });
+      const responses = bindingFirst ? await queued(add, remove) : await queued(remove, add);
+      // A missing/foreign use is an invalid binding input (400), without
+      // disclosing whether another workspace owns that UUID.
+      assert.deepEqual(responses.map(response => response.statusCode), bindingFirst ? [200, 409] : [204, 400],
+        responses.map(response => response.body).join("\n"));
+      const items = (await admin.query("SELECT * FROM vard_item WHERE vard_id=$1", [definition.id])).rows;
+      const uses = (await admin.query("SELECT * FROM asset_use WHERE id=$1", [useId])).rows;
+      assert.equal(items.length, bindingFirst ? 1 : 0);
+      assert.equal(uses.length, bindingFirst ? 1 : 0);
+      if (bindingFirst) {
+        assert.equal(responses[1].json().code, "asset_use_in_use");
+        assert.equal(items[0].asset_use_id, useId);
+        assert.equal(items[0].asset_id, sourceId);
+        assert.equal(items[0].definition_schema, 2);
+      } else {
+        assert.equal((await editor(definition.id)).revision, definition.revision,
+          "failed binding after deletion leaves the parent configuration unchanged");
+      }
+      const deletedAudit = (await admin.query("SELECT * FROM audit_event WHERE target_id=$1 AND action='asset_use.deleted'", [useId])).rows;
+      assert.equal(deletedAudit.length, bindingFirst ? 0 : 1);
+    }
+  });
+
+  await t.test("the use-reference FK race returns409 after rolling back the deletion transaction", async () => {
+    const created = await create(`reuse/fk-backstop/${randomUUID()}`, null);
+    assert.equal(created.statusCode, 201, created.body);
+    const useId = created.json().id;
+    bindingUseIds.push(useId);
+    const definition = await bindingVard();
+    const writer = await admin.connect();
+    let removal: Promise<Awaited<ReturnType<typeof app.inject>>> | undefined;
+    try {
+      await writer.query("BEGIN");
+      await writer.query("SELECT set_config('vardum.vard_definition_schema','2',true)");
+      await writer.query("UPDATE vard SET definition_schema=2 WHERE id=$1", [definition.id]);
+      await writer.query("INSERT INTO vard_item(workspace_id,vard_id,definition_schema,asset_id,asset_use_id,output_path,created_by,updated_by) VALUES('ws',$1,2,$2,$3,'linked.svg','fixture','fixture')",
+        [definition.id, sourceId, useId]);
+      removal = Promise.resolve(app.inject({ method: "DELETE", url: `${api}/asset-uses/${useId}?expectedRevision=1`, headers }));
+      void removal.catch(() => {});
+      await waitForLock("a.query LIKE 'delete from \"asset_use\"%' AND a.wait_event_type='Lock'");
+      await writer.query("COMMIT");
+      const result = await removal;
+      assert.equal(result.statusCode, 409, result.body);
+      assert.equal(result.json().code, "asset_use_in_use");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM asset_use WHERE id=$1", [useId])).rows[0].n, 1);
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM vard_item WHERE asset_use_id=$1", [useId])).rows[0].n, 1);
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM audit_event WHERE target_id=$1 AND action='asset_use.deleted'", [useId])).rows[0].n, 0);
+      assert.equal((await editor(definition.id)).storedDefinitionSchema, 2,
+        "a following request can reuse the pool after the failed FK transaction");
+    } finally {
+      await writer.query("ROLLBACK");
+      writer.release();
+      if (removal) await removal;
+    }
+  });
+
+  await t.test("authorized whole-workspace deletion removes Vards before linked uses and preserves cleanup payloads", async () => {
     const workspaceId = `use-delete-${randomUUID()}`;
-    const source = randomUUID();
+    const source = randomUUID(), version = randomUUID(), useId = randomUUID(), vardId = randomUUID();
+    const storageKey = `originals/${workspaceId}/${source}/${version}/source`;
     await admin.query("INSERT INTO workspace(id,organization_id,name,slug,created_by,updated_by) SELECT $1,organization_id,'Use deletion',$1,'fixture','fixture' FROM workspace WHERE id='ws'", [workspaceId]);
     await admin.query("INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES ($1,$2,'source','Source','fixture','fixture')", [source, workspaceId]);
-    await admin.query("INSERT INTO asset_use(workspace_id,source_asset_id,key,display_name,output_mime_type,created_by,updated_by) VALUES ($1,$2,'linked','Linked','image/svg+xml','fixture','fixture')", [workspaceId, source]);
+    await admin.query("INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,created_by,updated_by) VALUES($1,$2,$3,1,'ready',$4,'source.svg','image/svg+xml',$5,$6,'fixture','fixture')",
+      [version, workspaceId, source, storageKey, bytes.length, checksum]);
+    await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [version, source]);
+    await admin.query("INSERT INTO asset_use(id,workspace_id,source_asset_id,key,display_name,output_mime_type,created_by,updated_by) VALUES ($1,$2,$3,'linked','Linked','image/svg+xml','fixture','fixture')", [useId, workspaceId, source]);
+    await capable(async (client) => {
+      await client.query("INSERT INTO vard(id,workspace_id,definition_schema,name,created_by,updated_by) VALUES($1,$2,2,'Workspace live binding','fixture','fixture')", [vardId, workspaceId]);
+      await client.query("INSERT INTO vard_item(workspace_id,vard_id,definition_schema,asset_id,asset_use_id,output_path,created_by,updated_by) VALUES($1,$2,2,$3,$4,'linked.svg','fixture','fixture')", [workspaceId, vardId, source, useId]);
+    });
     const removed = await app.inject({ method: "DELETE", url: `/api/workspaces/${workspaceId}`, headers, payload: { confirmation: workspaceId } });
     assert.equal(removed.statusCode, 204, removed.body);
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM asset_use WHERE workspace_id=$1", [workspaceId])).rows[0].n, 0);
+    for (const table of ["workspace", "vard", "vard_item", "asset", "asset_version"]) {
+      const column = table === "workspace" ? "id" : "workspace_id";
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${column}=$1`, [workspaceId])).rows[0].n, 0);
+    }
+    const cleanup = (await admin.query("SELECT data FROM pgboss.job WHERE name='asset-delete' AND singleton_key=$1", [`workspace-delete:${workspaceId}:${source}`])).rows;
+    assert.deepEqual(cleanup.map(row => row.data), [{ versionIds: [version], storageKeys: [storageKey] }]);
+    const sweep = (await admin.query("SELECT data,start_after>now()+interval '19 minutes' AS delayed FROM pgboss.job WHERE name='asset-delete' AND singleton_key=$1", [`workspace-delete:${workspaceId}:origin-sweep`])).rows;
+    assert.deepEqual(sweep.map(row => row.data), [{ versionIds: [], storageKeys: [], prefixes: [`originals/${workspaceId}/`] }]);
+    assert.equal(sweep[0].delayed, true);
   });
 
   await t.test("source delete is blocked, use remove is guarded and never schedules source cleanup", async () => {
     const blocked = await app.inject({ method: "DELETE", url: `${api}/assets/${sourceId}`, headers });
     assert.equal(blocked.statusCode, 409, blocked.body); assert.equal(blocked.json().code, "source_in_use");
-    await assert.rejects(admin.query("DELETE FROM asset WHERE id=$1", [sourceId]), /foreign key/);
+    // Earlier cases now retain schema2 Vard references until fixture cleanup.
+    // Declare capability here to isolate the source/use RESTRICT FK itself.
+    await assert.rejects(capable(client => client.query("DELETE FROM asset WHERE id=$1", [sourceId])),
+      (error: any) => error.code === "23503");
     const stale = await app.inject({ method: "DELETE", url: `${api}/asset-uses/${one.id}?expectedRevision=1`, headers });
     assert.equal(stale.statusCode, 409, stale.body);
     const removed = await app.inject({ method: "DELETE", url: `${api}/asset-uses/${one.id}?expectedRevision=2`, headers });

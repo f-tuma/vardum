@@ -33,7 +33,10 @@ export const vardImportBody = z.object({
 }).strict();
 type ImportFile = z.infer<typeof vardImportFile>;
 type Source = { assetId: string; key: string; mimeType: string };
-type Mapping = { id: string; assetId: string; outputPath: string };
+type Mapping = {
+  id: string; assetId: string; outputPath: string;
+  bindingKind: "source" | "use"; assetUseId: string | null;
+};
 type Rule = { sourcePrefix: string; outputPrefix: string };
 
 /** Existing manual rows and every generated output must already form a valid union. */
@@ -44,7 +47,8 @@ export function resolveImportOutputs(manual: Mapping[], sources: Source[], rules
     for (const rule of rules) {
       if (!source.key.startsWith(rule.sourcePrefix)) continue;
       const outputPath = folderOutputPath(source.key, source.mimeType, rule);
-      items.push({ id: folderItemId(source.assetId, outputPath), assetId: source.assetId, outputPath });
+      items.push({ id: folderItemId(source.assetId, outputPath), assetId: source.assetId, outputPath,
+        bindingKind: "source", assetUseId: null });
       if (items.length > MAX_VARD_OUTPUTS) validateResolvedOutputs(items.map((item) => item.outputPath));
     }
   }
@@ -58,11 +62,14 @@ export function importMappings(manual: Mapping[], sources: Source[], rules: Rule
   const mappings = files.map((file) => {
     const existing = resolved.get(file.outputPath);
     if (existing) {
+      if (existing.bindingKind === "use")
+        throw new VardResolutionError("Linked uses are read-only upload destinations; select the source asset instead");
       if (existing.assetId !== file.assetId)
         throw new VardResolutionError("Import output path belongs to another asset");
       return { mappingAction: "keep" as const, mappingId: existing.id };
     }
-    resolved.set(file.outputPath, { id: "", assetId: file.assetId, outputPath: file.outputPath });
+    resolved.set(file.outputPath, { id: "", assetId: file.assetId, outputPath: file.outputPath,
+      bindingKind: "source", assetUseId: null });
     return { mappingAction: "add" as const, mappingId: null };
   });
   // Validate the whole union once, including spelling and file/directory collisions.
@@ -71,12 +78,14 @@ export function importMappings(manual: Mapping[], sources: Source[], rules: Rule
 }
 
 async function importContext(tx: Transaction, workspaceId: string, vardId: string) {
-  const [target] = await tx.select({ folderRules: vard.folderRules }).from(vard)
+  const [target] = await tx.select({ folderRules: vard.folderRules, definitionSchema: vard.definitionSchema }).from(vard)
     .where(and(eq(vard.workspaceId, workspaceId), eq(vard.id, vardId)));
   if (!target) return null;
-  const manual = await tx.select({ id: vardItem.id, assetId: vardItem.assetId, outputPath: vardItem.outputPath })
+  const rows = await tx.select({ id: vardItem.id, assetId: vardItem.assetId, outputPath: vardItem.outputPath,
+    assetUseId: vardItem.assetUseId })
     .from(vardItem).where(and(eq(vardItem.workspaceId, workspaceId), eq(vardItem.vardId, vardId)))
     .orderBy(asc(vardItem.outputPath)).limit(MAX_VARD_OUTPUTS + 1);
+  const manual: Mapping[] = rows.map((row) => ({ ...row, bindingKind: row.assetUseId ? "use" : "source" }));
   const sources = target.folderRules.length ? await tx.select({
     assetId: asset.id, key: asset.key, mimeType: assetVersion.mimeType,
   }).from(asset).innerJoin(assetVersion, eq(assetVersion.id, asset.currentVersionId)).where(and(
@@ -203,6 +212,7 @@ export function registerVardImportRoutes(app: FastifyInstance) {
         const additions = request.body.files.filter((_file, index) => mappings[index]!.mappingAction === "add");
         const inserted = additions.length ? await tx.insert(vardItem).values(additions.map((file) => ({
           workspaceId, vardId, assetId: file.assetId, outputPath: file.outputPath,
+          definitionSchema: context.definitionSchema,
           versionId: null, transformation: null, writable: false,
           createdBy: authorization.principal.reference, updatedBy: authorization.principal.reference,
         }))).returning({ id: vardItem.id, outputPath: vardItem.outputPath }) : [];

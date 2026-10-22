@@ -9,6 +9,7 @@ const file = {
   checksum: "a".repeat(64), mimeType: "image/png" as const, size: 100,
 };
 const rules = [{ sourcePrefix: "brand/", outputPrefix: "assets/" }];
+const sourceBinding = { bindingKind: "source" as const, assetUseId: null };
 
 test("import UUID identities normalize before lookup and mixed-case duplicate checks", () => {
   const assetId = "abcdef12-3456-4789-abcd-ef1234567890";
@@ -26,7 +27,7 @@ test("import UUID identities normalize before lookup and mixed-case duplicate ch
   ] });
   assert.throws(() => assertImportIdentities(repeated.files), /distinct asset identities/);
   assert.deepEqual(importMappings([{
-    id: "original-mapping", assetId, outputPath: file.outputPath,
+    id: "original-mapping", assetId, outputPath: file.outputPath, ...sourceBinding,
   }], [], [], plan.files), [{ mappingAction: "keep", mappingId: "original-mapping" }]);
 });
 
@@ -59,6 +60,7 @@ test("new rule members keep generated IDs and changed source MIME projects every
     ...rules, { sourcePrefix: "", outputPrefix: "archive/" },
   ]);
   assert.deepEqual([...union.keys()], ["assets/logo.webp", "archive/brand/logo.webp"]);
+  assert.ok([...union.values()].every((item) => item.bindingKind === "source" && item.assetUseId === null));
   assert.deepEqual(importMappings([], [changed], rules, [changed]), [{
     mappingAction: "keep", mappingId: folderItemId(file.assetId, "assets/logo.webp"),
   }]);
@@ -69,6 +71,7 @@ test("new rule members keep generated IDs and changed source MIME projects every
 
 test("an incoming exact manual equivalent preserves the complete original record", () => {
   const original = { id: randomUUID(), assetId: file.assetId, outputPath: file.outputPath,
+    ...sourceBinding,
     versionId: randomUUID(), transformation: { width: 24 }, writable: false };
   const union = resolveImportOutputs([original], [], []);
   assert.equal(union.size, 1);
@@ -80,8 +83,27 @@ test("an incoming exact manual equivalent preserves the complete original record
   assert.throws(() => resolveImportOutputs([], [file], [...rules, ...rules]), /collide/);
 });
 
+test("a live-use destination is read-only even for the identical Original source import", () => {
+  for (const transformation of [null, { width: 24 }]) {
+    const linked = { id: randomUUID(), assetId: file.assetId, outputPath: file.outputPath,
+      bindingKind: "use" as const, assetUseId: randomUUID(),
+      versionId: null, transformation, writable: false };
+    assert.equal(resolveImportOutputs([linked], [], []).get(file.outputPath), linked);
+    assert.throws(() => importMappings([linked], [], [], [file]), /Linked uses are read-only/);
+    assert.throws(() => importMappings([linked], [], [], [{ ...file, assetId: randomUUID() }]),
+      /Linked uses are read-only/, "binding refusal takes precedence over source equality");
+    assert.throws(() => importMappings([linked], [], [], [
+      { ...file, outputPath: "additional.png" }, file,
+    ]), /Linked uses are read-only/, "one linked destination refuses the whole batch");
+    assert.deepEqual(importMappings([linked], [], [], [{ ...file, outputPath: "additional.png" }]),
+      [{ mappingAction: "add", mappingId: null }]);
+    assert.equal(resolveImportOutputs([linked], [], []).get(file.outputPath), linked,
+      "source additions leave the existing literal binding intact");
+  }
+});
+
 test("prospective union rejects identity, spelling, file/directory and hidden generated conflicts", () => {
-  const other = { id: randomUUID(), assetId: randomUUID(), outputPath: file.outputPath };
+  const other = { id: randomUUID(), assetId: randomUUID(), outputPath: file.outputPath, ...sourceBinding };
   assert.throws(() => importMappings([other], [], [], [file]), /another asset/);
   for (const outputPath of ["assets/LOGO.png", "assets", "assets/logo.png/nested.png"])
     assert.throws(() => importMappings([{ ...other, outputPath }], [], [], [file]), /Vard/);
@@ -95,7 +117,7 @@ test("prospective union rejects identity, spelling, file/directory and hidden ge
 
 test("full union accepts exactly 1000 outputs and never truncates generated or manual additions", () => {
   const manual = Array.from({ length: 999 }, (_, index) => ({
-    id: randomUUID(), assetId: randomUUID(), outputPath: `existing/${index}.png`,
+    id: randomUUID(), assetId: randomUUID(), outputPath: `existing/${index}.png`, ...sourceBinding,
   }));
   assert.equal(resolveImportOutputs(manual, [file], rules).size, 1000);
   assert.throws(() => importMappings(manual, [file], rules, [{ ...file, outputPath: "extra.png" }]), /more than 1000/);

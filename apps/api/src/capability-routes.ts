@@ -18,6 +18,7 @@ export function registerCapabilityRoutes(app: FastifyInstance) {
             folderUploadResume: z.literal(1),
             folderVardImport: z.literal(1),
             vardEditRevision: z.literal(1),
+            vardDefinitionSchema: z.literal(2),
           }),
         },
       },
@@ -31,6 +32,7 @@ export function registerCapabilityRoutes(app: FastifyInstance) {
         folderUploadResume: 1 as const,
         folderVardImport: 1 as const,
         vardEditRevision: 1 as const,
+        vardDefinitionSchema: 2 as const,
       };
     },
   );

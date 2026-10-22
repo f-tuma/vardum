@@ -154,7 +154,7 @@ function UseEditor({ workspace, source, use, prefix, onClose, onBack }: {
   const preview = format === "original" ? assetPreviewUrl(workspace.slug, source, assetDeliveryPath(workspace.slug, source))
     : settled === JSON.stringify(transformation) ? assetPreviewUrl(workspace.slug, source, transformPreview.data?.url) : null;
   async function invalidate() {
-    await Promise.all(["asset-uses", "assets", "asset", "audit"].map((part) => client.invalidateQueries({ queryKey: [part, workspace.id] })));
+    await Promise.all(["asset-uses", "assets", "asset", "audit", "vard-editor", "vard-preview"].map((part) => client.invalidateQueries({ queryKey: [part, workspace.id] })));
   }
   async function save(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault(); if (!validOutputSafeArea(transformation)) return; setSaving(true); setError(null); setConflict(false);

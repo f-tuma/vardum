@@ -8,7 +8,7 @@ CLI version and it publishes shared → CLI → MCP. Do not use that workflow fo
 this server candidate.
 
 The preparation policy covers API/worker, the standard and Dokploy gateways,
-and migrations **0000–0017**. Its explicit public compatibility clients remain
+and migrations **0000–0020**. Its explicit public compatibility clients remain
 `@vardum/cli` **0.6.0**, `@vardum/mcp` **0.2.0** and `@vardum/shared` **0.2.0** on
 Node 22 or newer. `candidate.json` records these as `clientVersions`, separately
 from `sourceClientVersions` read from the exact build context. A source version
@@ -77,8 +77,13 @@ store pruning or archive-index rewriting is part of preparation.
 The manifest records commit, Git tree, platform, image tags/IDs and config IDs, archive SHA-256,
 every deployment-file checksum, all migration SHA-256 values, exact source client
 versions and the separate public compatibility versions. Migration verification
-requires the exact 0000–0017 tag/index order, strict JSON, and positive safe-integer
+requires the exact 0000–0020 tag/index order, strict JSON, and positive safe-integer
 `when` values in strictly increasing order; Drizzle uses those timestamps.
+The final reviewed tag is `0020_vard_definition_bindings`; every migration digest
+must agree with both its copied SQL bytes and the verified file inventory. Missing,
+extra, reordered or duplicate migration tags are rejected. Older retained bundles
+keep their original bundled verifier, journal, manifest and SQL bytes; this source
+change does not update or recertify those historical artifacts.
 It also includes Compose files without build sections, nginx routing, example
 environment files, monitoring rules, migration review copies, backup tooling and
 these instructions. Secrets and an actual `.env.production` are excluded.
@@ -292,6 +297,16 @@ visibility and folder-rule precautions in [operations](operations.md), then:
 | `0015_upload_request_checksum.sql` | Nullable `asset_version.expected_checksum` plus a lowercase 64-hex constraint; historical rows remain null. New upload requests bind resumable attempts to their source SHA-256. Preserve the field and pending journals during retry/restore. |
 | `0016_known_usage_inventory.sql` | Private `known_usage` and `known_usage_check` tables with forced workspace RLS. Run the matching migrator to grant consumer CRUD and check SELECT/INSERT while revoking direct check UPDATE/DELETE. Preserve declared source identities and manual reports in backup/restore; asset/Vard deletion retains them, while authorized inventory/workspace deletion cascades reports. |
 | `0017_asset_uses.sql` | Linked library uses with forced tenant RLS, restrictive source references and coordinated file/folder namespace triggers. Run the matching migrator/runtime grants. Preserve use identities/settings in backup/restore and keep the table during image rollback. See [library uses](library-uses.md); no automatic source deduplication or Vard folder expansion. |
+| `0018_asset_archive.sql` | Retained source assets use an archive marker; preserve archived rows and version history during backup/restore and image rollback. |
+| `0019_upload_object_integrity.sql` | Sealed original-object publication and staging-key maintenance inventory; older workers cannot complete ingest after this boundary. Apply the matching worker and retain the migration during rollback; see [upload publication integrity](operations.md#upload-publication-integrity). |
+| `0020_vard_definition_bindings.sql` | Vard/item format markers and literal library-use bindings with matching tenant/source foreign keys, restrictive capability RLS and cascade guards. Keep physical connections at baseline capability 1; only schema-2-aware transactions may set `vardum.vard_definition_schema` to exact `2` locally. Preserve the migration and markers during image rollback. |
+
+Before returning a Vard to source-only format, use the matching schema-2 editor's
+explicit return action after all linked bindings have been removed. It validates
+eligibility and changes the parent/item markers together; removing the final link
+alone does not downgrade a definition. A baseline-capability binary cannot see
+format-2 rows, and its destructive cascades fail rather than remove them. Do not
+set capability 2 persistently to let an older binary bypass this boundary.
 
 The current worker independently reconciles interrupted ingest at startup,
 including when an existing recovery queue job delays fresh scheduling. Stop all

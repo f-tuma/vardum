@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { VardDefinition, VardItem, VardManifest } from "@vardum/shared";
+import type { VardDefinition, VardItem, VardManifest, VardEditorDefinitionV2 } from "@vardum/shared";
 import {
   getVard,
   getVardManifest,
@@ -13,6 +13,9 @@ import {
   generatedOutputs,
   manualDraftItems,
   refreshVardPreview,
+  captureVardBaselineV2,
+  vardItemInputsV2,
+  canReturnToSourceOnly,
 } from "./vard-editor-state.js";
 
 const manual: VardItem = {
@@ -72,6 +75,33 @@ test("Vard editor drafts use only configuration; metadata preserves manual IDs, 
   assert.equal(saved.items, config.items);
   assert.equal(saved.isPublic, true);
   assert.deepEqual(saved.folderRules, []);
+});
+
+test("schema2 drafts retain literal bindings independently from live recipes, display data and unavailable resolution", () => {
+  const definitionV2: VardEditorDefinitionV2 = {
+    definitionSchema: 2, storedDefinitionSchema: 2, revision: `v2:${"a".repeat(64)}`,
+    id: "vard", workspaceId: "workspace", name: "Linked", isPublic: false, updatedAt: "2026-01-01", folderRules: [],
+    items: [{ id: "linked", outputPath: "fixed/logo.png", binding: { kind: "use", assetUseId: "use-a" },
+      resolved: { ...manual, versionId: null, downloadUrl: null, fingerprint: null, transformation: { w: 64, h: 64, pad: 12.5 }, availabilityError: "Unavailable" },
+      linkedUse: { id: "use-a", key: "mobile/logo.png", displayName: "Mobile", sourceDisplayName: "Logo", revision: 1, sourceProcessing: false } },
+    { id: "source", outputPath: "source.svg", binding: { kind: "source", assetId: "asset", versionId: "literal-pin", transformation: null, writable: false },
+      resolved: { ...manual, versionId: null, availabilityError: null }, linkedUse: null }],
+  };
+  const baseline = captureVardBaselineV2(definitionV2);
+  definitionV2.items[0]!.resolved.transformation!.w = 180;
+  definitionV2.items[0]!.linkedUse!.revision = 2;
+  definitionV2.items[0]!.outputPath = "remote.png";
+  const inputs = vardItemInputsV2([...baseline.items, { ...baseline.items[0]!, id: "new", outputPath: "second.png" }], new Set(["linked", "source"]));
+  assert.deepEqual(inputs[0], { id: "linked", outputPath: "fixed/logo.png", binding: { kind: "use", assetUseId: "use-a" } });
+  assert.equal(inputs[2]?.id, null);
+  assert.equal(baseline.definition.items[0]!.resolved.transformation!.w, 64);
+  assert.equal(baseline.definition.items[0]!.linkedUse!.revision, 1);
+  assert.equal(inputs[1]?.binding.kind === "source" && inputs[1].binding.versionId, "literal-pin");
+  assert.equal(canReturnToSourceOnly(baseline.definition), false);
+  const afterRemoval = { ...baseline.definition, items: baseline.definition.items.slice(1) };
+  assert.equal(afterRemoval.storedDefinitionSchema, 2);
+  assert.equal(canReturnToSourceOnly(afterRemoval), true);
+  assert.equal(canReturnToSourceOnly({ ...afterRemoval, storedDefinitionSchema: 1 }), false);
 });
 
 test("Generated output classification ignores stale manual IDs from an independent preview", () => {
