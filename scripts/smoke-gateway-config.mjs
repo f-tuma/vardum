@@ -295,19 +295,23 @@ try {
     }
     async function redirect(path, location) {
       const { response } = await fetchBounded(base, path, { headers: { "x-forwarded-proto": "https" } });
-      report.checks.push({ path, expected: "redirect", status: response.status, location: response.headers.get("location") });
+      const check = { path, expected: "redirect", status: response.status, location: response.headers.get("location") };
+      report.checks.push(check);
       assert.equal(response.status, 307, `${mode} ${path}: legacy redirect must be temporary`);
       assert.equal(response.headers.get("location"), location, "Redirect must remain relative and preserve raw path/query");
       const target = await fetchBounded(base, location);
       assert.equal(target.response.status, 200, "Redirect destination must resolve without another redirect");
       assert.deepEqual(target.bytes, app);
+      check.passed = true;
     }
     async function missing(path) {
       const { response, bytes } = await fetchBounded(base, path);
-      report.checks.push({ path, expected: "missing", status: response.status });
+      const check = { path, expected: "missing", status: response.status };
+      report.checks.push(check);
       assert.equal(response.status, 404, `${mode} ${path} must fail closed`);
       assert.notDeepEqual(bytes, app, "A missing static file must never return the SPA");
       assert.equal(response.headers.get("x-vardum-gateway-probe"), null, "App static misses must not reach a proxy");
+      check.passed = true;
     }
     for (const path of ["/app/", "/app/index.html", "/app/account", "/app/workspaces/example/assets?prefix=brand%2F&q=icon", "/app/reset-password?token=a%2Fb%20c&error=invalid_token", "/app/accept-invitation?id=a%2Fb", "/app/cli-login?callback=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=a%2Bb&label=local%20CLI&workspace=one"])
       await check(path, "app");
