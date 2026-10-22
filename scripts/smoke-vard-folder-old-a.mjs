@@ -175,28 +175,50 @@ export async function checkVardFolderOldA({ base, cookie, organizationId, oldIma
     for (const [url, method, body] of refusals) { const r = await response(oldBase, url, body, method); assert.equal(r.status, 404, "A must hide stored3 before a valid old writer mutates it"); statuses.push(r.status); assert.deepEqual(await snapshot(), before); }
     const guardedCascade = async (description, url, body) => {
       phase = description;
-      const cursor = await docker("logs", name);
-      const r = await response(oldBase, url, body, "DELETE"); assert.equal(r.status, 500);
-      let correlated = false; const deadline = Date.now() + 10_000;
-      while (Date.now() < deadline) {
-        const logs = await docker("logs", name);
-        // The unique owned container has no log truncation/rotation. A fresh
-        // byte cursor prevents an earlier cascade's guard error satisfying this one.
-        assert.ok(logs.stdout.startsWith(cursor.stdout)); assert.ok(logs.stderr.startsWith(cursor.stderr));
-        const rows = `${logs.stdout.slice(cursor.stdout.length)}\n${logs.stderr.slice(cursor.stderr.length)}`.split("\n").flatMap(line => {
-          try { return [JSON.parse(line)]; } catch { return []; }
-        });
-        const requests = rows.filter(row => row.req?.method === "DELETE" && row.req?.url === url);
-        assert.ok(requests.length <= 1, "Cascade log window must identify one exact request");
-        if (requests.length) {
-          const requestId = requests[0].reqId; assert.equal(typeof requestId, "string"); assert.ok(requestId);
-          correlated = rows.some(row => row.reqId === requestId && /vard_definition_capability_guard|Vard definition requires schema 3 capability/.test(JSON.stringify(row.err ?? {})));
-          if (correlated) break;
+      let invariant = "fresh-log-cursor", correlated = false;
+      const diagnostic = { httpStatus: null, matchingRequestRows: 0, incomingRequestRows: 0, distinctRequestIds: 0, guardErrorRows: 0 };
+      try {
+        const cursor = await docker("logs", name);
+        invariant = "delete-response";
+        const r = await response(oldBase, url, body, "DELETE"); diagnostic.httpStatus = r.status;
+        invariant = "http-status-500"; assert.equal(r.status, 500);
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          invariant = "read-fresh-logs";
+          const logs = await docker("logs", name);
+          // The unique owned container has no log truncation/rotation. A fresh
+          // byte cursor prevents an earlier cascade's guard error satisfying this one.
+          invariant = "fresh-log-prefix";
+          assert.ok(logs.stdout.startsWith(cursor.stdout)); assert.ok(logs.stderr.startsWith(cursor.stderr));
+          const rows = `${logs.stdout.slice(cursor.stdout.length)}\n${logs.stderr.slice(cursor.stderr.length)}`.split("\n").flatMap(line => {
+            try { return [JSON.parse(line)]; } catch { return []; }
+          });
+          const requests = rows.filter(row => row.req?.method === "DELETE" && row.req?.url === url);
+          const incoming = requests.filter(row => row.msg === "incoming request");
+          diagnostic.matchingRequestRows = requests.length; diagnostic.incomingRequestRows = incoming.length;
+          diagnostic.distinctRequestIds = new Set(requests.map(row => row.reqId)).size;
+          invariant = "one-exact-incoming-request";
+          assert.ok(incoming.length <= 1, "Cascade log window must identify one exact incoming request");
+          if (incoming.length) {
+            const requestId = incoming[0].reqId;
+            invariant = "nonempty-request-id"; assert.equal(typeof requestId, "string"); assert.ok(requestId);
+            invariant = "all-matching-rows-share-request-id";
+            assert.ok(requests.every(row => row.reqId === requestId), "Every matching request row must belong to this cascade");
+            diagnostic.guardErrorRows = rows.filter(row => row.reqId === requestId && /vard_definition_capability_guard|Vard definition requires schema 3 capability/.test(JSON.stringify(row.err ?? {}))).length;
+            correlated = diagnostic.guardErrorRows > 0;
+            if (correlated) break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
-        await new Promise(resolve => setTimeout(resolve, 100));
+        invariant = "one-exact-incoming-request"; assert.equal(diagnostic.incomingRequestRows, 1);
+        invariant = "own-request-schema3-guard";
+        assert.equal(correlated, true, "This cascade must independently log its own request-correlated schema3 capability guard");
+        invariant = "read-state-snapshot"; const after = await snapshot();
+        invariant = "exact-state-preservation"; assert.deepEqual(after, before); return r.status;
+      } catch {
+        console.log(JSON.stringify({ check: "actual-A-cascade-guard", passed: false, phase: description, invariant, ...diagnostic, guardCorrelated: correlated }));
+        throw new Error(`Actual A cascade proof failed (${invariant})`);
       }
-      assert.equal(correlated, true, "This cascade must independently log its own request-correlated schema3 capability guard");
-      assert.deepEqual(await snapshot(), before); return r.status;
     };
     const sourceCascadeStatus = await guardedCascade("old A source cascade guard", `/api/workspaces/${cascadeWorkspace.id}/assets/${cascadeSource.id}`);
     const workspaceCascadeStatus = await guardedCascade("old A workspace cascade guard", `/api/workspaces/${cascadeWorkspace.id}`, { confirmation: cascadeWorkspace.slug });
