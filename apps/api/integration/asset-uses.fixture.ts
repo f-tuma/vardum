@@ -4,6 +4,7 @@ import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import sharp from "sharp";
+import { mutateLegacyVersion } from "./legacy-version.fixture.js";
 
 export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin: Pool,
   objects: Map<string, Buffer>, cookies: Record<string, string>) {
@@ -18,10 +19,9 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
   objects.set(`uses-${second}`, bytes);
   await admin.query("INSERT INTO asset(id,workspace_id,key,display_name,created_by,updated_by) VALUES ($1,'ws','reuse/source','Shared logo','fixture','fixture')", [sourceId]);
   for (const [id, number] of [[first, 1], [second, 2]] as const) await admin.query(
-    "INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,created_by,updated_by) VALUES ($1,'ws',$2,$3,'ready',$4,'logo.svg','image/svg+xml',$5,$6,'fixture','fixture')",
+    "INSERT INTO asset_version(id,workspace_id,asset_id,number,status,storage_key,filename,mime_type,size,checksum,width,height,created_by,updated_by) VALUES ($1,'ws',$2,$3,'ready',$4,'logo.svg','image/svg+xml',$5,$6,16,16,'fixture','fixture')",
     [id, sourceId, number, `uses-${id}`, bytes.length, checksum]);
   await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [first, sourceId]);
-  await admin.query("UPDATE asset_version SET width=16,height=16 WHERE asset_id=$1", [sourceId]);
   const create = (key: string, transformation: unknown = { format: "png", w: 8 }) => app.inject({
     method: "POST", url: `${api}/asset-uses`, headers,
     payload: { key, sourceAssetId: sourceId, displayName: "Shared logo", transformation },
@@ -169,7 +169,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
     assert.equal((await app.inject({ url: publicUse.headers.location! })).statusCode, 200);
     await app.inject({ method: "PATCH", url: `${api}/assets/${sourceId}/visibility`, headers, payload: { isPublic: false } });
     assert.equal((await app.inject({ url: publicUse.headers.location! })).statusCode, 401);
-    await admin.query("UPDATE asset_version SET mime_type='video/mp4' WHERE id=$1", [second]);
+    await mutateLegacyVersion(admin, "UPDATE asset_version SET mime_type='video/mp4' WHERE id=$1", [second]);
     await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [second, sourceId]);
     for (const key of ["reuse/web/logo.png", "reuse/original/logo.svg"]) {
       const unavailable = await stable(key); assert.equal(unavailable.statusCode, 422, unavailable.body);
@@ -187,7 +187,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
   await t.test("known impossible source size is rejected on create, edit and stable resolution", async () => {
     const full = await create("reuse/full-size", { format: "png" });
     assert.equal(full.statusCode, 201, full.body);
-    await admin.query("UPDATE asset_version SET width=5000,height=5000 WHERE id=$1", [first]);
+    await mutateLegacyVersion(admin, "UPDATE asset_version SET width=5000,height=5000 WHERE id=$1", [first]);
     const unavailable = await stable("reuse/full-size");
     assert.equal(unavailable.statusCode, 422, unavailable.body); assert.equal(unavailable.headers.location, undefined);
     assert.equal((await create("reuse/full-size-new", { format: "png" })).statusCode, 422);
@@ -198,7 +198,7 @@ export async function checkAssetUses(t: TestContext, app: FastifyInstance, admin
       payload: { displayName: "Small preview", transformation: { format: "png", w: 320 }, expectedRevision: 1 } });
     assert.equal(repair.statusCode, 200, repair.body);
     assert.equal((await stable("reuse/full-size")).statusCode, 302);
-    await admin.query("UPDATE asset_version SET width=16,height=16 WHERE id=$1", [first]);
+    await mutateLegacyVersion(admin, "UPDATE asset_version SET width=16,height=16 WHERE id=$1", [first]);
   });
 
   await t.test("shared namespace rejects alias overwrites, ancestors, folders and import preflight before upload", async () => {

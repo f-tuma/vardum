@@ -277,9 +277,11 @@ export async function checkResourceBudgets(
         "UPDATE asset_version SET status='processing' WHERE id=$1",
         [processing],
       );
-      await admin.query("UPDATE asset_version SET status='ready' WHERE id=$1", [
-        ready,
-      ]);
+      // Synthetic publication for this quota-only fixture must obey the same
+      // attempt/key fencing as real ingest (image processing is tested above).
+      const readyAttempt = randomUUID();
+      await admin.query("UPDATE asset_version SET status='processing',ingest_attempt_id=$2 WHERE id=$1", [ready, readyAttempt]);
+      await admin.query("UPDATE asset_version SET status='ready',storage_key='originals/'||workspace_id||'/'||asset_id||'/'||id||'/sealed/'||ingest_attempt_id||'/source',ingest_attempt_id=NULL WHERE id=$1", [ready]);
       await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [
         ready,
         id,

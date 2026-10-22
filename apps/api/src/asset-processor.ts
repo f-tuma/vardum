@@ -6,7 +6,8 @@ import { z } from "zod";
 import { asset, assetVersion, auditEvent } from "./db/app-schema.js";
 import { lockWorkspaceContent } from "./db/content-guard.js";
 import { inWorkspace, type Transaction } from "./db/tenant.js";
-import { getObject, readBoundedObject } from "./storage.js";
+import { getObject, putOriginalObject, readBoundedObject } from "./storage.js";
+import { sealedUploadPrefix } from "./upload-objects.js";
 
 const payloadSchema = z.object({
   workspaceId: z.string().min(1),
@@ -68,6 +69,10 @@ export async function processAsset(
   // Upload limits bound this buffer; stream to disk if those limits grow.
   const bytes = await readBoundedObject(object, pending.size, options.signal);
   options.signal?.throwIfAborted();
+  if (bytes.length !== pending.size) {
+    await fail("The uploaded bytes do not match the reserved size. Upload a new file.");
+    return;
+  }
   const sourceChecksum = createHash("sha256").update(bytes).digest("hex");
   if (pending.expectedChecksum && pending.expectedChecksum !== sourceChecksum) {
     await fail("The uploaded bytes do not match the planned checksum. Upload a new file.");
@@ -77,9 +82,12 @@ export async function processAsset(
   // Video: no sharp processing, just checksum + mark ready.
   if (videoMimeSet.has(pending.mimeType)) {
     const checksum = sourceChecksum;
+    const sealedKey = `${sealedUploadPrefix(pending)}${attemptId}/source`;
+    await putOriginalObject(sealedKey, bytes, pending.mimeType, options.signal);
     await markReady(
       payload,
       attemptId,
+      sealedKey,
       checksum,
       pending.mimeType,
       null,
@@ -120,9 +128,14 @@ export async function processAsset(
   }
 
   const checksum = sourceChecksum;
+  // Never COPY the stage after validating it: a still valid POST can replace it
+  // between GET and COPY. Each fenced attempt publishes its own verified Buffer.
+  const sealedKey = `${sealedUploadPrefix(pending)}${attemptId}/source`;
+  await putOriginalObject(sealedKey, bytes, detectedMimeType, options.signal);
   await markReady(
     payload,
     attemptId,
+    sealedKey,
     checksum,
     detectedMimeType,
     width,
@@ -134,6 +147,7 @@ export async function processAsset(
 async function markReady(
   payload: AssetIngestPayload,
   attemptId: string,
+  storageKey: string,
   checksum: string,
   mimeType: string,
   width: number | null,
@@ -181,6 +195,7 @@ async function markReady(
       .update(assetVersion)
       .set({
         status: "ready",
+        storageKey,
         mimeType,
         checksum,
         width,

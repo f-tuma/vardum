@@ -30,6 +30,16 @@ export async function assertRuntimeDatabaseRole(database: Pool | PoolClient) {
       "Unsafe runtime database role. API and worker require a dedicated non-owner role without superuser, BYPASSRLS, role memberships, schema creation or TRUNCATE privileges. Run migrations separately and use varda_app for DATABASE_URL.",
     );
   }
+  const cleanup = await database.query<{ mutable: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1 FROM pg_class WHERE oid = to_regclass('public.asset_upload_cleanup_scope')
+        AND (has_any_column_privilege(current_user, oid, 'INSERT')
+          OR has_any_column_privilege(current_user, oid, 'UPDATE')
+          OR has_table_privilege(current_user, oid, 'DELETE'))
+    ) AS mutable
+  `);
+  if (cleanup.rows[0]?.mutable !== false)
+    throw new Error("Runtime upload cleanup directory must be read-only; review effective INSERT/UPDATE/DELETE grants");
 }
 
 // Only called by the privileged, one-shot migrator, after both schemas exist.
@@ -81,6 +91,7 @@ export async function provisionRuntimeRole(database: Pool, password: string) {
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO varda_app;
       GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO varda_app;
       REVOKE UPDATE, DELETE ON known_usage_check FROM varda_app;
+      REVOKE INSERT, UPDATE, DELETE ON asset_upload_cleanup_scope FROM varda_app;
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO varda_app;
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO varda_app;
       REVOKE ALL ON ALL TABLES IN SCHEMA pgboss FROM PUBLIC;

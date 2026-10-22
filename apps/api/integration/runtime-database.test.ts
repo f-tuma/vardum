@@ -112,6 +112,28 @@ test(
         await assertRuntimeDatabaseRole(runtime);
         const { runtimeDatabaseProbeSql, validateRuntimeDatabaseProbe } = await import("../../../scripts/fixtures/runtime-database.mjs");
         validateRuntimeDatabaseProbe((await runtime.query(runtimeDatabaseProbeSql)).rows[0]);
+        // Grants are checked effectively, including column/PUBLIC access. A
+        // repeated provisioning pass must remove direct grants and refuse to
+        // silently rewrite unrelated PUBLIC privileges.
+        for (const privilege of ["INSERT", "UPDATE (sweep_at)", "DELETE"]) {
+          await admin!.query(`GRANT ${privilege} ON asset_upload_cleanup_scope TO varda_app`);
+          try {
+            await assert.rejects(assertRuntimeDatabaseRole(runtime), /cleanup directory must be read-only/);
+            const changed = (await runtime.query(runtimeDatabaseProbeSql)).rows[0];
+            assert.throws(() => validateRuntimeDatabaseProbe(changed), /read-only cleanup/);
+            await provisionRuntimeRole(admin!, appPassword);
+            await assertRuntimeDatabaseRole(runtime);
+          } finally {
+            await admin!.query(`REVOKE ${privilege} ON asset_upload_cleanup_scope FROM varda_app`);
+          }
+        }
+        await admin!.query("GRANT UPDATE (sweep_at) ON asset_upload_cleanup_scope TO PUBLIC");
+        try {
+          await assert.rejects(provisionRuntimeRole(admin!, appPassword), /cleanup directory must be read-only/);
+        } finally {
+          await admin!.query("REVOKE UPDATE (sweep_at) ON asset_upload_cleanup_scope FROM PUBLIC");
+          await provisionRuntimeRole(admin!, appPassword);
+        }
         // A narrow accidental evidence UPDATE grant must fail the deployed
         // candidate probe even though the generic role remains non-owner.
         for (const privilege of ["UPDATE", "DELETE"]) {

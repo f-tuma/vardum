@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mutateLegacyVersion } from "./legacy-version.fixture.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
@@ -128,7 +129,7 @@ export async function checkVardEditor(t: TestContext, fixture: {
     assert.equal(withRules.items.length, 1);
     assert.deepEqual(withRules.folderRules, rules);
     await admin.query("UPDATE asset SET display_name='Source metadata only',is_public=true,key=$1,current_version_id=null WHERE id=$2", [`${prefix}source/renamed.svg`, file.assetId]);
-    await admin.query("UPDATE asset_version SET mime_type='image/png',checksum=$1,size=size+1 WHERE id=$2", ["b".repeat(64), file.versionId]);
+    await mutateLegacyVersion(admin, "UPDATE asset_version SET mime_type='image/png',checksum=$1,size=size+1 WHERE id=$2", ["b".repeat(64), file.versionId]);
     const changedSource = await editor(id);
     assert.equal(changedSource.revision, withRules.revision);
     assert.equal(changedSource.items[0]!.key, `${prefix}source/renamed.svg`);
@@ -201,7 +202,7 @@ export async function checkVardEditor(t: TestContext, fixture: {
       add(pinnedFile, { versionId: pinnedFile.versionId }), add(other),
     ])) as Definition;
     const pinnedId = saved.items.find(item => item.assetId === pinnedFile.assetId)!.id;
-    await admin.query("UPDATE asset_version SET status='failed',error='Fixture unavailable source' WHERE id=$1", [pinnedFile.versionId]);
+    await mutateLegacyVersion(admin, "UPDATE asset_version SET status='failed',error='Fixture unavailable source' WHERE id=$1", [pinnedFile.versionId]);
     const unavailable = await editor(id);
     const retained = unavailable.items.find(item => item.id === pinnedId)!;
     assert.equal(unavailable.revision, saved.revision);

@@ -134,6 +134,13 @@
       "when": 1792572592076,
       "tag": "0018_asset_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792668000000,
+      "tag": "0019_upload_object_integrity",
+      "breakpoints": true
     }
   ]
 }

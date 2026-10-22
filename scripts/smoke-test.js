@@ -6,6 +6,7 @@ import { checkResourceBudgets } from "./smoke-resource-budgets.mjs";
 import { checkLargePresignedPost } from "./smoke-large-presigned-post.mjs";
 import { checkBackupRestore } from "./smoke-backup-restore.mjs";
 import { checkSvgCompatibilityLifecycle } from "./smoke-svg-compatibility.mjs";
+import { checkUploadIntegrity } from "./smoke-upload-integrity.mjs";
 
 const base = process.env.SMOKE_URL;
 let cookie = "";
@@ -179,6 +180,7 @@ if (
 await checkOnboarding({ base, cookie, workspaceId: workspace.id });
 await checkInstalledPackages({ releaseDir: process.env.SMOKE_RELEASE_DIR, base, cookie, workspaceId: workspace.id, otherWorkspaceId: secondary.id });
 await checkRustfsRecovery({ request, workspaceId: workspace.id, assetId: asset.id, currentVersionId: version.id, file: svg });
+await checkUploadIntegrity({ request, workspaceId: workspace.id, workspaceSlug: workspace.slug });
 await checkResourceBudgets({ base, cookie, workspaceId: workspace.id, assetId: asset.id });
 await checkLargePresignedPost({ request, workspaceId: workspace.id, workspaceSlug: workspace.slug });
 await checkSvgCompatibilityLifecycle({ base, cookie, workspaceId: workspace.id, workspaceSlug: workspace.slug });

@@ -190,8 +190,8 @@ test("candidate uses exact saved images, keeps independent clients and never bui
   const f = await fixture();
   try {
     const manifest = await validateCandidate(f.directory, { execute: f.execute, expectedCommit: commit });
-    assert.equal(manifest.migrations.length, 19);
-    assert.equal(manifest.migrations.at(-1).file, "migrations/0018_asset_archive.sql");
+    assert.equal(manifest.migrations.length, 20);
+    assert.equal(manifest.migrations.at(-1).file, "migrations/0019_upload_object_integrity.sql");
     const compose = await readFile(join(f.directory, "compose.production.yml"), "utf8");
     assert.doesNotMatch(compose, /build:|vardum-api:smoke/);
     assert.equal((compose.match(/pull_policy: never/g) ?? []).length, 7);
@@ -1444,7 +1444,7 @@ test("new source client versions remain distinct from the actual public compatib
   } finally { await f.close(); }
 });
 
-for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe time", "fractional time", "string time", "index order", "tag order", "current tag order", "missing 0015", "missing 0016", "missing 0017", "missing 0018", "unreviewed 0019", "duplicate JSON time"]) {
+for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe time", "fractional time", "string time", "index order", "tag order", "current tag order", "missing 0015", "missing 0016", "missing 0017", "missing 0018", "missing 0019", "unreviewed 0020", "duplicate JSON time"]) {
   test(`migration journal ${problem} fails before Docker mutation despite recomputed hashes`, async () => {
     const f = await fixture();
     try {
@@ -1462,8 +1462,9 @@ for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe
       else if (problem === "missing 0015") journal.entries.splice(15, 1);
       else if (problem === "missing 0016") journal.entries.splice(16, 1);
       else if (problem === "missing 0017") journal.entries.splice(17, 1);
-      else if (problem === "missing 0018") journal.entries.pop();
-      else if (problem === "unreviewed 0019") journal.entries.push({ ...journal.entries.at(-1), idx: 19, tag: "0019_unreviewed", when: journal.entries.at(-1).when + 1 });
+      else if (problem === "missing 0018") journal.entries.splice(18, 1);
+      else if (problem === "missing 0019") journal.entries.pop();
+      else if (problem === "unreviewed 0020") journal.entries.push({ ...journal.entries.at(-1), idx: 20, tag: "0020_unreviewed", when: journal.entries.at(-1).when + 1 });
       let bytes = JSON.stringify(journal);
       if (problem === "duplicate JSON time") bytes = bytes.replace(/"when":(\d+)/, '"when":$1,"when":$1');
       await writeFile(path, bytes);
@@ -1474,7 +1475,7 @@ for (const problem of ["duplicate time", "decreasing time", "zero time", "unsafe
   });
 }
 
-for (const migrationTag of ["0017_asset_uses", "0018_asset_archive"]) for (const problem of ["missing SQL", "SQL byte drift", "declared hash drift", "recomputed inventory hash"]) {
+for (const migrationTag of ["0017_asset_uses", "0018_asset_archive", "0019_upload_object_integrity"]) for (const problem of ["missing SQL", "SQL byte drift", "declared hash drift", "recomputed inventory hash"]) {
   test(`${migrationTag} migration ${problem} fails before Docker mutation`, async () => {
     const f = await fixture();
     try {

@@ -4,6 +4,7 @@ import {
 } from "./asset-cleanup.js";
 import { processAsset, type AssetIngestPayload } from "./asset-processor.js";
 import { cleanupPendingUploads } from "./upload-lifecycle.js";
+import { cleanupUploadObjects } from "./upload-objects.js";
 import { reconcileAssetIngest } from "./asset-ingest.js";
 import { closeDatabase, pool } from "./db/index.js";
 import { config } from "./config.js";
@@ -38,7 +39,11 @@ try {
   await reconcileAssetIngest();
   await queue.schedule(uploadCleanupQueue, "* * * * *");
   await queue.work(uploadCleanupQueue, async () => {
-    await cleanupPendingUploads();
+    try {
+      await cleanupPendingUploads();
+    } finally {
+      await cleanupUploadObjects();
+    }
   });
   await queue.send(uploadCleanupQueue, {});
   await queue.schedule(assetIngestRecoveryQueue, "* * * * *");

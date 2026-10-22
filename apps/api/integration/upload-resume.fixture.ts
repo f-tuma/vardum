@@ -93,6 +93,12 @@ export async function checkUploadResume(
   });
   const state = async (versionId: string) =>
     (await admin.query("SELECT * FROM asset_version WHERE id=$1", [versionId])).rows[0];
+  const finish = async (assetId: string, versionId: string) => {
+    const row = await state(versionId);
+    objects.set(row.storage_key, bytes);
+    await processAsset({ workspaceId: "ws", assetId, versionId, requestId: "resume-fixture" });
+    assert.equal((await state(versionId)).status, "ready");
+  };
   const assetState = async (assetId: string) =>
     (await admin.query("SELECT * FROM asset WHERE id=$1", [assetId])).rows[0];
   const audit = async (targetId: string) =>
@@ -334,7 +340,7 @@ export async function checkUploadResume(
     );
     await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [newestId, assetId]);
     await check(true);
-    await admin.query("UPDATE asset_version SET status='ready',checksum=$2 WHERE id=$1", [intent.id, checksum]);
+    await finish(assetId, intent.id);
     await check(false);
   });
 
@@ -382,7 +388,7 @@ export async function checkUploadResume(
     assert.equal(adopted.id, intent.id);
     assert.equal(adopted.status, "processing");
     withoutUpload(adopted);
-    await admin.query("UPDATE asset_version SET status='ready',checksum=$2 WHERE id=$1", [intent.id, checksum]);
+    await finish(assetId, intent.id);
     await admin.query("UPDATE asset SET current_version_id=$1 WHERE id=$2", [intent.id, assetId]);
     const before = await state(intent.id);
     const beforeAudit = await audit(intent.id);

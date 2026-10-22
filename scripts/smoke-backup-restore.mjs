@@ -97,6 +97,15 @@ export async function checkBackupRestore({
       `const {storage}=await import('./dist/storage.js');const {config}=await import('./dist/config.js');try{${code}}finally{storage.destroy();}`,
     );
   const checksum = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const versionRow = async (project, id) => {
+    assert.match(id, /^[a-f0-9-]{36}$/);
+    return JSON.parse(await sql(project, `SELECT row_to_json(v) FROM asset_version v WHERE id='${id}'`));
+  };
+  const assertSealedKey = (row) => {
+    const prefix = `originals/${row.workspace_id}/${row.asset_id}/${row.id}/sealed/`;
+    assert.ok(row.storage_key.startsWith(prefix), "ready version publishes a sealed key in its own namespace");
+    assert.match(row.storage_key.slice(prefix.length), /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/source$/, "sealed key identifies one ingest attempt");
+  };
   const pendingState = async (project, fixture) => {
     // These IDs are generated locally and checked against the API response.
     assert.match(fixture.assetId, /^[a-f0-9-]{36}$/);
@@ -111,7 +120,7 @@ export async function checkBackupRestore({
   };
   const storePending = async (fixture, upload, bytes) => {
     assert.equal(upload.method, "POST");
-    assert.equal(upload.fields.key, fixture.storageKey);
+    assert.equal(upload.fields.key, fixture.stagingKey);
     const form = new FormData();
     for (const [name, value] of Object.entries(upload.fields))
       form.append(name, value);
@@ -121,21 +130,23 @@ export async function checkBackupRestore({
     });
     assert.ok(response.ok, `Pending storage upload: ${response.status} ${await response.text()}`);
   };
-  const assertPendingObject = async (project, fixture, bytes) => {
+  const assertStoredObject = async (project, storageKey, mimeType, bytes, expectedHeaders) => {
     const result = await storageCommand(project, `
       const {default:assert}=await import('node:assert/strict');
       const {GetObjectCommand}=await import('@aws-sdk/client-s3');
-      const object=await storage.send(new GetObjectCommand({Bucket:config.S3_BUCKET,Key:${JSON.stringify(fixture.storageKey)}}));
+      const object=await storage.send(new GetObjectCommand({Bucket:config.S3_BUCKET,Key:${JSON.stringify(storageKey)}}));
       assert.equal(object.ContentLength,${bytes.length});
-      assert.equal(object.ContentType,${JSON.stringify(fixture.intent.mimeType)});
+      assert.equal(object.ContentType,${JSON.stringify(mimeType)});
       assert.deepEqual(Buffer.from(await object.Body.transformToByteArray()),Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64'));
       const headers=Object.fromEntries(Object.entries({ContentType:object.ContentType,CacheControl:object.CacheControl,ContentDisposition:object.ContentDisposition,ContentEncoding:object.ContentEncoding,ContentLanguage:object.ContentLanguage,Expires:object.Expires?.toISOString(),Metadata:object.Metadata}).filter(([,value])=>value!==undefined));
-      const expectedHeaders=${JSON.stringify(fixture.objectHeaders ?? null)};
+      const expectedHeaders=${JSON.stringify(expectedHeaders ?? null)};
       if(expectedHeaders)assert.deepEqual(headers,expectedHeaders);
       console.log(JSON.stringify(headers));
     `);
     return JSON.parse(result.stdout.trim());
   };
+  const assertPendingObject = (project, fixture, bytes) =>
+    assertStoredObject(project, fixture.stagingKey, fixture.intent.mimeType, bytes, fixture.objectHeaders);
   const assertWritersStopped = async (project) => {
     const running = (await compose(project, "ps", "--services", "--status", "running")).stdout.trim().split("\n");
     assert.ok(!running.some((service) => ["api", "worker", "gateway"].includes(service)), "snapshot/restore assertions require stopped application writers");
@@ -259,7 +270,7 @@ export async function checkBackupRestore({
           {},
           "POST",
         );
-        // These requests remain pending, with original objects but no ingest jobs.
+        // These requests remain pending, with staging objects but no ingest jobs.
         // They exercise the server contract even when installed public clients
         // predate resumable folder uploads.
         const pendingBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>');
@@ -290,7 +301,7 @@ export async function checkBackupRestore({
           assert.ok(Date.parse(initialVersion.expiresAt) > Date.now());
           const fixture = {
             assetId: id, key: assetKey, intent, path, outcome, initialVersion,
-            storageKey: `originals/${workspaceId}/${id}/${intent.id}/source`,
+            stagingKey: `originals/${workspaceId}/${id}/${intent.id}/source`,
           };
           await storePending(fixture, upload, pendingBytes);
           pendingFixtures.push(fixture);
@@ -301,6 +312,7 @@ export async function checkBackupRestore({
           const [row] = fixture.before.versions;
           assert.equal(row.id, fixture.intent.id);
           assert.equal(row.status, "pending");
+          assert.equal(row.storage_key, fixture.stagingKey);
           assert.equal(row.expected_checksum, fixture.intent.expectedChecksum);
           assert.equal(row.checksum, null);
           assert.equal(row.ingest_job_id, null);
@@ -341,11 +353,28 @@ export async function checkBackupRestore({
           await readFile(join(backup, "backup.json"), "utf8"),
         );
         await assertWritersStopped(source);
+        // This historical ready version already points at worker-sealed bytes.
+        // Restoring it must preserve that exact key, independently of staging.
+        const sealedBefore = await versionRow(source, versionId);
+        assert.equal(sealedBefore.status, "ready");
+        assert.equal(sealedBefore.workspace_id, workspaceId);
+        assert.equal(sealedBefore.asset_id, assetId);
+        assertSealedKey(sealedBefore);
+        const pinnedBytes = files.get("assets/pinned.svg");
+        assert.ok(Buffer.isBuffer(pinnedBytes));
+        assert.equal(checksum(pinnedBytes), sealedBefore.checksum);
+        const sealedHeaders = await assertStoredObject(source, sealedBefore.storage_key, sealedBefore.mime_type, pinnedBytes);
+        const savedSealed = manifest.objects.find((item) => item.key === sealedBefore.storage_key);
+        assert.ok(savedSealed, "published sealed original must be present in the object backup");
+        assert.equal(savedSealed.size, sealedBefore.size);
+        assert.equal(savedSealed.sha256, sealedBefore.checksum);
+        assert.deepEqual(savedSealed.headers, sealedHeaders);
+        assert.deepEqual(await readFile(join(backup, savedSealed.file)), pinnedBytes);
         for (const fixture of pendingFixtures) {
           assert.deepEqual(await pendingState(source, fixture), fixture.before, "snapshot preserves the unfinalized request without creating an ingest job");
           fixture.objectHeaders = await assertPendingObject(source, fixture, pendingBytes);
-          const savedObject = manifest.objects.find((item) => item.key === fixture.storageKey);
-          assert.ok(savedObject, "pending original must be present in the object backup");
+          const savedObject = manifest.objects.find((item) => item.key === fixture.stagingKey);
+          assert.ok(savedObject, "pending staging object must be present in the object backup");
           assert.equal(savedObject.size, pendingBytes.length);
           assert.equal(savedObject.sha256, fixture.intent.expectedChecksum);
           assert.deepEqual(savedObject.headers, fixture.objectHeaders, "backup preserves pending object metadata without relying on ETag or LastModified");
@@ -415,6 +444,9 @@ export async function checkBackupRestore({
           "old liveness must not survive restore",
         );
         await assertWritersStopped(target);
+        const sealedRestored = await versionRow(target, versionId);
+        assert.deepEqual(sealedRestored, sealedBefore, "ready version identity, checksum and exact sealed key survive restore");
+        await assertStoredObject(target, sealedRestored.storage_key, sealedRestored.mime_type, pinnedBytes, sealedHeaders);
         for (const fixture of pendingFixtures) {
           assert.deepEqual(await pendingState(target, fixture), fixture.before, "exact pending row, checksum binding, reservation and audit survive before worker startup");
           await assertPendingObject(target, fixture, pendingBytes);
@@ -472,7 +504,7 @@ export async function checkBackupRestore({
           assert.equal(replayed.status, 200, await replayed.clone().text());
           const { upload, ...version } = await replayed.json();
           assert.deepEqual(version, fixture.initialVersion, "same UUID replay preserves number, metadata, checksum and expiry");
-          assert.equal(upload.fields.key, fixture.storageKey);
+          assert.equal(upload.fields.key, fixture.stagingKey);
           assert.deepEqual(await pendingState(target, fixture), beforeReplay, "same UUID replay must not create another reservation, version or audit");
           fixture.resumeUpload = upload;
           fixture.replayStatus = { changedChecksum: rejected.status, sameIntent: replayed.status };
@@ -482,6 +514,7 @@ export async function checkBackupRestore({
           // The altered source deliberately has the same size/type. Finalize
           // admits its durable job; the worker must reject its actual SHA-256.
           await storePending(fixture, fixture.resumeUpload, bytes);
+          await assertPendingObject(target, fixture, bytes);
           const finalized = await apiResponse(`${fixture.path}/${fixture.intent.id}/finalize`, {});
           assert.equal(finalized.status, 202, await finalized.clone().text());
           assert.deepEqual(await finalized.json(), { id: fixture.intent.id, status: "processing" });
@@ -504,7 +537,7 @@ export async function checkBackupRestore({
           assert.equal(row.status, completed.status);
           assert.equal(row.checksum, completed.checksum);
           assert.equal(row.retryable, false);
-          for (const field of ["id", "workspace_id", "asset_id", "number", "storage_key", "filename", "mime_type", "size", "expected_checksum", "created_at", "created_by", "upload_expired_at", "upload_cleaned_at"])
+          for (const field of ["id", "workspace_id", "asset_id", "number", "filename", "mime_type", "size", "expected_checksum", "created_at", "created_by", "upload_expired_at", "upload_cleaned_at"])
             assert.equal(row[field], fixture.before.versions[0][field], `resumed version preserves ${field}`);
           assert.deepEqual(after.reservation, { bytes: pendingBytes.length, pending: 0 });
           const auditActions = after.audit.filter((event) => event.target_type === "asset_version").map((event) => event.action).sort();
@@ -514,15 +547,23 @@ export async function checkBackupRestore({
             "same version has one creation, queue and terminal audit, with no publishing audit on checksum failure",
           );
           if (fixture.outcome === "ready") {
+            assertSealedKey(row);
+            assert.notEqual(row.storage_key, fixture.stagingKey, "ready publication switches from the writable stage to a sealed attempt");
             assert.equal(completed.checksum, fixture.intent.expectedChecksum);
             assert.equal(completed.error, null);
             assert.equal(after.asset.current_version_id, fixture.intent.id);
-            const delivered = await fetch(`${base}/w/smoke/${fixture.key}`, {
-              headers: { cookie }, signal: AbortSignal.timeout(10_000),
-            });
-            assert.equal(delivered.status, 200);
-            assert.deepEqual(Buffer.from(await delivered.arrayBuffer()), pendingBytes);
+            await assertStoredObject(target, row.storage_key, row.mime_type, pendingBytes);
+            for (const path of [`/w/smoke/${fixture.key}`, `/w/smoke/__v/${fixture.intent.id}/${fixture.key}`]) {
+              const delivered = await fetch(`${base}${path}`, {
+                headers: { cookie }, signal: AbortSignal.timeout(10_000),
+              });
+              assert.equal(delivered.status, 200);
+              const deliveredBytes = Buffer.from(await delivered.arrayBuffer());
+              assert.deepEqual(deliveredBytes, pendingBytes);
+              assert.equal(checksum(deliveredBytes), row.checksum);
+            }
           } else {
+            assert.equal(row.storage_key, fixture.stagingKey, "checksum failure never publishes a sealed key");
             assert.equal(completed.checksum, null);
             assert.match(completed.error, /uploaded bytes do not match the planned checksum/i);
             assert.equal(after.asset.current_version_id, fixture.before.asset.current_version_id);
@@ -535,7 +576,8 @@ export async function checkBackupRestore({
             fixture.retryStatus = retry.status;
             assert.deepEqual(await pendingState(target, fixture), after, "checksum failure cannot be retried into a new job or version");
           }
-          await assertPendingObject(target, fixture, bytes);
+          // Staging can be swept after a terminal decision. Only the published
+          // sealed object and delivery are durable ready-byte invariants.
           // Only synthetic version state is logged: never upload forms or keys.
           console.log(JSON.stringify({
             check: "checksum-bound-pending-restore", phase: "completed",
@@ -554,6 +596,13 @@ export async function checkBackupRestore({
           historyBefore,
           "versions/current pointer and session survive restore",
         );
+        const restoredPinned = await fetch(`${base}/w/smoke/__v/${versionId}/logo`, {
+          headers: { cookie }, signal: AbortSignal.timeout(10_000),
+        });
+        assert.equal(restoredPinned.status, 200);
+        const restoredPinnedBytes = Buffer.from(await restoredPinned.arrayBuffer());
+        assert.deepEqual(restoredPinnedBytes, pinnedBytes);
+        assert.equal(checksum(restoredPinnedBytes), sealedBefore.checksum, "restored historical delivery agrees with the persisted sealed checksum");
         assert.equal((await fetch(`${base}/w/smoke/logo`)).status, 401);
         const transformed = await fetch(new URL(signed.url, base), {
           headers: { cookie },
