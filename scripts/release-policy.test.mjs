@@ -139,3 +139,47 @@ test("manual validation downloads the tested artifact with read-only permissions
   assert.match(download, /run: bash scripts\/smoke-publish\.sh artifacts\/npm/);
   assert.doesNotMatch(download, /run-id:|repository:|github-token:|continue-on-error:/);
 });
+
+
+test("downloaded candidates exercise recipes without repacking or publication privileges", () => {
+  const download = workflowJob("validate-download");
+  assert.match(download, /uses: pnpm\/action-setup@[a-f0-9]{40}/);
+  assert.match(download, /run: pnpm install --frozen-lockfile/);
+  assert.match(download, /SMOKE_INSTALLED_RECIPES_ONLY: ["']?1["']?/);
+  assert.match(download, /SMOKE_RECIPE_REGISTRY: candidate/);
+  assert.match(download, /SMOKE_RELEASE_DIR:.*artifacts\/npm/);
+  assert.match(download, /run: bash scripts\/smoke-production\.sh/);
+  assert.doesNotMatch(download, /release-packages\.mjs pack|pnpm (?:-r )?build|SMOKE_PUBLIC_CLIENTS|SMOKE_SERVER_CANDIDATE/);
+  assert.ok(download.indexOf("release-packages.mjs check") < download.indexOf("run: bash scripts/smoke-production.sh"));
+});
+
+test("new public recipe proof uses the same run archives after a successful source publication", () => {
+  const proof = workflowJob("verify-public-recipes");
+  const condition = proof.match(/\n {8}if: >-\n([\s\S]*?)\n {8}runs-on:/)?.[1]
+    .trim().replace(/\s+/g, " ");
+  assert.ok(condition, "Public recipe job must have an explicit publication gate");
+  assert.match(proof, /needs: \[validate, publish\]/);
+  assert.match(condition, /needs\.publish\.result == 'success'/);
+  assert.match(condition, /github\.event_name == 'push' \|\| inputs\.release_mode == 'source'/);
+  assert.match(condition, /needs\.validate\.outputs\.expected_ref == github\.ref/);
+  assert.match(condition, /github\.event_name == 'workflow_dispatch' && inputs\.validation_only == false/);
+  assert.match(proof, /permissions:\n {12}contents: read/);
+  assert.doesNotMatch(proof, /environment:|id-token:|contents: write|continue-on-error:/);
+  assert.match(proof, /uses: actions\/checkout@[a-f0-9]{40}/);
+  assert.match(proof, /persist-credentials: false/);
+  assert.match(proof, /node-version: 22\.23\.3/);
+  assert.match(proof, /uses: pnpm\/action-setup@[a-f0-9]{40}/);
+  assert.match(proof, /run: pnpm install --frozen-lockfile/);
+  assert.match(proof, /uses: actions\/download-artifact@[a-f0-9]{40}/);
+  assert.match(proof, /name: npm-\$\{\{ github\.sha \}\}/);
+  assert.match(proof, /path: artifacts\/npm\//);
+  assert.match(proof, /run: node scripts\/release-packages\.mjs check artifacts\/npm/);
+  assert.match(proof, /SMOKE_INSTALLED_RECIPES_ONLY: ["']?1["']?/);
+  assert.match(proof, /SMOKE_RECIPE_REGISTRY: public/);
+  assert.match(proof, /SMOKE_RELEASE_DIR:.*artifacts\/npm/);
+  assert.match(proof, /run: bash scripts\/smoke-production\.sh/);
+  assert.doesNotMatch(proof, /run-id:|repository:|github-token:|release-packages\.mjs (?:pack|publish)|npm publish|gh release|SMOKE_PUBLIC_CLIENTS|SMOKE_SERVER_CANDIDATE|pnpm (?:-r )?build/);
+  assert.ok(proof.indexOf("release-packages.mjs check") < proof.indexOf("run: bash scripts/smoke-production.sh"));
+  // The privileged job remains limited to publishing and verifying archive bytes.
+  assert.doesNotMatch(workflowJob("publish"), /smoke-production|smoke-installed-recipes|pnpm install/);
+});

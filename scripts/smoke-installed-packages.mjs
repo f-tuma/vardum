@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { run, smokeClientOptions, withInstalledRelease } from "./release-packages.mjs";
+import { checkInstalledRecipes } from "./smoke-installed-recipes.mjs";
 
 // Public compatibility clients predate these source-only protocols. Gate by the
 // actual consumer selection, not the source version (unreleased source was 0.6).
@@ -26,7 +27,13 @@ export async function checkInstalledPackages({
   workspaceId,
   otherWorkspaceId,
 }) {
-  await withInstalledRelease(releaseDir, async ({ root, cli, mcp, publicRegistry }) => {
+  await withInstalledRelease(releaseDir, async (installed) => {
+    const { root, cli, mcp, publicRegistry } = installed;
+    // Historical public compatibility clients retain their original acceptance scope.
+    // A new public release uses the explicit recipe entrypoint instead of this skip.
+    if (!publicRegistry) {
+      await checkInstalledRecipes(installed, { base, cookie, workspaceId, otherWorkspaceId });
+    }
     async function api(path, body, method = "POST") {
       const response = await fetch(`${base}${path}`, {
         method,

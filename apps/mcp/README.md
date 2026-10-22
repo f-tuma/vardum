@@ -4,12 +4,14 @@ MCP server for [Vardum](https://vardum.com): lets an AI agent manage assets and
 Vards using a key scoped to one workspace. Workspace creation, membership,
 API-key management and domains are managed in the web app with a signed-in session.
 
-This README describes [MCP **0.4.1**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.1),
-including revision-guarded Vard editing. The matching client batch uses CLI
-**0.8.1** and shared **0.4.1**. This patch makes setup self-contained without
-changing the tools or editor protocol. Older MCP 0.3.0 uses the legacy editing
-contract; installing it does not enable revision guards. The published 0.1.0
-artifact has a broken workspace dependency.
+This README describes [MCP **0.4.2**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.2),
+including revision-guarded Vard editing and recipe help for backgrounds, safe
+area and SVG rendering. The matching client batch uses
+[CLI **0.8.3**](https://www.npmjs.com/package/@vardum/cli/v/0.8.3) and
+[shared **0.4.2**](https://www.npmjs.com/package/@vardum/shared/v/0.4.2).
+The same 11 tools and editor protocol remain; the MCP SDK is now 1.32.1.
+Older MCP 0.3.0 uses the legacy editing contract; installing it does not enable
+revision guards. The published 0.1.0 artifact has a broken workspace dependency.
 
 ## Setup
 
@@ -18,7 +20,7 @@ API key in **Settings → API keys** first; it is restricted to that workspace
 and its selected permissions. Copy the workspace ID from Settings → General
 for tool calls. Use Node.js 22 or newer.
 
-These configurations pin **MCP 0.4.1** and need no source-repository access.
+These configurations pin **MCP 0.4.2** and need no source-repository access.
 Deploy a server advertising `vardEditRevision: 1` from `GET /api/capabilities`
 before editable Vard reads or mutations; there is no legacy-edit fallback.
 Use a read key for inspection or a key with the required write permissions for
@@ -27,7 +29,7 @@ mutation. Keep real keys in the client's private configuration, never in Git.
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.1
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.2
 ```
 
 Any client that reads a JSON config (Claude Desktop, Cursor, …):
@@ -37,7 +39,7 @@ Any client that reads a JSON config (Claude Desktop, Cursor, …):
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.4.1"],
+      "args": ["-y", "@vardum/mcp@0.4.2"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
@@ -123,6 +125,33 @@ current definition, then reapply the edit with that reviewed definition's
 revision. Do not automatically repeat a stale replacement list with a new token.
 An unresolved preview never permits bypassing the revision check or writing
 expanded folder outputs as manual mappings.
+
+## Output recipes
+
+The `replace_vard_items` transformation help describes these optional fields:
+
+| Field | Contract |
+| --- | --- |
+| `bg` | Opaque six-digit `#rrggbb` output background; requires an explicit format |
+| `pad` | 0–45 percent inset on each edge, at most two decimals; positive values require `w`, `h`, a format and `fit: "contain"` |
+| `format: "svg"` | Vector output from a passive geometric SVG, with contain fit and no `q` |
+| `layer` | Existing SVG group ID; preserves the source canvas and ancestor transforms |
+| `darkLayer` + `darkColor` | Paired SVG-only dark-mode color change for filled shapes in one group |
+| `render: "v2"` | Explicit SVG-to-raster renderer; requires a raster format and `bg` |
+
+For example, use this transformation for a new background-backed PNG:
+
+```json
+{ "w": 256, "h": 256, "fit": "contain", "format": "png", "bg": "#f4f0e8", "pad": 12.5, "render": "v2" }
+```
+
+Copy existing transformations literally when editing. Omitting `render` retains
+the legacy renderer; do not add `"v2"` to existing mappings automatically.
+Use a matching server that implements these API and renderer features.
+`vardEditRevision: 1` proves the guarded-editor contract only; it does not
+advertise SVG, safe-area or v2 support. The server validates combinations and
+source types. Group selection and SVG output require the supported passive
+geometric SVG subset; unsupported inputs fail without a fallback.
 
 ## Folder rules
 
