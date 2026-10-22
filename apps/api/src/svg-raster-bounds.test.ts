@@ -142,7 +142,7 @@ test("only exact native SVG geometry limit errors become user-facing 422 failure
     "Input image exceeds pixel limit",
     "Input SVG image exceeds 32767x32767 pixel limit",
     "Input SVG image will exceed 32767x32767 pixel limit when scaled",
-  ];
+  ] as const;
   for (const message of messages) {
     const original = new Error(message), translated = svgRasterLimitError(original);
     assert.ok(capacity(translated));
