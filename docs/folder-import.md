@@ -136,7 +136,7 @@ advertising `vardEditRevision: 1` offer dedicated [guarded editor routes](vard-e
 An import invalidates a previously read editor definition when it adds manual
 mappings, so a stale guarded save fails with 409 and keeps the imported mappings.
 Legacy clients and routes remain unguarded; published MCP 0.3.0 still uses them.
-MCP 0.4.2 uses the guarded routes and refuses legacy fallback. Read
+Current MCP 0.4.3 uses the guarded routes and refuses legacy fallback. Read
 `get_vard` first and pass its original revision as `expectedRevision` for update,
 replacement or deletion. Replacement items retain their existing manual `id`
 (or `null` for a new mapping) and explicitly copy literal `pinnedVersionId` to

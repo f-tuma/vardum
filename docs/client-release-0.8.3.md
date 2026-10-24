@@ -4,8 +4,12 @@
 MCP **0.4.2** and shared **0.4.2** are available from public npm. Original archive
 bytes, independent public installations, all seven public recipe checks and the
 four assets of [release v0.8.3](https://github.com/f-tuma/vardum/releases/tag/v0.8.3)
-are verified. Active guides and gateway source Copy setup now pin CLI 0.8.3;
-MCP guidance pins 0.4.2. Production Copy setup still needs gateway deployment.
+are verified. At that checkpoint, active guides and gateway source Copy setup
+pinned CLI 0.8.3; MCP guidance pinned 0.4.2. Production Copy setup required the
+matching gateway deployment.
+
+**Current MCP guidance:** use the later [MCP 0.4.3 security patch](client-release-mcp-0.4.3.md).
+This document preserves the original October 22 batch and its evidence.
 
 ## Package changes
 
@@ -219,6 +223,10 @@ the actual release/tag/assets and public registry observations. Earlier candidat
 receipts remain historical; they do not replace these publication results.
 
 ## Upgrade order
+
+The following records the original October 22 adoption order. For new installs,
+use MCP **0.4.3** from the [security patch](client-release-mcp-0.4.3.md); CLI/shared
+pins and the backend, recipe and frozen-snapshot requirements below still apply.
 
 1. Verify the deployed API and worker contain the matching recipe implementation
    from PRs #58–#61 and #63. Apply the server's full migration sequence and check

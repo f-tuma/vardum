@@ -55,6 +55,8 @@ VARD-78 production card acceptance and VARD-77 public npm onboarding are recorde
 complete in the planner. Public CLI 0.8.3/shared 0.4.2/MCP 0.4.2 publication,
 independent public recipe verification and gateway source Setup pin promotion
 are recorded in [0.8.3 release evidence](client-release-0.8.3.md#publication-evidence).
+The later [MCP 0.4.3 security patch](client-release-mcp-0.4.3.md) is also published
+and publicly verified; current MCP setup guidance pins 0.4.3.
 Recipes require the matching API and worker; deployment and first-human acceptance
 remain separate. A source README merge alone does not update an already published
 npm archive. Existing versions, release archives and tags remain immutable.

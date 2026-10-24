@@ -112,6 +112,9 @@ The advertised v4 JSON Schema differs: UUID constraints and string record keys
 are explicit, and the SDK omits the previous top-level `additionalProperties`
 metadata; runtime unknown-key stripping remains. Future public MCP remediation
 requires a new immutable version, not replacement of the released 0.4.2 archive.
+That follow-up is now complete: [MCP 0.4.3 publication evidence](client-release-mcp-0.4.3.md#publication-evidence)
+records the exact installed-archive smoke, public verification and zero-finding
+consumer audit. The earlier audit observations above remain historical.
 
 The same audit also reports body-parser, Nodemailer and fast-uri findings. The
 owner explicitly approved four exact security age exceptions on 24 October:
