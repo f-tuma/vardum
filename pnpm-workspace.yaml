@@ -26,6 +26,12 @@ overrides:
 blockExoticSubdeps: true
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
+  # Exact security patches reviewed on 2026-10-24; all other versions retain
+  # the seven-day gate. Integrity, trust policy and audit remain enabled.
+  - "body-parser@2.4.0"
+  - "nodemailer@10.1.4"
+  - "fast-uri@3.1.9"
+  - "fast-uri@4.2.3"
   # GHSA-68fv-2mgg-jv7q: reviewed exact security patch, published 2026-09-30.
   - "source-map-js@1.2.2"
   - "@better-auth/api-key@1.7.1"
