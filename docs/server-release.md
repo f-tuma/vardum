@@ -37,6 +37,14 @@ VARD-70 prepares this tooling for review. VARD-6 still requires a new clean bund
 from the final reviewed source and full unchanged-artifact acceptance. The older
 07a96faa candidate and source-build CI are not substitutes for that artifact.
 
+The default Node22 candidate now uses the authenticated Node 22.23.4 /
+OpenSSL 3.5.9 base verified on 24 October. See the
+[repository runtime refresh assessment](https://github.com/f-tuma/vardum/blob/main/docs/runtime-refresh-20261024.md). A new default pin does
+not recertify retained bundles or resolve the separate Debian glibc/zlib holds.
+Replay an older bundle with its own retained verifier: the refreshed checkout
+rejects an explicitly declared older `node22` base instead of changing that
+manifest or inferring a new runtime from its tag.
+
 ## Prepare the bundle
 
 From a clean checkout of the reviewed commit, using Node 22 and the pinned pnpm:

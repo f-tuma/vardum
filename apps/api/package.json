@@ -29,14 +29,14 @@
     "@vardum/shared": "workspace:^",
     "better-auth": "^1.7.1",
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.12.5",
+    "fastify": "5.12.6",
     "fastify-type-provider-zod": "^7.0.0",
     "nodemailer": "^10.0.10",
     "pg": "^8.23.0",
     "pg-boss": "12.27.0",
     "saxes": "6.0.0",
     "sharp": "0.35.5",
-    "zod": "^4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/nodemailer": "^8.0.1",

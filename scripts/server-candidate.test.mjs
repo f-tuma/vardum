@@ -89,7 +89,7 @@ test("default candidate retains the exact Node22 production base and explicit se
     assert.equal(m.apiRuntime.observation, null);
     const dockerfile = await readFile(new URL("../docker/api.Dockerfile", import.meta.url), "utf8");
     assert.ok(dockerfile.startsWith(`ARG API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}\n`));
-    assert.match(dockerfile, /FROM node:22\.23\.3-bookworm-slim@sha256:43ac6c60/);
+    assert.match(dockerfile, /FROM node:22\.23\.4-bookworm-slim@sha256:de170b39/);
     assert.match(dockerfile, /FROM \$\{API_RUNTIME_IMAGE\} AS runtime/);
     assert.ok(f.builds[0].includes(`API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}`));
     for (const args of f.builds) {
