@@ -43,6 +43,17 @@ acceptance must still be bound to the final reviewed source and saved images.
 The historical assessments below retain their original versions and identities;
 this refresh does not clear the separate glibc or zlib findings.
 
+## Gateway Brotli refresh: 24 October 2026
+
+The current Alpine 3.24 security database adds HIGH CVE-2026-111497 for
+`brotli-libs 1.2.0-r1`. The shared gateway base now pins `brotli-libs=1.2.1-r0`
+for both targets. Its APK passed normal Alpine signature verification and an
+offline dependency simulation required only that package upgrade. The Nginx
+digest and six existing exact APK pins stay fixed. Rebuilt-image scans, installed
+versions and routing/restore acceptance must be tied to their new identities;
+the earlier zero-finding scans remain historical evidence. See the
+[dated fix and portable-bundle acceptance boundary](runtime-refresh-20261024.md#gateway-brotli-and-portable-bundle-correction).
+
 ## Gateway build input refresh: 20 October 2026
 
 The official Alpine 3.24 index no longer carries the previously pinned

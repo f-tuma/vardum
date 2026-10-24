@@ -16,9 +16,10 @@ ENV VITE_UPLOAD_ORIGINS=$VITE_UPLOAD_ORIGINS
 RUN pnpm --filter "@vardum/gateway..." build
 
 FROM nginx:1.30.6-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951 AS gateway-base
-# Exact Alpine 3.24 pins; libexpat availability rechecked on 2026-10-20.
+# Exact Alpine 3.24 pins; Brotli security patch verified on 2026-10-24.
 # Keep security upgrades exact and fail the build if that input is unavailable.
 RUN apk add --no-cache --upgrade \
+  brotli-libs=1.2.1-r0 \
   libexpat=2.9.0-r0 \
   libpng=1.6.59-r0 \
   nghttp2-libs=1.70.0-r0 \

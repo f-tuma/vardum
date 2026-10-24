@@ -81,6 +81,21 @@ async function fixture({ sourceVersions, apiRuntime } = {}) {
   return { directory, root, execute, mutations, builds, store, archives, alter, close: () => rm(root, { recursive: true, force: true }) };
 }
 
+test("downloaded candidate verifies and exposes backup help without a checkout or npm dependencies", async () => {
+  const f = await fixture();
+  try {
+    const options = { cwd: f.root, env: {}, timeout: 30_000 };
+    const verifier = join(f.directory, "scripts/server-candidate.mjs");
+    const args = [verifier, "check", f.directory, "--require-clean", "--expected-commit", commit];
+    const checked = await run(process.execPath, args, options);
+    assert.match(checked.stdout, new RegExp(`check: server-v0\\.7\\.0, ${commit}, linux/amd64`));
+    const help = await run(process.execPath, [join(f.directory, "scripts/backup.mjs"), "--help"], options);
+    assert.match(help.stdout, /<create\|verify\|restore>/);
+    await writeFile(join(f.directory, ".env.production.example"), "tampered payload");
+    await assert.rejects(run(process.execPath, args, options), /checksum/);
+  } finally { await f.close(); }
+});
+
 test("default candidate retains the exact Node22 production base and explicit selection", async () => {
   const f = await fixture();
   try {

@@ -132,6 +132,35 @@ pnpm resolution under the identical approved policy were carried into the lock.
 Frozen installation validates the resulting graph. Other package versions and
 native vendor findings remain visible through their normal gates.
 
+## Gateway Brotli and portable bundle correction
+
+The first clean candidate `74e89e75` passed saved-image runtime acceptance,
+TLS 42/42, gateway routing and clean-stack restore of 52 objects. Its fresh
+24 October scanner database (`9f227eaae45c4fa4d8b3e4baea563e4aca69de04c7fef933e469cfb66b8ccfa0`)
+reported HIGH CVE-2026-111497 in gateway `brotli-libs 1.2.0-r1`, fixed by
+`1.2.1-r0`. API findings remained 23 MEDIUM and 8 LOW. These original artifacts
+and findings are retained under their original identities.
+
+[Brotli 1.2.1](https://github.com/google/brotli/releases/tag/v1.2.1) and the
+[Alpine 3.24 security database](https://secdb.alpinelinux.org/v3.24/main.json)
+identify the fix. Both gateway targets now add exact `brotli-libs=1.2.1-r0`
+in their shared base, retaining the Nginx digest and the six previous exact APK
+pins. The downloaded APK passed normal Alpine signature verification using the
+image's trusted key, which matched the official public key. Offline dependency
+simulation required only this one upgrade within the existing 71-package graph.
+Actual rebuilt images still require fresh scans and runtime acceptance; no
+scanner exclusion or severity downgrade is added.
+
+Independent checking also found that the original portable bundle omitted
+`smoke-cli-adoption.mjs` and `github-release-api.mjs`, both imported by its
+included release helper. The copied verifier and backup entry point could not
+start after download, although source-worktree verification passed. Both modules
+are now included in the hashed payload. A regression runs the copied verifier
+and backup help from a separate temporary directory with an empty environment,
+without a checkout or npm dependencies, and verifies rejection of tampered
+payload bytes. A newly identified bundle must demonstrate the actual standalone
+check; the original candidate is not retroactively accepted or rewritten.
+
 ## Acceptance boundary
 
 The runtime base proof above is complete. Application builds and their full

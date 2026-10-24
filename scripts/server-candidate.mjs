@@ -33,6 +33,7 @@ const payload = [
   "docker/nginx.marketing.conf.template", "docker/monitoring/alerts.yml",
   "docs/operations.md", "docs/npm-release.md", "docs/server-release.md",
   "scripts/backup.mjs", "scripts/release-packages.mjs", "scripts/server-candidate.mjs",
+  "scripts/smoke-cli-adoption.mjs", "scripts/github-release-api.mjs",
 ];
 const safePath = (path) => {
   assert.equal(typeof path, "string", "Invalid artifact path");
