@@ -4,12 +4,13 @@ MCP server for [Vardum](https://vardum.com): lets an AI agent manage assets and
 Vards using a key scoped to one workspace. Workspace creation, membership,
 API-key management and domains are managed in the web app with a signed-in session.
 
-This README describes [MCP **0.4.2**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.2),
+This README describes [MCP **0.4.3**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.3),
 including revision-guarded Vard editing and recipe help for backgrounds, safe
 area and SVG rendering. The matching client batch uses
 [CLI **0.8.3**](https://www.npmjs.com/package/@vardum/cli/v/0.8.3) and
 [shared **0.4.2**](https://www.npmjs.com/package/@vardum/shared/v/0.4.2).
-The same 11 tools and editor protocol remain; the MCP SDK is now 1.32.1.
+This security patch updates input validation to Zod 4.6.6. The same 11 tools
+and editor protocol remain; the MCP SDK stays at 1.32.1.
 Older MCP 0.3.0 uses the legacy editing contract; installing it does not enable
 revision guards. The published 0.1.0 artifact has a broken workspace dependency.
 
@@ -20,7 +21,7 @@ API key in **Settings → API keys** first; it is restricted to that workspace
 and its selected permissions. Copy the workspace ID from Settings → General
 for tool calls. Use Node.js 22 or newer.
 
-These configurations pin **MCP 0.4.2** and need no source-repository access.
+These configurations pin **MCP 0.4.3** and need no source-repository access.
 Deploy a server advertising `vardEditRevision: 1` from `GET /api/capabilities`
 before editable Vard reads or mutations; there is no legacy-edit fallback.
 Use a read key for inspection or a key with the required write permissions for
@@ -29,7 +30,7 @@ mutation. Keep real keys in the client's private configuration, never in Git.
 Claude Code:
 
 ```sh
-claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.2
+claude mcp add vardum --env VARDUM_API_KEY=varda_... -- npx -y @vardum/mcp@0.4.3
 ```
 
 Any client that reads a JSON config (Claude Desktop, Cursor, …):
@@ -39,7 +40,7 @@ Any client that reads a JSON config (Claude Desktop, Cursor, …):
   "mcpServers": {
     "vardum": {
       "command": "npx",
-      "args": ["-y", "@vardum/mcp@0.4.2"],
+      "args": ["-y", "@vardum/mcp@0.4.3"],
       "env": { "VARDUM_API_KEY": "varda_..." }
     }
   }
