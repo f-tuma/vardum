@@ -25,9 +25,10 @@ them. Websites use stable URLs.
 
 ## Versions
 
-- Published: `@vardum/cli` 0.8.3, `@vardum/mcp` 0.4.2 and `@vardum/shared` 0.4.2.
-  This batch publishes output recipe types and MCP help. Explicit adoption,
-  standalone setup, the complete folder plan and guarded MCP Vard edits are retained.
+- Published: `@vardum/cli` 0.8.3, `@vardum/mcp` 0.4.3 and `@vardum/shared` 0.4.2.
+  These clients include output recipe types and MCP help; MCP 0.4.3 adds the
+  [Zod security patch](../client-release-mcp-0.4.3.md). Explicit adoption, standalone
+  setup, the complete folder plan and guarded MCP Vard edits are retained.
 - Frozen snapshots remain schema 2, with minimum CLI 0.6.0. Folder upload/import
   and guarded edits need their matching backend capabilities.
 - Recipe support requires matching API/worker source; the guarded-editor

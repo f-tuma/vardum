@@ -2,7 +2,17 @@
 
 ## Current status
 
-Published and independently verified **2026-10-22** (frgtn.VARD, VARD-112):
+Published and independently verified **2026-10-24** (VARD-119):
+[MCP **0.4.3**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.3) packages the
+Zod 4.6.6 security fix. Actual public archive bytes, a fresh MCP-only install with
+transitive shared 0.4.2, zero audit findings, all eleven advertised tool schemas
+and all seven public
+recipe checks passed. CLI **0.8.3** and shared **0.4.2** retain their original
+published archives; only MCP was newly published. See
+[security patch publication evidence](client-release-mcp-0.4.3.md#publication-evidence).
+
+The original recipe batch was published and independently verified
+**2026-10-22** (frgtn.VARD, VARD-112):
 [CLI **0.8.3**](https://www.npmjs.com/package/@vardum/cli/v/0.8.3),
 [MCP **0.4.2**](https://www.npmjs.com/package/@vardum/mcp/v/0.4.2) and
 [shared **0.4.2**](https://www.npmjs.com/package/@vardum/shared/v/0.4.2).
@@ -17,7 +27,7 @@ of GitHub account billing. No final tag Actions publication proof is claimed.
 See [0.8.3 publication evidence](client-release-0.8.3.md#publication-evidence).
 
 Active onboarding and gateway source Copy setup pin verified CLI **0.8.3**;
-MCP guidance pins **0.4.2**. Production Copy setup requires the matching
+MCP guidance pins **0.4.3**. Production Copy setup requires the matching
 gateway deployment. Source pin promotion does not change immutable package
 archives or establish server/runtime or Musubi pilot acceptance.
 
@@ -50,7 +60,7 @@ residual OS/native assessment still open. See [current readiness status](product
 Passing source tests does not release the server or schema 3 candidates or
 complete their production acceptance.
 
-The private source repository is `f-tuma/vardum`. All three package-side OIDC
+The source repository is `f-tuma/vardum`. All three package-side OIDC
 publishers are verified for that repository, `release.yml`, environment `npm`,
 with direct `npm publish` allowed and dist-tag management disabled. Their old
 `frgtn-dot-dev` connections were replaced with owner approval and security-key
@@ -511,11 +521,13 @@ does not test that trust.
 The workflow pins Node 22.23.3 and npm 12.0.2, which support trusted publishing.
 See the [npm trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
 
-The source repository is currently private. npm provenance is therefore disabled
-for this repository. OIDC publication worked for both the historical and current
-identities. The workflow enables provenance automatically for a public repository.
+The source repository was private during the earlier OIDC releases, so their
+publication did not request npm provenance. OIDC publication worked for both the
+historical and current identities. The repository is now public; the workflow
+enables provenance automatically for public source releases. The MCP 0.4.3 patch
+used direct npm publication and makes no OIDC or provenance claim.
 
-Repository documentation links require access to the private source repository.
+Repository documentation links now resolve to the public source repository.
 The September archives retain `frgtn-dot-dev/vardum` metadata and README links;
 the October archives use `f-tuma/vardum`. Editing source documentation neither
 changes immutable archives nor makes the source public. Further package edits
@@ -545,7 +557,7 @@ archives and independent public recipe verification. Its hosted download job
 never started because of account billing; no final tag-run result substitutes
 for the [recorded actual evidence](client-release-0.8.3.md#publication-evidence).
 
-For published CLI 0.8.3/MCP 0.4.2, verify matching deployed API/worker recipe
+For published CLI 0.8.3/MCP 0.4.3, verify matching deployed API/worker recipe
 support, backend migration `0015` and all applicable capabilities in the
 [upgrade order](client-release-0.8.3.md#upgrade-order). `vardEditRevision: 1`
 does not establish rendering support.

@@ -1,6 +1,6 @@
 {
   "name": "@vardum/mcp",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "MCP server for workspace-scoped Vardum assets and Vards",
   "license": "MIT",
   "type": "module",

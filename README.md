@@ -119,10 +119,12 @@ Compose checks use examples and do not verify your provider, credentials or DNS.
 | Component | Current documented version |
 | --- | --- |
 | `@vardum/cli` | `0.8.3` |
-| `@vardum/mcp` / `@vardum/shared` | `0.4.2` |
+| `@vardum/mcp` | `0.4.3` |
+| `@vardum/shared` | `0.4.2` |
 | Frozen snapshot schema | `2` (minimum CLI `0.6.0`) |
 
-See [release evidence and upgrade order](docs/client-release-0.8.3.md) and the
+See the [MCP security patch](docs/client-release-mcp-0.4.3.md),
+[release evidence and upgrade order](docs/client-release-0.8.3.md) and the
 [compatibility table](docs/npm-release.md) before changing clients or servers.
 
 ## Security and license

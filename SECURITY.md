@@ -3,7 +3,7 @@
 ## Supported versions
 
 Security fixes target the current source and latest published clients. The
-current documented clients are CLI `0.8.3`, MCP `0.4.2` and shared `0.4.2`;
+current documented clients are CLI `0.8.3`, MCP `0.4.3` and shared `0.4.2`;
 see the [release and compatibility table](docs/npm-release.md) for updates.
 Older client or server versions may need an upgrade to receive a fix.
 
