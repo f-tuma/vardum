@@ -26,7 +26,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "@vardum/shared": "workspace:^",
-    "zod": "^3.24.0"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

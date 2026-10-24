@@ -81,6 +81,21 @@ async function fixture({ sourceVersions, apiRuntime } = {}) {
   return { directory, root, execute, mutations, builds, store, archives, alter, close: () => rm(root, { recursive: true, force: true }) };
 }
 
+test("downloaded candidate verifies and exposes backup help without a checkout or npm dependencies", async () => {
+  const f = await fixture();
+  try {
+    const options = { cwd: f.root, env: {}, timeout: 30_000 };
+    const verifier = join(f.directory, "scripts/server-candidate.mjs");
+    const args = [verifier, "check", f.directory, "--require-clean", "--expected-commit", commit];
+    const checked = await run(process.execPath, args, options);
+    assert.match(checked.stdout, new RegExp(`check: server-v0\\.7\\.0, ${commit}, linux/amd64`));
+    const help = await run(process.execPath, [join(f.directory, "scripts/backup.mjs"), "--help"], options);
+    assert.match(help.stdout, /<create\|verify\|restore>/);
+    await writeFile(join(f.directory, ".env.production.example"), "tampered payload");
+    await assert.rejects(run(process.execPath, args, options), /checksum/);
+  } finally { await f.close(); }
+});
+
 test("default candidate retains the exact Node22 production base and explicit selection", async () => {
   const f = await fixture();
   try {
@@ -89,7 +104,7 @@ test("default candidate retains the exact Node22 production base and explicit se
     assert.equal(m.apiRuntime.observation, null);
     const dockerfile = await readFile(new URL("../docker/api.Dockerfile", import.meta.url), "utf8");
     assert.ok(dockerfile.startsWith(`ARG API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}\n`));
-    assert.match(dockerfile, /FROM node:22\.23\.3-bookworm-slim@sha256:43ac6c60/);
+    assert.match(dockerfile, /FROM node:22\.23\.4-bookworm-slim@sha256:de170b39/);
     assert.match(dockerfile, /FROM \$\{API_RUNTIME_IMAGE\} AS runtime/);
     assert.ok(f.builds[0].includes(`API_RUNTIME_IMAGE=${m.apiRuntime.profile.baseImage}`));
     for (const args of f.builds) {

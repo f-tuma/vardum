@@ -6,14 +6,14 @@ that every native binary or runtime is free of vulnerabilities.
 
 ## Pinned inputs
 
-Nginx verified against official catalogs on 22 October 2026; the other inputs
-below retain their 3 October 2026 verification date:
+Node build/runtime inputs verified against official catalogs on 24 October 2026;
+Nginx retains its 22 October verification and Trivy its 3 October verification:
 
 | Input | Official index digest | Linux/amd64 manifest |
 | --- | --- | --- |
 | Nginx 1.30.6 Alpine 3.24 | `sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951` | `sha256:84ed8c0dd296c188bfc24ed506f46589e9285fb0b11cf3a04d91d524d3067e11` |
-| Node 22.23.3 Bookworm slim (build only) | `sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c` | `sha256:25330af3531fb5e23318554a0aa911125b6e91b1b777edf7655501d207c067a2` |
-| Distroless Node 22 Debian 13 nonroot (runtime, Node 22.23.3) | `sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c` | `sha256:7b0a2b9262b3d1d57e139e08fe11bccb0a7d426ca515eab0cd6abcaf2016ae5c` |
+| Node 22.23.4 Bookworm slim (build only) | `sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d` | `sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09` |
+| Distroless Node 22 Debian 13 nonroot (runtime, Node 22.23.4) | `sha256:10747a1323be68f206aed893599d43e6697ad67257e7c42703553f99fbce3d33` | `sha256:35c9d0d69953b2c1d06a00adafa364d12651fc47b48fc6cbc53565bb905488ff` |
 | Trivy 0.75.0 | `sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa` | `sha256:9db099105405c648166e6b94155eb32f8da12673cf1f455207f7385cc9a77283` |
 
 The index, platform manifest, application image ID and exported archive hash are
@@ -23,9 +23,36 @@ worker must use the same image. Acceptance is limited to linux/amd64.
 
 Sources: [Nginx official images](https://github.com/docker-library/official-images/blob/master/library/nginx),
 [Node official images](https://github.com/docker-library/official-images/blob/master/library/node),
-[Node 22.23.3 release](https://nodejs.org/en/blog/release/v22.23.3),
+[Node 22.23.4 release](https://nodejs.org/en/blog/release/v22.23.4),
 [Distroless supported images and signature verification](https://github.com/GoogleContainerTools/distroless),
 [Trivy 0.75.0 release](https://github.com/aquasecurity/trivy/releases/tag/v0.75.0).
+
+## Node22 runtime refresh: 24 October 2026
+
+The default API/worker runtime and both build stages move to official Node
+22.23.4. The portable `node22` profile uses the same pinned Distroless base;
+CI and server-candidate validation use the same Node patch. The optional Node26
+profile and gateway runtime inputs stay separate.
+
+The actual signed Distroless base contains Node 22.23.4 / bundled OpenSSL 3.5.9
+and patched Debian CA certificates. Fastify is pinned to 5.12.6, the exact
+security patch accepted by the unchanged dependency-age policy. See the
+[dated verification and remaining release boundaries](runtime-refresh-20261024.md).
+Application-image compatibility, TLS, native-codec, scan and clean-stack restore
+acceptance must still be bound to the final reviewed source and saved images.
+The historical assessments below retain their original versions and identities;
+this refresh does not clear the separate glibc or zlib findings.
+
+## Gateway Brotli refresh: 24 October 2026
+
+The current Alpine 3.24 security database adds HIGH CVE-2026-111497 for
+`brotli-libs 1.2.0-r1`. The shared gateway base now pins `brotli-libs=1.2.1-r0`
+for both targets. Its APK passed normal Alpine signature verification and an
+offline dependency simulation required only that package upgrade. The Nginx
+digest and six existing exact APK pins stay fixed. Rebuilt-image scans, installed
+versions and routing/restore acceptance must be tied to their new identities;
+the earlier zero-finding scans remain historical evidence. See the
+[dated fix and portable-bundle acceptance boundary](runtime-refresh-20261024.md#gateway-brotli-and-portable-bundle-correction).
 
 ## Gateway build input refresh: 20 October 2026
 

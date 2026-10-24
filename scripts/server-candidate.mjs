@@ -33,6 +33,7 @@ const payload = [
   "docker/nginx.marketing.conf.template", "docker/monitoring/alerts.yml",
   "docs/operations.md", "docs/npm-release.md", "docs/server-release.md",
   "scripts/backup.mjs", "scripts/release-packages.mjs", "scripts/server-candidate.mjs",
+  "scripts/smoke-cli-adoption.mjs", "scripts/github-release-api.mjs",
 ];
 const safePath = (path) => {
   assert.equal(typeof path, "string", "Invalid artifact path");
@@ -323,7 +324,7 @@ export function normalizeUploadOrigins(value) {
 // Candidate profiles are an explicit test choice, never a deployment default.
 // Node26 is Current; this selection does not authorize a production transition.
 const apiRuntimeProfiles = Object.freeze({
-  node22: Object.freeze({ name: "node22", baseImage: "gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c" }),
+  node22: Object.freeze({ name: "node22", baseImage: "gcr.io/distroless/nodejs22-debian13:nonroot@sha256:10747a1323be68f206aed893599d43e6697ad67257e7c42703553f99fbce3d33" }),
   node26: Object.freeze({ name: "node26", baseImage: "gcr.io/distroless/nodejs26-debian13:nonroot@sha256:a3bb283a564754266646d6029c5b6aa4f760b9415dae1398db8d7f8142ee1375" }),
 });
 const node26Observation = Object.freeze({ node: "26.11.0", openssl: "3.5.9", uid: 65532,
